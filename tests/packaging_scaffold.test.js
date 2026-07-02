@@ -31,24 +31,39 @@ function exists(relativePath) {
 const app = read('app/lib/main.dart');
 [
   'ActitPassStorage',
-  'Папка / SMB / NFS',
-  'Почта IMAP/SMTP',
-  'WebDAV',
-  'SFTP',
-  'FTP/FTPS',
-  'Как настроить этот способ',
+  'Открыть .swl',
+  'Создать .swl',
+  'Выбрать .swl файл',
+  'Последние файлы',
+  'Файл .swl не выбран',
   'Банковская карта',
   'Номер карты',
   'CVV',
   'Пароль интернет-банка',
   'Icons.visibility',
+  'DateTextInputFormatter',
+  'Icons.calendar_month_outlined',
+  'дд.мм.гггг',
+  'Создать новую категорию',
+  'Все пиктограммы',
+  'syntheticSpbIconIdForUi',
   'ChoiceChip',
   'CircleAvatar(backgroundColor: color.bg)',
 ].forEach((needle) => assert.ok(app.includes(needle), `Flutter app missing ${needle}`));
 
-assert.ok(app.includes("FieldDefinition(id: 'number', label: 'Номер карты', type: 'custom_secret', required: true)"));
-assert.ok(app.includes("FieldDefinition(id: 'cvv', label: 'CVV', type: 'password', secret: true)"));
-assert.ok(app.includes("FieldDefinition(id: 'account', label: 'Номер счета', type: 'custom_secret', required: true)"));
+assert.ok((app.match(/TemplateIcon\('/g) || []).length >= 100, 'Flutter app should expose at least 100 pictograms');
+
+[
+  'Открыть SPB Wallet',
+  'Синхронизация',
+  'Последняя синхронизация',
+  'Конфликты',
+  'Подключиться',
+].forEach((needle) => assert.equal(app.includes(needle), false, `Flutter app should hide ${needle}`));
+
+assert.match(app, /id:\s*'number'[\s\S]*label:\s*'Номер карты'[\s\S]*type:\s*'custom_secret'[\s\S]*required:\s*true/);
+assert.match(app, /id:\s*'cvv'[\s\S]*label:\s*'CVV'[\s\S]*type:\s*'password'[\s\S]*secret:\s*true/);
+assert.match(app, /id:\s*'account'[\s\S]*label:\s*'Номер счета'[\s\S]*type:\s*'custom_secret'[\s\S]*required:\s*true/);
 
 const androidScript = read('tools/build_android_apk.sh');
 assert.ok(androidScript.includes('flutter build apk --debug'));

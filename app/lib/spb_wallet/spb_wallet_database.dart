@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -23,7 +25,8 @@ class SpbWalletDatabase {
       wallet._validatePassword();
       return wallet;
     } on SqliteException catch (error) {
-      throw SpbWalletOpenException('Не удалось открыть SQLite базу SPB Wallet: ${error.message}');
+      throw SpbWalletOpenException(
+          'Не удалось открыть SQLite базу SPB Wallet: ${error.message}');
     } on SpbWalletCryptoException catch (error) {
       throw SpbWalletOpenException(error.message);
     }
@@ -31,12 +34,23 @@ class SpbWalletDatabase {
 
   static String makeId() => _makeSpbId();
 
+  static SpbWalletDatabase create(String path, String password) {
+    final file = File(path);
+    if (file.existsSync()) file.deleteSync();
+    final db = sqlite3.open(path);
+    final wallet = SpbWalletDatabase._(path, db, SpbWalletCrypto(password));
+    wallet._createSchema();
+    wallet._seedMeta();
+    return wallet;
+  }
+
   SpbWalletSnapshot loadSnapshot() {
     final categories = _loadCategories();
     final templates = _loadTemplates();
     final cards = <SpbWalletCardRecord>[];
 
-    for (final row in _db.select('SELECT hex(ID) AS ID, Name, Description, hex(ParentCategoryID) AS ParentCategoryID, hex(TemplateID) AS TemplateID, HitCount FROM spbwlt_Card')) {
+    for (final row in _db.select(
+        'SELECT hex(ID) AS ID, Name, Description, hex(ParentCategoryID) AS ParentCategoryID, hex(TemplateID) AS TemplateID, hex(CardViewID) AS CardViewID, hex(IconID) AS IconID, HitCount FROM spbwlt_Card')) {
       final id = _string(row['ID']);
       final templateId = _string(row['TemplateID']);
       final values = <String, String>{};
@@ -44,18 +58,24 @@ class SpbWalletDatabase {
         'SELECT hex(TemplateFieldID) AS TemplateFieldID, ValueString FROM spbwlt_CardFieldValue WHERE hex(CardID) = ?',
         [id],
       )) {
-        values[_string(fieldRow['TemplateFieldID'])] = crypto.decryptText(fieldRow['ValueString']);
+        values[_string(fieldRow['TemplateFieldID'])] =
+            crypto.decryptText(fieldRow['ValueString']);
       }
       cards.add(
         SpbWalletCardRecord(
           id: id,
           title: crypto.decryptText(row['Name']),
           description: crypto.decryptText(row['Description']),
-          categoryPath: _categoryPath(categories, _string(row['ParentCategoryID'])),
+          categoryPath:
+              _categoryPath(categories, _string(row['ParentCategoryID'])),
           templateId: templateId,
           fieldValues: values,
           attachments: loadAttachments(id),
           hitCount: (row['HitCount'] as int?) ?? 0,
+          iconId: _string(row['IconID']),
+          cardColor: _loadCardColor(_string(row['CardViewID'])),
+          backgroundImageBase64:
+              _loadCardBackground(_string(row['CardViewID'])),
         ),
       );
     }
@@ -64,9 +84,9 @@ class SpbWalletDatabase {
   }
 
   List<SpbWalletAttachmentRecord> loadAttachments(String cardId) {
-    return _db
-        .select('SELECT hex(ID) AS ID, hex(CardID) AS CardID, Name, Data FROM spbwlt_CardAttachment WHERE hex(CardID) = ?', [cardId])
-        .map((row) {
+    return _db.select(
+        'SELECT hex(ID) AS ID, hex(CardID) AS CardID, Name, Data FROM spbwlt_CardAttachment WHERE hex(CardID) = ?',
+        [cardId]).map((row) {
       var size = -1;
       String? error;
       try {
@@ -85,25 +105,93 @@ class SpbWalletDatabase {
   }
 
   Uint8List readAttachmentBytes(String attachmentId) {
-    final rows = _db.select('SELECT Data FROM spbwlt_CardAttachment WHERE hex(ID) = ?', [attachmentId]);
-    if (rows.isEmpty) throw const SpbWalletOpenException('Вложение SPB Wallet не найдено.');
+    final rows = _db.select(
+        'SELECT Data FROM spbwlt_CardAttachment WHERE hex(ID) = ?',
+        [attachmentId]);
+    if (rows.isEmpty) {
+      throw const SpbWalletOpenException('Вложение SPB Wallet не найдено.');
+    }
     return attachmentCodec.decode(rows.first['Data']).bytes;
+  }
+
+  String? _loadCardBackground(String cardViewId) {
+    if (cardViewId.isEmpty) return null;
+    final viewRows = _db.select(
+        'SELECT hex(ImageID) AS ImageID FROM spbwlt_CardView WHERE hex(ID) = ?',
+        [cardViewId]);
+    if (viewRows.isEmpty) return null;
+    final imageId = _string(viewRows.first['ImageID']);
+    if (imageId.isEmpty) return null;
+    final imageRows = _db
+        .select('SELECT Data FROM spbwlt_Image WHERE hex(ID) = ?', [imageId]);
+    if (imageRows.isEmpty || imageRows.first['Data'] == null) return null;
+    final data = imageRows.first['Data'];
+    if (data is Uint8List) return base64Encode(data);
+    if (data is List<int>) return base64Encode(data);
+    return null;
+  }
+
+  void _saveCardBackground(String cardId, String? backgroundImageBase64) {
+    if (backgroundImageBase64 == null || backgroundImageBase64.isEmpty) return;
+    final cardRows = _db.select(
+        'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card WHERE hex(ID) = ?',
+        [cardId]);
+    if (cardRows.isEmpty) return;
+    final cardViewId = _string(cardRows.first['CardViewID']);
+    final imageBytes = base64Decode(backgroundImageBase64);
+    final viewRows = _db.select(
+        'SELECT hex(ImageID) AS ImageID FROM spbwlt_CardView WHERE hex(ID) = ?',
+        [cardViewId]);
+    final currentImageId =
+        viewRows.isEmpty ? '' : _string(viewRows.first['ImageID']);
+    if (currentImageId.isNotEmpty &&
+        _db.select('SELECT 1 FROM spbwlt_Image WHERE hex(ID) = ?',
+            [currentImageId]).isNotEmpty) {
+      _db.execute(
+        'UPDATE spbwlt_Image SET Name = ?, Data = ? WHERE hex(ID) = ?',
+        [crypto.encryptText('card-background.png'), imageBytes, currentImageId],
+      );
+      return;
+    }
+    final imageId = _makeSpbId();
+    _db.execute(
+      'INSERT INTO spbwlt_Image (ID, Name, Data) VALUES (?, ?, ?)',
+      [
+        _idFromHex(imageId),
+        crypto.encryptText('card-background.png'),
+        imageBytes
+      ],
+    );
+    _db.execute('UPDATE spbwlt_CardView SET ImageID = ? WHERE hex(ID) = ?',
+        [_idFromHex(imageId), cardViewId]);
   }
 
   void saveTemplate(SpbWalletTemplateDraft draft) {
     _transaction(() {
-      final templateExists = _db.select('SELECT 1 FROM spbwlt_Template WHERE hex(ID) = ?', [draft.id]).isNotEmpty;
+      final templateExists = _db.select(
+          'SELECT 1 FROM spbwlt_Template WHERE hex(ID) = ?',
+          [draft.id]).isNotEmpty;
       if (templateExists) {
-        _db.execute('UPDATE spbwlt_Template SET Name = ? WHERE hex(ID) = ?', [crypto.encryptText(draft.name), draft.id]);
+        _db.execute('UPDATE spbwlt_Template SET Name = ? WHERE hex(ID) = ?',
+            [crypto.encryptText(draft.name), draft.id]);
+        _saveTemplateIcon(draft.id, draft.iconId);
       } else {
         final cardViewId = _createCardView();
         _db.execute(
           'INSERT INTO spbwlt_Template (ID, Name, Description, CardViewID) VALUES (?, ?, ?, ?)',
-          [_idFromHex(draft.id), crypto.encryptText(draft.name), null, _idFromHex(cardViewId)],
+          [
+            _idFromHex(draft.id),
+            crypto.encryptText(draft.name),
+            null,
+            _idFromHex(cardViewId)
+          ],
         );
+        _saveTemplateIcon(draft.id, draft.iconId);
       }
       final existingIds = _db
-          .select('SELECT hex(ID) AS ID FROM spbwlt_TemplateField WHERE hex(TemplateID) = ?', [draft.id])
+          .select(
+              'SELECT hex(ID) AS ID FROM spbwlt_TemplateField WHERE hex(TemplateID) = ?',
+              [draft.id])
           .map((row) => _string(row['ID']))
           .toSet();
       var priority = 0;
@@ -117,7 +205,13 @@ class SpbWalletDatabase {
         } else {
           _db.execute(
             'INSERT INTO spbwlt_TemplateField (ID, Name, TemplateID, FieldTypeID, Priority) VALUES (?, ?, ?, ?, ?)',
-            [_idFromHex(field.id), encryptedName, _idFromHex(draft.id), field.fieldTypeId, priority],
+            [
+              _idFromHex(field.id),
+              encryptedName,
+              _idFromHex(draft.id),
+              field.fieldTypeId,
+              priority
+            ],
           );
           _createCardViewFieldForTemplateField(draft.id, field.id, priority);
         }
@@ -129,16 +223,29 @@ class SpbWalletDatabase {
   void saveCard(SpbWalletCardDraft draft) {
     _transaction(() {
       final categoryId = _ensureCategoryPath(draft.categoryPath);
-      final description = draft.description.trim().isEmpty ? null : crypto.encryptText(draft.description);
-      final exists = _db.select('SELECT 1 FROM spbwlt_Card WHERE hex(ID) = ?', [draft.id]).isNotEmpty;
+      final description = draft.description.trim().isEmpty
+          ? null
+          : crypto.encryptText(draft.description);
+      final exists = _db.select(
+          'SELECT 1 FROM spbwlt_Card WHERE hex(ID) = ?', [draft.id]).isNotEmpty;
       if (exists) {
         _db.execute(
           'UPDATE spbwlt_Card SET Name = ?, Description = ?, ParentCategoryID = ?, TemplateID = ? WHERE hex(ID) = ?',
-          [crypto.encryptText(draft.title), description, _idFromHex(categoryId), _idFromHex(draft.templateId), draft.id],
+          [
+            crypto.encryptText(draft.title),
+            description,
+            _idFromHex(categoryId),
+            _idFromHex(draft.templateId),
+            draft.id
+          ],
         );
       } else {
-        final templateRows = _db.select('SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?', [draft.templateId]);
-        final templateCardViewId = templateRows.isEmpty ? '' : _string(templateRows.first['CardViewID']);
+        final templateRows = _db.select(
+            'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?',
+            [draft.templateId]);
+        final templateCardViewId = templateRows.isEmpty
+            ? ''
+            : _string(templateRows.first['CardViewID']);
         final cardViewId = _copyCardView(templateCardViewId);
         _db.execute(
           'INSERT INTO spbwlt_Card (ID, Name, Description, CardViewID, HasOwnCardView, TemplateID, ParentCategoryID, IconID) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -150,13 +257,15 @@ class SpbWalletDatabase {
             0,
             _idFromHex(draft.templateId),
             _idFromHex(categoryId),
-            _idFromHex(_defaultIconId()),
+            _idFromHex(draft.iconId ?? _defaultIconId()),
           ],
         );
       }
 
       final existingValues = <String, String>{};
-      for (final row in _db.select('SELECT hex(ID) AS ID, hex(TemplateFieldID) AS TemplateFieldID FROM spbwlt_CardFieldValue WHERE hex(CardID) = ?', [draft.id])) {
+      for (final row in _db.select(
+          'SELECT hex(ID) AS ID, hex(TemplateFieldID) AS TemplateFieldID FROM spbwlt_CardFieldValue WHERE hex(CardID) = ?',
+          [draft.id])) {
         existingValues[_string(row['TemplateFieldID'])] = _string(row['ID']);
       }
       for (final entry in draft.fieldValues.entries) {
@@ -164,7 +273,12 @@ class SpbWalletDatabase {
         if (valueId == null) {
           _db.execute(
             'INSERT INTO spbwlt_CardFieldValue (ID, CardID, TemplateFieldID, ValueString) VALUES (?, ?, ?, ?)',
-            [_idFromHex(_makeSpbId()), _idFromHex(draft.id), _idFromHex(entry.key), crypto.encryptText(entry.value)],
+            [
+              _idFromHex(_makeSpbId()),
+              _idFromHex(draft.id),
+              _idFromHex(entry.key),
+              crypto.encryptText(entry.value)
+            ],
           );
         } else {
           _db.execute(
@@ -173,6 +287,9 @@ class SpbWalletDatabase {
           );
         }
       }
+      _saveCardBackground(draft.id, draft.backgroundImageBase64);
+      _saveCardColor(draft.id, draft.cardColor);
+      _saveCardIcon(draft.id, draft.iconId);
     });
   }
 
@@ -192,45 +309,222 @@ class SpbWalletDatabase {
       final data = attachmentCodec.encode(bytes);
       final name = crypto.encryptText(fileName);
       if (attachmentId != null &&
-          _db.select('SELECT 1 FROM spbwlt_CardAttachment WHERE hex(ID) = ?', [attachmentId]).isNotEmpty) {
-        _db.execute('UPDATE spbwlt_CardAttachment SET Name = ?, Data = ? WHERE hex(ID) = ?', [name, data, attachmentId]);
+          _db.select('SELECT 1 FROM spbwlt_CardAttachment WHERE hex(ID) = ?',
+              [attachmentId]).isNotEmpty) {
+        _db.execute(
+            'UPDATE spbwlt_CardAttachment SET Name = ?, Data = ? WHERE hex(ID) = ?',
+            [name, data, attachmentId]);
       } else {
         _db.execute(
           'INSERT INTO spbwlt_CardAttachment (ID, CardID, Name, Data) VALUES (?, ?, ?, ?)',
-          [_idFromHex(attachmentId ?? _makeSpbId()), _idFromHex(cardId), name, data],
+          [
+            _idFromHex(attachmentId ?? _makeSpbId()),
+            _idFromHex(cardId),
+            name,
+            data
+          ],
         );
       }
     });
   }
 
   void deleteAttachment(String attachmentId) {
-    _db.execute('DELETE FROM spbwlt_CardAttachment WHERE hex(ID) = ?', [attachmentId]);
+    _db.execute(
+        'DELETE FROM spbwlt_CardAttachment WHERE hex(ID) = ?', [attachmentId]);
   }
 
   void recordCardHit(String cardId) {
-    _db.execute('UPDATE spbwlt_Card SET HitCount = HitCount + 1 WHERE hex(ID) = ?', [cardId]);
+    _db.execute(
+        'UPDATE spbwlt_Card SET HitCount = HitCount + 1 WHERE hex(ID) = ?',
+        [cardId]);
   }
 
   void close() {
     _db.dispose();
   }
 
+  void _createSchema() {
+    _db.execute('''
+CREATE TABLE spb_DatabaseVersion (
+  ProductID INTEGER NOT NULL PRIMARY KEY,
+  ProductName VARCHAR(256) NOT NULL,
+  VersionString VARCHAR(256) NOT NULL,
+  CompatibilityVersion INTEGER NOT NULL,
+  ProductMajorVersion INTEGER NOT NULL,
+  ProductMinorVersion INTEGER NOT NULL
+);
+CREATE TABLE spbwlt_Wallet (
+  ID VARCHAR(22) UNIQUE NOT NULL PRIMARY KEY,
+  AdvVersionInfo INTEGER NOT NULL,
+  CurrentSyncID INTEGER NOT NULL DEFAULT -1,
+  SyncID INTEGER DEFAULT -1,
+  SyncInfo BLOB,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE TABLE spbwlt_Card (
+  ID VARCHAR(22) UNIQUE NOT NULL PRIMARY KEY,
+  Name BLOB NOT NULL,
+  Description BLOB NULL,
+  CardViewID VARCHAR(22) NOT NULL,
+  HasOwnCardView INTEGER NOT NULL DEFAULT 0,
+  TemplateID VARCHAR(22) NOT NULL,
+  ParentCategoryID VARCHAR(22) NOT NULL,
+  IconID VARCHAR(22) NOT NULL,
+  HitCount INTEGER DEFAULT 0 NOT NULL,
+  SyncID INTEGER NOT NULL DEFAULT -1,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE TABLE spbwlt_CardAttachment (
+  ID VARCHAR(22) UNIQUE NOT NULL PRIMARY KEY,
+  CardID VARCHAR(22) NOT NULL,
+  Name BLOB NOT NULL,
+  Data BLOB,
+  SyncID INTEGER NOT NULL DEFAULT -1,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE TABLE spbwlt_CardFieldValue (
+  ID VARCHAR(22) UNIQUE NOT NULL PRIMARY KEY,
+  CardID VARCHAR(22) NOT NULL,
+  TemplateFieldID VARCHAR(22) NOT NULL,
+  ValueString BLOB NULL,
+  SyncID INTEGER NOT NULL DEFAULT -1,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE TABLE spbwlt_CardView (
+  ID VARCHAR(22) UNIQUE NOT NULL PRIMARY KEY,
+  CardColor BLOB NOT NULL,
+  CornerType INTEGER NOT NULL,
+  ShowHiddenFields INTEGER NOT NULL,
+  IconID VARCHAR(22) NOT NULL,
+  ImageID VARCHAR(22) NOT NULL,
+  ImgPosition INTEGER NOT NULL DEFAULT 4,
+  ShowCardBorder INTEGER NOT NULL DEFAULT 1,
+  FillCardWithColor INTEGER NOT NULL DEFAULT 1,
+  SyncID INTEGER NOT NULL DEFAULT -1,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE TABLE spbwlt_Category (
+  ID VARCHAR(22) UNIQUE NOT NULL PRIMARY KEY,
+  Name BLOB NOT NULL,
+  Description BLOB NULL,
+  IconID VARCHAR(22) NOT NULL,
+  DefaultTemplateID VARCHAR(22),
+  ParentCategoryID VARCHAR(22) NOT NULL,
+  SyncID INTEGER NOT NULL DEFAULT -1,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE TABLE spbwlt_Icon (
+  ID VARCHAR(22) UNIQUE NOT NULL PRIMARY KEY,
+  Name BLOB NOT NULL,
+  Data BLOB,
+  SyncID INTEGER NOT NULL DEFAULT -1,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE TABLE spbwlt_Image (
+  ID VARCHAR(22) UNIQUE NOT NULL PRIMARY KEY,
+  Name BLOB NOT NULL,
+  Data BLOB,
+  SyncID INTEGER NOT NULL DEFAULT -1,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE TABLE spbwlt_Template (
+  ID VARCHAR(22) UNIQUE NOT NULL PRIMARY KEY,
+  Name BLOB NOT NULL,
+  Description BLOB NULL,
+  CardViewID VARCHAR(22) NOT NULL,
+  SyncID INTEGER NOT NULL DEFAULT -1,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE TABLE spbwlt_TemplateField (
+  ID VARCHAR(22) UNIQUE NOT NULL PRIMARY KEY,
+  Name BLOB NOT NULL,
+  TemplateID VARCHAR(22) NOT NULL,
+  FieldTypeID INTEGER NOT NULL,
+  Priority INTEGER DEFAULT 0 NOT NULL,
+  SyncID INTEGER NOT NULL DEFAULT -1,
+  AdvInfo BLOB,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE TABLE spbwlt_TemplateFieldType (
+  ID INTEGER PRIMARY KEY NOT NULL,
+  Name NVARCHAR(256) NOT NULL,
+  SyncID INTEGER NOT NULL DEFAULT -1,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE TABLE spbwlt_CardViewField (
+  ID VARCHAR(22) UNIQUE NOT NULL PRIMARY KEY,
+  CardViewID VARCHAR(22) NOT NULL,
+  TemplateFieldID VARCHAR(22) NOT NULL,
+  PositionX INTEGER NOT NULL,
+  PositionY INTEGER NOT NULL,
+  FontFamily NVARCHAR(256) NOT NULL,
+  FontSize INTEGER NOT NULL,
+  FontColor VARCHAR(3) NOT NULL,
+  TextStyle INTEGER NOT NULL DEFAULT 0,
+  TextAlign INTEGER NOT NULL DEFAULT 0,
+  ShowFieldName INTEGER NOT NULL DEFAULT 1,
+  SyncID INTEGER NOT NULL DEFAULT -1,
+  CreateSyncID INTEGER NOT NULL DEFAULT -1
+);
+CREATE INDEX idx_CardFieldValue ON spbwlt_CardFieldValue (CardID);
+CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
+''');
+  }
+
+  void _seedMeta() {
+    _db.execute(
+      'INSERT INTO spb_DatabaseVersion (ProductID, ProductName, VersionString, CompatibilityVersion, ProductMajorVersion, ProductMinorVersion) VALUES (?, ?, ?, ?, ?, ?)',
+      [1, 'Spb Wallet', '2.0', 2, 2, 0],
+    );
+    _db.execute(
+      'INSERT INTO spbwlt_Wallet (ID, AdvVersionInfo) VALUES (?, ?)',
+      [_idFromHex(_makeSpbId()), 0],
+    );
+    for (final entry in const {
+      1: 'String',
+      2: 'Password',
+      3: 'Date',
+      4: 'Memo',
+      5: 'Checkbox',
+      6: 'URL',
+      7: 'Email',
+      8: 'Phone',
+    }.entries) {
+      _db.execute(
+          'INSERT INTO spbwlt_TemplateFieldType (ID, Name) VALUES (?, ?)',
+          [entry.key, entry.value]);
+    }
+  }
+
   void _validateSchema() {
     final required = {
       'spbwlt_Category': ['ID', 'Name', 'ParentCategoryID'],
-      'spbwlt_Card': ['ID', 'Name', 'Description', 'ParentCategoryID', 'TemplateID'],
-      'spbwlt_CardFieldValue': ['ID', 'CardID', 'TemplateFieldID', 'ValueString'],
+      'spbwlt_Card': [
+        'ID',
+        'Name',
+        'Description',
+        'ParentCategoryID',
+        'TemplateID'
+      ],
+      'spbwlt_CardFieldValue': [
+        'ID',
+        'CardID',
+        'TemplateFieldID',
+        'ValueString'
+      ],
       'spbwlt_TemplateField': ['ID', 'Name', 'TemplateID'],
       'spbwlt_CardAttachment': ['ID', 'CardID', 'Name', 'Data'],
     };
     for (final entry in required.entries) {
       final columns = _columns(entry.key);
       if (columns.isEmpty) {
-        throw SpbWalletOpenException('В файле нет таблицы ${entry.key}. Это не поддерживаемая база SPB Wallet.');
+        throw SpbWalletOpenException(
+            'В файле нет таблицы ${entry.key}. Это не поддерживаемая база SPB Wallet.');
       }
       for (final column in entry.value) {
         if (!columns.contains(column)) {
-          throw SpbWalletOpenException('В таблице ${entry.key} нет колонки $column.');
+          throw SpbWalletOpenException(
+              'В таблице ${entry.key} нет колонки $column.');
         }
       }
     }
@@ -243,18 +537,21 @@ class SpbWalletDatabase {
       ['spbwlt_Card', 'Name'],
       ['spbwlt_TemplateField', 'Name'],
     ]) {
-      final rows = _db.select('SELECT ${tableAndColumn[1]} AS value FROM ${tableAndColumn[0]} LIMIT 3');
+      final rows = _db.select(
+          'SELECT ${tableAndColumn[1]} AS value FROM ${tableAndColumn[0]} LIMIT 3');
       samples.addAll(rows.map((row) => row['value']));
     }
     if (samples.isEmpty) return;
     if (!samples.any(crypto.looksLikeValidText)) {
-      throw const SpbWalletOpenException('Пароль SPB Wallet не подходит или база повреждена.');
+      throw const SpbWalletOpenException(
+          'Пароль SPB Wallet не подходит или база повреждена.');
     }
   }
 
   Map<String, SpbWalletCategoryRecord> _loadCategories() {
     final result = <String, SpbWalletCategoryRecord>{};
-    for (final row in _db.select('SELECT hex(ID) AS ID, Name, hex(ParentCategoryID) AS ParentCategoryID FROM spbwlt_Category')) {
+    for (final row in _db.select(
+        'SELECT hex(ID) AS ID, Name, hex(ParentCategoryID) AS ParentCategoryID FROM spbwlt_Category')) {
       final id = _string(row['ID']);
       result[id] = SpbWalletCategoryRecord(
         id: id,
@@ -272,12 +569,14 @@ class SpbWalletDatabase {
       byTemplate.putIfAbsent(field.templateId, () => []).add(field);
     }
     final templates = <SpbWalletTemplateRecord>[];
-    for (final row in _db.select('SELECT hex(ID) AS ID, Name FROM spbwlt_Template')) {
+    for (final row in _db.select(
+        'SELECT hex(spbwlt_Template.ID) AS ID, Name, hex(spbwlt_CardView.IconID) AS IconID FROM spbwlt_Template LEFT JOIN spbwlt_CardView ON spbwlt_CardView.ID = spbwlt_Template.CardViewID')) {
       final id = _string(row['ID']);
       templates.add(
         SpbWalletTemplateRecord(
           id: id,
           name: crypto.decryptText(row['Name']),
+          iconId: _string(row['IconID']),
           fields: byTemplate[id] ?? const [],
         ),
       );
@@ -286,7 +585,10 @@ class SpbWalletDatabase {
   }
 
   List<SpbWalletTemplateFieldRecord> _loadTemplateFields() {
-    return _db.select('SELECT hex(ID) AS ID, Name, hex(TemplateID) AS TemplateID, FieldTypeID, Priority FROM spbwlt_TemplateField ORDER BY hex(TemplateID), Priority').map((row) {
+    return _db
+        .select(
+            'SELECT hex(ID) AS ID, Name, hex(TemplateID) AS TemplateID, FieldTypeID, Priority FROM spbwlt_TemplateField ORDER BY hex(TemplateID), Priority')
+        .map((row) {
       return SpbWalletTemplateFieldRecord(
         id: _string(row['ID']),
         name: crypto.decryptText(row['Name']),
@@ -306,7 +608,9 @@ class SpbWalletDatabase {
 
     var parentId = '';
     for (final part in cleanParts) {
-      final rows = _db.select('SELECT hex(ID) AS ID, Name FROM spbwlt_Category WHERE hex(ParentCategoryID) = ?', [parentId]);
+      final rows = _db.select(
+          'SELECT hex(ID) AS ID, Name FROM spbwlt_Category WHERE hex(ParentCategoryID) = ?',
+          [parentId]);
       String? found;
       for (final row in rows) {
         if (crypto.decryptText(row['Name']) == part) {
@@ -333,7 +637,8 @@ class SpbWalletDatabase {
     return parentId;
   }
 
-  String _categoryPath(Map<String, SpbWalletCategoryRecord> categories, String categoryId) {
+  String _categoryPath(
+      Map<String, SpbWalletCategoryRecord> categories, String categoryId) {
     if (categoryId.isEmpty || !categories.containsKey(categoryId)) return '';
     final names = <String>[];
     var current = categories[categoryId];
@@ -346,7 +651,10 @@ class SpbWalletDatabase {
   }
 
   Set<String> _columns(String table) {
-    return _db.select('PRAGMA table_info($table)').map((row) => _string(row['name'])).toSet();
+    return _db
+        .select('PRAGMA table_info($table)')
+        .map((row) => _string(row['name']))
+        .toSet();
   }
 
   void _transaction(void Function() action) {
@@ -379,6 +687,59 @@ class SpbWalletDatabase {
     return id;
   }
 
+  int _loadCardColor(String cardViewId) {
+    if (cardViewId.isEmpty) return 0xffffff;
+    final rows = _db.select(
+        'SELECT CardColor FROM spbwlt_CardView WHERE hex(ID) = ?',
+        [cardViewId]);
+    if (rows.isEmpty) return 0xffffff;
+    return _cardColorToInt(rows.first['CardColor']);
+  }
+
+  void _saveCardColor(String cardId, int? cardColor) {
+    if (cardColor == null) return;
+    final rows = _db.select(
+        'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card WHERE hex(ID) = ?',
+        [cardId]);
+    if (rows.isEmpty) return;
+    final cardViewId = _string(rows.first['CardViewID']);
+    if (cardViewId.isEmpty) return;
+    _db.execute(
+      'UPDATE spbwlt_CardView SET CardColor = ?, FillCardWithColor = ? WHERE hex(ID) = ?',
+      [_cardColorBlob(cardColor), 1, cardViewId],
+    );
+    _db.execute('UPDATE spbwlt_Card SET HasOwnCardView = ? WHERE hex(ID) = ?',
+        [1, cardId]);
+  }
+
+  void _saveCardIcon(String cardId, String? iconId) {
+    if (iconId == null || iconId.isEmpty) return;
+    final rows = _db.select(
+        'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card WHERE hex(ID) = ?',
+        [cardId]);
+    if (rows.isEmpty) return;
+    final cardViewId = _string(rows.first['CardViewID']);
+    _db.execute(
+        'UPDATE spbwlt_Card SET IconID = ?, HasOwnCardView = ? WHERE hex(ID) = ?',
+        [_idFromHex(iconId), 1, cardId]);
+    if (cardViewId.isNotEmpty) {
+      _db.execute('UPDATE spbwlt_CardView SET IconID = ? WHERE hex(ID) = ?',
+          [_idFromHex(iconId), cardViewId]);
+    }
+  }
+
+  void _saveTemplateIcon(String templateId, String? iconId) {
+    if (iconId == null || iconId.isEmpty) return;
+    final rows = _db.select(
+        'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?',
+        [templateId]);
+    if (rows.isEmpty) return;
+    final cardViewId = _string(rows.first['CardViewID']);
+    if (cardViewId.isEmpty) return;
+    _db.execute('UPDATE spbwlt_CardView SET IconID = ? WHERE hex(ID) = ?',
+        [_idFromHex(iconId), cardViewId]);
+  }
+
   String _copyCardView(String sourceCardViewId) {
     if (sourceCardViewId.isEmpty) return _createCardView();
     final rows = _db.select(
@@ -402,7 +763,9 @@ class SpbWalletDatabase {
         row['FillCardWithColor'],
       ],
     );
-    for (final field in _db.select('SELECT hex(TemplateFieldID) AS TemplateFieldID, PositionX, PositionY, FontFamily, FontSize, FontColor, TextStyle, TextAlign, ShowFieldName FROM spbwlt_CardViewField WHERE hex(CardViewID) = ?', [sourceCardViewId])) {
+    for (final field in _db.select(
+        'SELECT hex(TemplateFieldID) AS TemplateFieldID, PositionX, PositionY, FontFamily, FontSize, FontColor, TextStyle, TextAlign, ShowFieldName FROM spbwlt_CardViewField WHERE hex(CardViewID) = ?',
+        [sourceCardViewId])) {
       _db.execute(
         'INSERT INTO spbwlt_CardViewField (ID, CardViewID, TemplateFieldID, PositionX, PositionY, FontFamily, FontSize, FontColor, TextStyle, TextAlign, ShowFieldName) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
@@ -423,8 +786,11 @@ class SpbWalletDatabase {
     return id;
   }
 
-  void _createCardViewFieldForTemplateField(String templateId, String fieldId, int priority) {
-    final rows = _db.select('SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?', [templateId]);
+  void _createCardViewFieldForTemplateField(
+      String templateId, String fieldId, int priority) {
+    final rows = _db.select(
+        'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?',
+        [templateId]);
     if (rows.isEmpty) return;
     final cardViewId = _string(rows.first['CardViewID']);
     _db.execute(
@@ -446,24 +812,43 @@ class SpbWalletDatabase {
   }
 
   String _defaultIconId() {
-    final cardRows = _db.select('SELECT hex(IconID) AS ID FROM spbwlt_Card WHERE length(IconID) > 0 LIMIT 1');
+    final cardRows = _db.select(
+        'SELECT hex(IconID) AS ID FROM spbwlt_Card WHERE length(IconID) > 0 LIMIT 1');
     if (cardRows.isNotEmpty) return _string(cardRows.first['ID']);
-    final viewRows = _db.select('SELECT hex(IconID) AS ID FROM spbwlt_CardView WHERE length(IconID) > 0 LIMIT 1');
+    final viewRows = _db.select(
+        'SELECT hex(IconID) AS ID FROM spbwlt_CardView WHERE length(IconID) > 0 LIMIT 1');
     if (viewRows.isNotEmpty) return _string(viewRows.first['ID']);
     return '';
   }
 
   String _defaultImageId() {
-    final rows = _db.select('SELECT hex(ImageID) AS ID FROM spbwlt_CardView WHERE length(ImageID) > 0 LIMIT 1');
+    final rows = _db.select(
+        'SELECT hex(ImageID) AS ID FROM spbwlt_CardView WHERE length(ImageID) > 0 LIMIT 1');
     return rows.isEmpty ? '' : _string(rows.first['ID']);
   }
 
   String _defaultTemplateId() {
-    final rows = _db.select('SELECT hex(ID) AS ID FROM spbwlt_Template LIMIT 1');
+    final rows =
+        _db.select('SELECT hex(ID) AS ID FROM spbwlt_Template LIMIT 1');
     return rows.isEmpty ? '' : _string(rows.first['ID']);
   }
 
   static String _string(Object? value) => value == null ? '' : value.toString();
+
+  static int _cardColorToInt(Object? value) {
+    if (value == null) return 0xffffff;
+    if (value is int) return value & 0xffffff;
+    if (value is Uint8List) {
+      return int.tryParse(String.fromCharCodes(value).trim()) ?? 0xffffff;
+    }
+    if (value is List<int>) {
+      return int.tryParse(String.fromCharCodes(value).trim()) ?? 0xffffff;
+    }
+    return int.tryParse(value.toString().trim()) ?? 0xffffff;
+  }
+
+  static Uint8List _cardColorBlob(int value) =>
+      Uint8List.fromList((value & 0xffffff).toString().codeUnits);
 
   static Uint8List _idFromHex(String hex) {
     if (hex.isEmpty) return Uint8List(0);
@@ -477,7 +862,9 @@ class SpbWalletDatabase {
   static String _makeSpbId() {
     final random = Random.secure();
     const alphabet = '0123456789abcdef';
-    return List.generate(16, (_) => alphabet[random.nextInt(alphabet.length)]).join().toUpperCase();
+    return List.generate(16, (_) => alphabet[random.nextInt(alphabet.length)])
+        .join()
+        .toUpperCase();
   }
 }
 
@@ -489,15 +876,24 @@ class SpbWalletSnapshot {
 }
 
 class SpbWalletTemplateRecord {
-  const SpbWalletTemplateRecord({required this.id, required this.name, required this.fields});
+  const SpbWalletTemplateRecord(
+      {required this.id,
+      required this.name,
+      required this.iconId,
+      required this.fields});
 
   final String id;
   final String name;
+  final String iconId;
   final List<SpbWalletTemplateFieldRecord> fields;
 }
 
 class SpbWalletTemplateFieldRecord {
-  const SpbWalletTemplateFieldRecord({required this.id, required this.name, required this.templateId, this.fieldTypeId = 1});
+  const SpbWalletTemplateFieldRecord(
+      {required this.id,
+      required this.name,
+      required this.templateId,
+      this.fieldTypeId = 1});
 
   final String id;
   final String name;
@@ -506,11 +902,16 @@ class SpbWalletTemplateFieldRecord {
 }
 
 class SpbWalletTemplateDraft {
-  const SpbWalletTemplateDraft({required this.id, required this.name, required this.fields});
+  const SpbWalletTemplateDraft(
+      {required this.id,
+      required this.name,
+      required this.fields,
+      this.iconId});
 
   final String id;
   final String name;
   final List<SpbWalletTemplateFieldRecord> fields;
+  final String? iconId;
 }
 
 class SpbWalletCardRecord {
@@ -523,6 +924,9 @@ class SpbWalletCardRecord {
     required this.fieldValues,
     required this.attachments,
     required this.hitCount,
+    required this.iconId,
+    required this.cardColor,
+    this.backgroundImageBase64,
   });
 
   final String id;
@@ -533,6 +937,9 @@ class SpbWalletCardRecord {
   final Map<String, String> fieldValues;
   final List<SpbWalletAttachmentRecord> attachments;
   final int hitCount;
+  final String iconId;
+  final int cardColor;
+  final String? backgroundImageBase64;
 }
 
 class SpbWalletCardDraft {
@@ -543,6 +950,9 @@ class SpbWalletCardDraft {
     required this.categoryPath,
     required this.templateId,
     required this.fieldValues,
+    this.iconId,
+    this.cardColor,
+    this.backgroundImageBase64,
   });
 
   final String id;
@@ -551,6 +961,9 @@ class SpbWalletCardDraft {
   final String categoryPath;
   final String templateId;
   final Map<String, String> fieldValues;
+  final String? iconId;
+  final int? cardColor;
+  final String? backgroundImageBase64;
 }
 
 class SpbWalletAttachmentRecord {
@@ -570,7 +983,8 @@ class SpbWalletAttachmentRecord {
 }
 
 class SpbWalletCategoryRecord {
-  const SpbWalletCategoryRecord({required this.id, required this.name, required this.parentId});
+  const SpbWalletCategoryRecord(
+      {required this.id, required this.name, required this.parentId});
 
   final String id;
   final String name;

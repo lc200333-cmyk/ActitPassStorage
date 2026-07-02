@@ -6,10 +6,10 @@ void main() {
     await tester.pumpWidget(const ActitPassApp());
 
     expect(find.text('ActitPassStorage'), findsWidgets);
-    expect(find.text('Открыть ActitPass'), findsOneWidget);
-    expect(find.text('Создать ActitPass'), findsOneWidget);
-    expect(find.text('Открыть SPB Wallet'), findsOneWidget);
-    expect(find.text('Открыть базу'), findsOneWidget);
-    expect(find.text('Мастер-пароль'), findsOneWidget);
+    expect(find.text('Открыть .swl'), findsOneWidget);
+    expect(find.text('Создать .swl'), findsOneWidget);
+    expect(find.text('Открыть .swl базу'), findsOneWidget);
+    expect(find.text('Пароль .swl базы'), findsOneWidget);
+    expect(find.text('Выбрать .swl файл'), findsOneWidget);
   });
 }

@@ -67,6 +67,8 @@ npm run docker:apk
 
 ```bash
 npm run docker:deb
+
+sudo apt install --reinstall ./dist/actit-pass-storage_0.1.0_amd64.deb
 ```
 
 `docker:deb` собирает пакет в Ubuntu 20.04 контейнере, чтобы избежать ошибки `GLIBC_2.34 not found` на старых Linux.

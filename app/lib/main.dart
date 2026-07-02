@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -74,7 +75,8 @@ class FieldDefinition {
         'secret': secret,
       };
 
-  factory FieldDefinition.fromJson(Map<String, dynamic> json) => FieldDefinition(
+  factory FieldDefinition.fromJson(Map<String, dynamic> json) =>
+      FieldDefinition(
         id: json['id'] as String,
         label: json['label'] as String,
         type: json['type'] as String,
@@ -116,7 +118,8 @@ class CardTemplate {
         colorId: json['colorId'] as String,
         builtIn: json['builtIn'] == true,
         fields: (json['fields'] as List<dynamic>)
-            .map((field) => FieldDefinition.fromJson(field as Map<String, dynamic>))
+            .map((field) =>
+                FieldDefinition.fromJson(field as Map<String, dynamic>))
             .toList(),
       );
 }
@@ -132,6 +135,8 @@ class SecretItem {
     required this.modifiedAt,
     this.attachments = const [],
     this.hitCount = 0,
+    this.iconId,
+    this.backgroundImageBase64,
   });
 
   final String id;
@@ -143,6 +148,8 @@ class SecretItem {
   final DateTime modifiedAt;
   final List<SecretAttachment> attachments;
   final int hitCount;
+  final String? iconId;
+  final String? backgroundImageBase64;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -152,8 +159,11 @@ class SecretItem {
         'colorId': colorId,
         'values': values,
         'modifiedAt': modifiedAt.toIso8601String(),
-        'attachments': attachments.map((attachment) => attachment.toJson()).toList(),
+        'attachments':
+            attachments.map((attachment) => attachment.toJson()).toList(),
         'hitCount': hitCount,
+        'iconId': iconId,
+        'backgroundImageBase64': backgroundImageBase64,
       };
 
   factory SecretItem.fromJson(Map<String, dynamic> json) => SecretItem(
@@ -162,12 +172,16 @@ class SecretItem {
         title: json['title'] as String,
         category: json['category'] as String? ?? '',
         colorId: json['colorId'] as String? ?? 'neutral',
-        values: Map<String, String>.from(json['values'] as Map<dynamic, dynamic>),
+        values:
+            Map<String, String>.from(json['values'] as Map<dynamic, dynamic>),
         modifiedAt: DateTime.parse(json['modifiedAt'] as String),
         attachments: (json['attachments'] as List<dynamic>? ?? [])
-            .map((attachment) => SecretAttachment.fromJson(attachment as Map<String, dynamic>))
+            .map((attachment) =>
+                SecretAttachment.fromJson(attachment as Map<String, dynamic>))
             .toList(),
         hitCount: json['hitCount'] as int? ?? 0,
+        iconId: json['iconId'] as String?,
+        backgroundImageBase64: json['backgroundImageBase64'] as String?,
       );
 }
 
@@ -212,7 +226,8 @@ class SecretAttachment {
         'decodeError': decodeError,
       };
 
-  factory SecretAttachment.fromJson(Map<String, dynamic> json) => SecretAttachment(
+  factory SecretAttachment.fromJson(Map<String, dynamic> json) =>
+      SecretAttachment(
         id: json['id'] as String,
         fileName: json['fileName'] as String,
         size: json['size'] as int? ?? -1,
@@ -230,6 +245,13 @@ class CategoryTreeNode {
   bool get isEmpty => children.isEmpty && cards.isEmpty;
 }
 
+class ExistingVault {
+  const ExistingVault({required this.title, this.path});
+
+  final String title;
+  final String? path;
+}
+
 abstract class VaultSession {
   Future<void> load();
   Future<void> saveItem(SecretItem item);
@@ -237,91 +259,6 @@ abstract class VaultSession {
   Future<void> saveTemplate(CardTemplate template);
   Future<void> saveAttachment(String itemId, SecretAttachment attachment);
   Future<void> close();
-}
-
-class ActitPassJsonSession implements VaultSession {
-  ActitPassJsonSession({required this.file, required this.password});
-
-  final File file;
-  final String password;
-  List<CardTemplate> templates = [];
-  List<SecretItem> items = [];
-  List<ConflictRecord> conflicts = [];
-
-  @override
-  Future<void> load() async {
-    final raw = await file.readAsString();
-    final json = jsonDecode(utf8.decode(base64.decode(raw))) as Map<String, dynamic>;
-    templates = (json['templates'] as List<dynamic>)
-        .map((template) => CardTemplate.fromJson(template as Map<String, dynamic>))
-        .toList();
-    items = (json['items'] as List<dynamic>)
-        .map((item) => SecretItem.fromJson(item as Map<String, dynamic>))
-        .toList();
-    conflicts = (json['conflicts'] as List<dynamic>? ?? [])
-        .map((conflict) => ConflictRecord.fromJson(conflict as Map<String, dynamic>))
-        .toList();
-  }
-
-  @override
-  Future<void> saveItem(SecretItem item) async {
-    items = [...items.where((entry) => entry.id != item.id), item];
-    await _persist();
-  }
-
-  @override
-  Future<void> deleteItem(String itemId) async {
-    items = items.where((item) => item.id != itemId).toList();
-    await _persist();
-  }
-
-  @override
-  Future<void> saveTemplate(CardTemplate template) async {
-    templates = [...templates.where((entry) => entry.id != template.id), template];
-    await _persist();
-  }
-
-  @override
-  Future<void> saveAttachment(String itemId, SecretAttachment attachment) async {
-    items = items.map((item) {
-      if (item.id != itemId) return item;
-      return SecretItem(
-        id: item.id,
-        templateId: item.templateId,
-        title: item.title,
-        category: item.category,
-        colorId: item.colorId,
-        values: item.values,
-        modifiedAt: DateTime.now(),
-        attachments: [...item.attachments.where((entry) => entry.id != attachment.id), attachment],
-        hitCount: item.hitCount,
-      );
-    }).toList();
-    await _persist();
-  }
-
-  @override
-  Future<void> close() async {}
-
-  Future<void> _persist() async {
-    final payload = {
-      'format': 'actitpass-flutter-alpha',
-      'passwordHash': _passwordHash(password),
-      'templates': templates.map((template) => template.toJson()).toList(),
-      'items': items.map((item) => item.toJson()).toList(),
-      'conflicts': conflicts.map((conflict) => conflict.toJson()).toList(),
-    };
-    await file.writeAsString(base64.encode(utf8.encode(jsonEncode(payload))));
-  }
-
-  static String _passwordHash(String password) {
-    var hash = 2166136261;
-    for (final codeUnit in password.codeUnits) {
-      hash ^= codeUnit;
-      hash = (hash * 16777619) & 0xffffffff;
-    }
-    return hash.toRadixString(16);
-  }
 }
 
 class SpbWalletSession implements VaultSession {
@@ -348,6 +285,9 @@ class SpbWalletSession implements VaultSession {
           for (final entry in item.values.entries)
             if (entry.key != spbDescriptionFieldId) entry.key: entry.value,
         },
+        cardColor: paletteColorToSpb(item.colorId),
+        iconId:
+            item.iconId == null ? null : syntheticSpbIconIdForUi(item.iconId!),
       ),
     );
     await load();
@@ -365,9 +305,14 @@ class SpbWalletSession implements VaultSession {
       SpbWalletTemplateDraft(
         id: template.id,
         name: template.name,
+        iconId: syntheticSpbIconIdForUi(template.iconId),
         fields: template.fields
             .where((field) => field.id != spbDescriptionFieldId)
-            .map((field) => SpbWalletTemplateFieldRecord(id: field.id, name: field.label, templateId: template.id, fieldTypeId: spbFieldTypeId(field)))
+            .map((field) => SpbWalletTemplateFieldRecord(
+                id: field.id,
+                name: field.label,
+                templateId: template.id,
+                fieldTypeId: spbFieldTypeId(field)))
             .toList(),
       ),
     );
@@ -375,7 +320,8 @@ class SpbWalletSession implements VaultSession {
   }
 
   @override
-  Future<void> saveAttachment(String itemId, SecretAttachment attachment) async {
+  Future<void> saveAttachment(
+      String itemId, SecretAttachment attachment) async {
     final bytes = attachment.pendingBytes;
     if (attachment.deleted && attachment.id.isNotEmpty) {
       database.deleteAttachment(attachment.id);
@@ -449,7 +395,144 @@ const templateIcons = [
   TemplateIcon('bank', 'Банк', '🏦'),
   TemplateIcon('mail', 'Почта', '✉️'),
   TemplateIcon('shield', 'Защита', '🛡️'),
+  TemplateIcon('lock', 'Замок', '🔒'),
+  TemplateIcon('unlock', 'Открытый замок', '🔓'),
+  TemplateIcon('safe', 'Сейф', '🧰'),
+  TemplateIcon('briefcase', 'Портфель', '💼'),
+  TemplateIcon('folder', 'Папка', '📁'),
+  TemplateIcon('file', 'Файл', '📄'),
+  TemplateIcon('bookmark', 'Закладка', '🔖'),
+  TemplateIcon('tag', 'Метка', '🏷️'),
+  TemplateIcon('receipt', 'Чек', '🧾'),
+  TemplateIcon('money', 'Деньги', '💵'),
+  TemplateIcon('coin', 'Монеты', '🪙'),
+  TemplateIcon('wallet', 'Кошелек', '👛'),
+  TemplateIcon('chart', 'График', '📈'),
+  TemplateIcon('calculator', 'Калькулятор', '🧮'),
+  TemplateIcon('home', 'Дом', '🏠'),
+  TemplateIcon('car', 'Авто', '🚗'),
+  TemplateIcon('plane', 'Самолет', '✈️'),
+  TemplateIcon('train', 'Поезд', '🚆'),
+  TemplateIcon('passport', 'Паспорт', '🛂'),
+  TemplateIcon('ticket', 'Билет', '🎫'),
+  TemplateIcon('phone', 'Телефон', '📱'),
+  TemplateIcon('desktop', 'Компьютер', '🖥️'),
+  TemplateIcon('laptop', 'Ноутбук', '💻'),
+  TemplateIcon('printer', 'Принтер', '🖨️'),
+  TemplateIcon('keyboard', 'Клавиатура', '⌨️'),
+  TemplateIcon('mouse', 'Мышь', '🖱️'),
+  TemplateIcon('disk', 'Диск', '💾'),
+  TemplateIcon('cd', 'Диск', '💿'),
+  TemplateIcon('camera', 'Камера', '📷'),
+  TemplateIcon('video', 'Видео', '🎥'),
+  TemplateIcon('tv', 'Телевизор', '📺'),
+  TemplateIcon('game', 'Игры', '🎮'),
+  TemplateIcon('headphones', 'Наушники', '🎧'),
+  TemplateIcon('watch', 'Часы', '⌚'),
+  TemplateIcon('satellite', 'Связь', '📡'),
+  TemplateIcon('globe', 'Сайт', '🌐'),
+  TemplateIcon('link', 'Ссылка', '🔗'),
+  TemplateIcon('cloud', 'Облако', '☁️'),
+  TemplateIcon('database', 'База данных', '🗄️'),
+  TemplateIcon('gear', 'Настройки', '⚙️'),
+  TemplateIcon('tool', 'Инструмент', '🛠️'),
+  TemplateIcon('wrench', 'Ключ', '🔧'),
+  TemplateIcon('bug', 'Багтрекер', '🐞'),
+  TemplateIcon('code', 'Код', '💻'),
+  TemplateIcon('package', 'Пакет', '📦'),
+  TemplateIcon('rocket', 'Проект', '🚀'),
+  TemplateIcon('lab', 'Лаборатория', '🧪'),
+  TemplateIcon('medical', 'Медицина', '⚕️'),
+  TemplateIcon('heart', 'Здоровье', '❤️'),
+  TemplateIcon('pill', 'Лекарства', '💊'),
+  TemplateIcon('school', 'Учеба', '🎓'),
+  TemplateIcon('book', 'Книга', '📚'),
+  TemplateIcon('pen', 'Ручка', '🖊️'),
+  TemplateIcon('clipboard', 'Буфер', '📋'),
+  TemplateIcon('calendar', 'Календарь', '📅'),
+  TemplateIcon('clock', 'Время', '⏰'),
+  TemplateIcon('pin', 'PIN', '📌'),
+  TemplateIcon('location', 'Адрес', '📍'),
+  TemplateIcon('map', 'Карта', '🗺️'),
+  TemplateIcon('house_key', 'Ключи дома', '🗝️'),
+  TemplateIcon('building', 'Компания', '🏢'),
+  TemplateIcon('shop', 'Магазин', '🏬'),
+  TemplateIcon('factory', 'Производство', '🏭'),
+  TemplateIcon('hammer', 'Работа', '🔨'),
+  TemplateIcon('scales', 'Документы', '⚖️'),
+  TemplateIcon('certificate', 'Сертификат', '📜'),
+  TemplateIcon('medal', 'Награда', '🏅'),
+  TemplateIcon('star', 'Избранное', '⭐'),
+  TemplateIcon('warning', 'Важно', '⚠️'),
+  TemplateIcon('bell', 'Напоминание', '🔔'),
+  TemplateIcon('gift', 'Подарок', '🎁'),
+  TemplateIcon('cart', 'Покупки', '🛒'),
+  TemplateIcon('food', 'Еда', '🍽️'),
+  TemplateIcon('coffee', 'Кофе', '☕'),
+  TemplateIcon('hotel', 'Отель', '🏨'),
+  TemplateIcon('taxi', 'Такси', '🚕'),
+  TemplateIcon('fuel', 'Топливо', '⛽'),
+  TemplateIcon('bicycle', 'Велосипед', '🚲'),
+  TemplateIcon('ship', 'Корабль', '🚢'),
+  TemplateIcon('anchor', 'Якорь', '⚓'),
+  TemplateIcon('crypto', 'Крипто', '₿'),
+  TemplateIcon('diamond', 'Ценности', '💎'),
+  TemplateIcon('gem', 'Драгоценности', '💍'),
+  TemplateIcon('mailbox', 'Почтовый ящик', '📫'),
+  TemplateIcon('inbox', 'Входящие', '📥'),
+  TemplateIcon('outbox', 'Исходящие', '📤'),
+  TemplateIcon('chat', 'Чат', '💬'),
+  TemplateIcon('contact', 'Контакт', '👤'),
+  TemplateIcon('group', 'Группа', '👥'),
+  TemplateIcon('family', 'Семья', '👪'),
+  TemplateIcon('fingerprint', 'Биометрия', '🫆'),
+  TemplateIcon('magnifier', 'Поиск', '🔎'),
+  TemplateIcon('battery', 'Питание', '🔋'),
+  TemplateIcon('plug', 'Подключение', '🔌'),
+  TemplateIcon('fire', 'Срочно', '🔥'),
+  TemplateIcon('snowflake', 'Архив', '❄️'),
+  TemplateIcon('plant', 'Сад', '🌱'),
+  TemplateIcon('tree', 'Участок', '🌳'),
+  TemplateIcon('sun', 'Свет', '☀️'),
+  TemplateIcon('moon', 'Ночь', '🌙'),
+  TemplateIcon('umbrella', 'Страховка', '☂️'),
+  TemplateIcon('magnet', 'Магнит', '🧲'),
+  TemplateIcon('dna', 'Данные', '🧬'),
+  TemplateIcon('microchip', 'Чип', '🔬'),
+  TemplateIcon('qr', 'QR', '▪️'),
+  TemplateIcon('check', 'Проверено', '✅'),
+  TemplateIcon('cross', 'Ошибка', '❌'),
+  TemplateIcon('plus', 'Дополнительно', '➕'),
+  TemplateIcon('minus', 'Вычет', '➖'),
+  TemplateIcon('question', 'Вопрос', '❓'),
+  TemplateIcon('info', 'Информация', 'ℹ️'),
 ];
+
+const quickTemplateIconIds = [
+  'key',
+  'note',
+  'card',
+  'id',
+  'server',
+  'license',
+  'wifi',
+  'bank',
+  'mail',
+  'shield',
+];
+
+List<TemplateIcon> quickTemplateIcons(String selectedIconId) {
+  final selected = iconById(selectedIconId);
+  final icons = [
+    ...quickTemplateIconIds.map(iconById),
+    if (!quickTemplateIconIds.contains(selected.id)) selected,
+  ];
+  final seen = <String>{};
+  return [
+    for (final icon in icons)
+      if (seen.add(icon.id)) icon,
+  ];
+}
 
 List<CardTemplate> builtInTemplates() => const [
       CardTemplate(
@@ -460,9 +543,15 @@ List<CardTemplate> builtInTemplates() => const [
         builtIn: true,
         fields: [
           FieldDefinition(id: 'username', label: 'Логин', type: 'username'),
-          FieldDefinition(id: 'password', label: 'Пароль', type: 'password', required: true, secret: true),
+          FieldDefinition(
+              id: 'password',
+              label: 'Пароль',
+              type: 'password',
+              required: true,
+              secret: true),
           FieldDefinition(id: 'url', label: 'Сайт', type: 'url'),
-          FieldDefinition(id: 'notes', label: 'Заметки', type: 'multiline_note'),
+          FieldDefinition(
+              id: 'notes', label: 'Заметки', type: 'multiline_note'),
         ],
       ),
       CardTemplate(
@@ -472,7 +561,11 @@ List<CardTemplate> builtInTemplates() => const [
         colorId: 'neutral',
         builtIn: true,
         fields: [
-          FieldDefinition(id: 'note', label: 'Текст заметки', type: 'multiline_note', required: true),
+          FieldDefinition(
+              id: 'note',
+              label: 'Текст заметки',
+              type: 'multiline_note',
+              required: true),
         ],
       ),
       CardTemplate(
@@ -483,9 +576,14 @@ List<CardTemplate> builtInTemplates() => const [
         builtIn: true,
         fields: [
           FieldDefinition(id: 'holder', label: 'Владелец карты', type: 'text'),
-          FieldDefinition(id: 'number', label: 'Номер карты', type: 'custom_secret', required: true),
+          FieldDefinition(
+              id: 'number',
+              label: 'Номер карты',
+              type: 'custom_secret',
+              required: true),
           FieldDefinition(id: 'expires', label: 'Действует до', type: 'date'),
-          FieldDefinition(id: 'cvv', label: 'CVV', type: 'password', secret: true),
+          FieldDefinition(
+              id: 'cvv', label: 'CVV', type: 'password', secret: true),
         ],
       ),
       CardTemplate(
@@ -495,10 +593,16 @@ List<CardTemplate> builtInTemplates() => const [
         colorId: 'violet',
         builtIn: true,
         fields: [
-          FieldDefinition(id: 'full_name', label: 'ФИО', type: 'text', required: true),
-          FieldDefinition(id: 'document_number', label: 'Номер документа', type: 'custom_secret', required: true),
+          FieldDefinition(
+              id: 'full_name', label: 'ФИО', type: 'text', required: true),
+          FieldDefinition(
+              id: 'document_number',
+              label: 'Номер документа',
+              type: 'custom_secret',
+              required: true),
           FieldDefinition(id: 'issued_at', label: 'Дата выдачи', type: 'date'),
-          FieldDefinition(id: 'notes', label: 'Заметки', type: 'multiline_note'),
+          FieldDefinition(
+              id: 'notes', label: 'Заметки', type: 'multiline_note'),
         ],
       ),
       CardTemplate(
@@ -508,10 +612,20 @@ List<CardTemplate> builtInTemplates() => const [
         colorId: 'green',
         builtIn: true,
         fields: [
-          FieldDefinition(id: 'host', label: 'Хост', type: 'url', required: true),
-          FieldDefinition(id: 'username', label: 'Пользователь', type: 'username', required: true),
-          FieldDefinition(id: 'password', label: 'Пароль или фраза ключа', type: 'password', secret: true),
-          FieldDefinition(id: 'notes', label: 'Заметки', type: 'multiline_note'),
+          FieldDefinition(
+              id: 'host', label: 'Хост', type: 'url', required: true),
+          FieldDefinition(
+              id: 'username',
+              label: 'Пользователь',
+              type: 'username',
+              required: true),
+          FieldDefinition(
+              id: 'password',
+              label: 'Пароль или фраза ключа',
+              type: 'password',
+              secret: true),
+          FieldDefinition(
+              id: 'notes', label: 'Заметки', type: 'multiline_note'),
         ],
       ),
       CardTemplate(
@@ -521,8 +635,13 @@ List<CardTemplate> builtInTemplates() => const [
         colorId: 'amber',
         builtIn: true,
         fields: [
-          FieldDefinition(id: 'product', label: 'Продукт', type: 'text', required: true),
-          FieldDefinition(id: 'license_key', label: 'Лицензионный ключ', type: 'custom_secret', required: true),
+          FieldDefinition(
+              id: 'product', label: 'Продукт', type: 'text', required: true),
+          FieldDefinition(
+              id: 'license_key',
+              label: 'Лицензионный ключ',
+              type: 'custom_secret',
+              required: true),
           FieldDefinition(id: 'email', label: 'Email аккаунта', type: 'email'),
         ],
       ),
@@ -533,8 +652,14 @@ List<CardTemplate> builtInTemplates() => const [
         colorId: 'green',
         builtIn: true,
         fields: [
-          FieldDefinition(id: 'ssid', label: 'Название сети', type: 'text', required: true),
-          FieldDefinition(id: 'password', label: 'Пароль Wi-Fi', type: 'password', required: true, secret: true),
+          FieldDefinition(
+              id: 'ssid', label: 'Название сети', type: 'text', required: true),
+          FieldDefinition(
+              id: 'password',
+              label: 'Пароль Wi-Fi',
+              type: 'password',
+              required: true,
+              secret: true),
           FieldDefinition(id: 'security', label: 'Тип защиты', type: 'text'),
         ],
       ),
@@ -545,10 +670,20 @@ List<CardTemplate> builtInTemplates() => const [
         colorId: 'blue',
         builtIn: true,
         fields: [
-          FieldDefinition(id: 'bank', label: 'Банк', type: 'text', required: true),
-          FieldDefinition(id: 'account', label: 'Номер счета', type: 'custom_secret', required: true),
-          FieldDefinition(id: 'login', label: 'Логин интернет-банка', type: 'username'),
-          FieldDefinition(id: 'password', label: 'Пароль интернет-банка', type: 'password', secret: true),
+          FieldDefinition(
+              id: 'bank', label: 'Банк', type: 'text', required: true),
+          FieldDefinition(
+              id: 'account',
+              label: 'Номер счета',
+              type: 'custom_secret',
+              required: true),
+          FieldDefinition(
+              id: 'login', label: 'Логин интернет-банка', type: 'username'),
+          FieldDefinition(
+              id: 'password',
+              label: 'Пароль интернет-банка',
+              type: 'password',
+              secret: true),
         ],
       ),
     ];
@@ -558,18 +693,134 @@ PaletteColor colorById(String id) => palette.firstWhere(
       orElse: () => palette.first,
     );
 
+int paletteColorToSpb(String colorId) =>
+    colorById(colorId).bg.toARGB32() & 0x00ffffff;
+
+String spbColorToPaletteId(int color) {
+  final normalized = color & 0x00ffffff;
+  if (normalized == 0xffffff) return 'neutral';
+  var best = palette.first;
+  var bestDistance = 1 << 62;
+  for (final candidate in palette) {
+    final value = candidate.bg.toARGB32() & 0x00ffffff;
+    final dr = ((normalized >> 16) & 0xff) - ((value >> 16) & 0xff);
+    final dg = ((normalized >> 8) & 0xff) - ((value >> 8) & 0xff);
+    final db = (normalized & 0xff) - (value & 0xff);
+    final distance = dr * dr + dg * dg + db * db;
+    if (distance < bestDistance) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best.id;
+}
+
 TemplateIcon iconById(String id) => templateIcons.firstWhere(
       (icon) => icon.id == id,
       orElse: () => templateIcons.first,
     );
 
+String defaultIconForTemplateName(String name, Iterable<String> fieldLabels) {
+  final text = ([name, ...fieldLabels]).join(' ').toLowerCase();
+  if (text.contains('банк') ||
+      text.contains('bank') ||
+      text.contains('счет') ||
+      text.contains('account')) {
+    return 'bank';
+  }
+  if (text.contains('карта') || text.contains('card') || text.contains('cvv')) {
+    return 'card';
+  }
+  if (text.contains('wi-fi') ||
+      text.contains('wifi') ||
+      text.contains('ssid')) {
+    return 'wifi';
+  }
+  if (text.contains('почт') ||
+      text.contains('mail') ||
+      text.contains('email')) {
+    return 'mail';
+  }
+  if (text.contains('паспорт') ||
+      text.contains('документ') ||
+      text.contains('удостовер') ||
+      text.contains('document') ||
+      text.contains('identity')) {
+    return 'id';
+  }
+  if (text.contains('сервер') ||
+      text.contains('server') ||
+      text.contains('ssh') ||
+      text.contains('host')) {
+    return 'server';
+  }
+  if (text.contains('лиценз') ||
+      text.contains('license') ||
+      text.contains('ключ продукта')) {
+    return 'license';
+  }
+  if (text.contains('замет') ||
+      text.contains('note') ||
+      text.contains('memo')) {
+    return 'note';
+  }
+  if (text.contains('телефон') || text.contains('phone')) return 'phone';
+  if (text.contains('сайт') ||
+      text.contains('url') ||
+      text.contains('web') ||
+      text.contains('internet')) {
+    return 'globe';
+  }
+  if (text.contains('облак') || text.contains('cloud')) return 'cloud';
+  if (text.contains('база') || text.contains('database')) return 'database';
+  if (text.contains('крипт') ||
+      text.contains('bitcoin') ||
+      text.contains('crypto')) {
+    return 'crypto';
+  }
+  if (text.contains('pin') ||
+      text.contains('парол') ||
+      text.contains('password') ||
+      text.contains('логин')) {
+    return 'key';
+  }
+  return 'key';
+}
+
+String itemIconId(SecretItem item, CardTemplate template) {
+  final iconId = item.iconId;
+  return iconId == null || iconId.isEmpty ? template.iconId : iconId;
+}
+
+String syntheticSpbIconIdForUi(String uiIconId) {
+  var first = 2166136261;
+  var second = 2166136261 ^ 0x9e3779b9;
+  for (final codeUnit in 'actitpass-icon:$uiIconId'.codeUnits) {
+    first ^= codeUnit;
+    first = (first * 16777619) & 0xffffffff;
+    second ^= codeUnit + 31;
+    second = (second * 16777619) & 0xffffffff;
+  }
+  return first.toRadixString(16).padLeft(8, '0').toUpperCase() +
+      second.toRadixString(16).padLeft(8, '0').toUpperCase();
+}
+
+String? uiIconIdFromSyntheticSpbIcon(String spbIconId) {
+  final normalized = spbIconId.toUpperCase();
+  for (final icon in templateIcons) {
+    if (syntheticSpbIconIdForUi(icon.id) == normalized) return icon.id;
+  }
+  return null;
+}
+
 String makeId(String prefix) {
   final random = Random.secure();
-  final suffix = List.generate(12, (_) => random.nextInt(16).toRadixString(16)).join();
+  final suffix =
+      List.generate(12, (_) => random.nextInt(16).toRadixString(16)).join();
   return '${prefix}_$suffix';
 }
 
-enum EntryMode { openActitPass, createActitPass, openSpbWallet }
+enum EntryMode { openSwl, createSwl }
 
 const spbDescriptionFieldId = '__spb_description';
 const spbWalletChannel = MethodChannel('actit_pass_storage/spb_wallet');
@@ -593,6 +844,77 @@ int spbFieldTypeId(FieldDefinition field) {
   }
 }
 
+String normalizeUrlInput(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty ||
+      RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(trimmed)) {
+    return trimmed;
+  }
+  return 'https://$trimmed';
+}
+
+String formatDateInput(DateTime date) {
+  final day = date.day.toString().padLeft(2, '0');
+  final month = date.month.toString().padLeft(2, '0');
+  final year = date.year.toString().padLeft(4, '0');
+  return '$day.$month.$year';
+}
+
+DateTime? parseDateInput(String value) {
+  final trimmed = value.trim();
+  final dotted = RegExp(r'^(\d{2})\.(\d{2})\.(\d{4})$').firstMatch(trimmed);
+  if (dotted != null) {
+    final day = int.parse(dotted.group(1)!);
+    final month = int.parse(dotted.group(2)!);
+    final year = int.parse(dotted.group(3)!);
+    return validDate(year, month, day);
+  }
+  final iso = RegExp(r'^(\d{4})-(\d{2})(?:-(\d{2}))?$').firstMatch(trimmed);
+  if (iso != null) {
+    final year = int.parse(iso.group(1)!);
+    final month = int.parse(iso.group(2)!);
+    final day = int.parse(iso.group(3) ?? '1');
+    return validDate(year, month, day);
+  }
+  return null;
+}
+
+DateTime? validDate(int year, int month, int day) {
+  if (year < 1 || month < 1 || month > 12 || day < 1) return null;
+  final date = DateTime(year, month, day);
+  if (date.year != year || date.month != month || date.day != day) {
+    return null;
+  }
+  return date;
+}
+
+class DateTextInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    final trimmed = digits.length > 8 ? digits.substring(0, 8) : digits;
+    final parts = <String>[];
+    if (trimmed.isNotEmpty) {
+      parts.add(trimmed.length <= 2 ? trimmed : trimmed.substring(0, 2));
+    }
+    if (trimmed.length > 2) {
+      parts.add(
+          trimmed.length <= 4 ? trimmed.substring(2) : trimmed.substring(2, 4));
+    }
+    if (trimmed.length > 4) {
+      parts.add(trimmed.substring(4));
+    }
+    final text = parts.join('.');
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+}
+
 class VaultShell extends StatefulWidget {
   const VaultShell({super.key});
 
@@ -606,14 +928,18 @@ class _VaultShellState extends State<VaultShell> {
   final confirmController = TextEditingController();
   final searchController = TextEditingController();
 
-  EntryMode entryMode = EntryMode.openActitPass;
+  EntryMode entryMode = EntryMode.openSwl;
   bool showPassword = false;
   bool showConfirm = false;
   bool unlocked = false;
+  bool? menuOpenOverride;
   String activeView = 'cards';
   String? message;
   String? spbWalletPath;
   String? spbWalletUri;
+  String? syncSourcePath;
+  String? syncSourceUrl;
+  String? syncOriginProvider;
   SpbWalletDatabase? spbWallet;
   String syncProvider = 'mounted_folder';
   String templateFilter = '';
@@ -624,21 +950,30 @@ class _VaultShellState extends State<VaultShell> {
   List<CardTemplate> templates = builtInTemplates();
   List<SecretItem> items = [];
   List<ConflictRecord> conflicts = [];
+  List<ExistingVault> recentVaults = [];
+  final Map<String, String> spbIconIdByUiIcon = {};
   final Set<String> revealed = {};
   final Map<String, String> syncConfig = {};
 
-  bool get createMode => entryMode == EntryMode.createActitPass;
-  bool get spbMode => entryMode == EntryMode.openSpbWallet || spbWallet != null;
+  bool get createMode => entryMode == EntryMode.createSwl;
 
-  File get vaultFile {
-    final safeName = vaultNameController.text.trim().isEmpty ? 'personal' : vaultNameController.text.trim();
-    return File('${Directory.systemTemp.path}/actitpass_${base64Url.encode(utf8.encode(safeName))}.json');
+  File get swlVaultFile {
+    final safeName = vaultNameController.text.trim().isEmpty
+        ? 'personal'
+        : vaultNameController.text.trim();
+    final sanitized =
+        safeName.replaceAll(RegExp(r'[^\wа-яА-ЯёЁ.-]+', unicode: true), '_');
+    return File('${Directory.systemTemp.path}/$sanitized.swl');
   }
+
+  File get recentVaultsFile =>
+      File('${Directory.systemTemp.path}/actitpass_recent_swl.json');
 
   @override
   void initState() {
     super.initState();
     searchController.addListener(() => setState(() {}));
+    loadRecentVaults();
   }
 
   @override
@@ -653,9 +988,9 @@ class _VaultShellState extends State<VaultShell> {
 
   Future<void> unlock() async {
     final password = passwordController.text;
-    if (entryMode == EntryMode.openSpbWallet) {
+    if (entryMode == EntryMode.openSwl) {
       if (spbWalletPath == null || spbWalletPath!.isEmpty) {
-        setState(() => message = 'Выберите файл базы SPB Wallet с расширением .swl.');
+        setState(() => message = 'Выберите файл базы .swl.');
         return;
       }
       try {
@@ -663,23 +998,24 @@ class _VaultShellState extends State<VaultShell> {
         final wallet = SpbWalletDatabase.open(spbWalletPath!, password);
         final snapshot = wallet.loadSnapshot();
         spbWallet = wallet;
+        spbIconIdByUiIcon.clear();
         setState(() {
           templates = spbTemplatesToUi(snapshot.templates);
           items = spbCardsToUi(snapshot.cards);
           conflicts = [];
           lastSyncAt = null;
+          syncSourcePath = null;
+          syncSourceUrl = null;
+          syncOriginProvider = null;
           selectedItemId = items.isEmpty ? null : items.first.id;
           unlocked = true;
           activeView = 'cards';
           message = null;
         });
+        await rememberRecentVault(spbWalletPath!);
       } catch (error) {
-        setState(() => message = 'Не удалось открыть SPB Wallet: $error');
+        setState(() => message = 'Не удалось открыть .swl базу: $error');
       }
-      return;
-    }
-    if (password.length < 8) {
-      setState(() => message = 'Мастер-пароль должен быть не короче 8 символов.');
       return;
     }
     if (createMode && password != confirmController.text) {
@@ -687,45 +1023,33 @@ class _VaultShellState extends State<VaultShell> {
       return;
     }
     if (createMode) {
-      templates = builtInTemplates();
-      items = demoItems();
-      conflicts = [];
-      lastSyncAt = null;
-      await saveVault();
-      setState(() {
-        unlocked = true;
-        selectedItemId = items.isEmpty ? null : items.first.id;
-        message = null;
-      });
+      try {
+        await createSwlVault(password);
+      } catch (error) {
+        setState(() => message = 'Не удалось создать .swl базу: $error');
+      }
       return;
-    }
-    try {
-      await loadVault();
-      setState(() {
-        unlocked = true;
-        selectedItemId = items.isEmpty ? null : items.first.id;
-        message = null;
-      });
-    } catch (_) {
-      setState(() => message = 'База не найдена или пароль не подходит. Для новой базы выберите “Создать”.');
     }
   }
 
   Future<void> pickSpbWalletFile() async {
     if (Platform.isAndroid) {
       try {
-        final picked = await spbWalletChannel.invokeMapMethod<String, Object?>('pickSpbWallet');
+        final picked = await spbWalletChannel
+            .invokeMapMethod<String, Object?>('pickSpbWallet');
         if (picked == null) return;
         final path = picked['localPath']?.toString();
         if (path == null || path.isEmpty) return;
         setState(() {
           spbWalletPath = path;
           spbWalletUri = picked['uri']?.toString();
-          vaultNameController.text = picked['displayName']?.toString() ?? File(path).uri.pathSegments.last;
+          vaultNameController.text = picked['displayName']?.toString() ??
+              File(path).uri.pathSegments.last;
           message = null;
         });
+        await rememberRecentVault(path);
       } catch (error) {
-        setState(() => message = 'Не удалось выбрать файл SPB Wallet: $error');
+        setState(() => message = 'Не удалось выбрать .swl файл: $error');
       }
       return;
     }
@@ -739,23 +1063,344 @@ class _VaultShellState extends State<VaultShell> {
     setState(() {
       spbWalletPath = path;
       spbWalletUri = null;
+      syncSourcePath = null;
+      syncSourceUrl = null;
+      syncOriginProvider = null;
       vaultNameController.text = File(path).uri.pathSegments.last;
       message = null;
+    });
+    await rememberRecentVault(path);
+  }
+
+  Future<void> loadRecentVaults() async {
+    final found = <ExistingVault>[];
+    try {
+      if (recentVaultsFile.existsSync()) {
+        final decoded =
+            jsonDecode(await recentVaultsFile.readAsString()) as List<dynamic>;
+        for (final rawPath in decoded.whereType<String>()) {
+          final file = File(rawPath);
+          if (!file.existsSync() || !file.path.toLowerCase().endsWith('.swl')) {
+            continue;
+          }
+          final title = file.uri.pathSegments.isEmpty
+              ? file.path
+              : file.uri.pathSegments.last;
+          if (found.any((vault) => vault.path == file.path)) continue;
+          found.add(ExistingVault(title: title, path: file.path));
+        }
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => recentVaults = found);
+  }
+
+  Future<void> rememberRecentVault(String path) async {
+    if (path.isEmpty) return;
+    final paths = [
+      path,
+      ...recentVaults
+          .map((vault) => vault.path)
+          .whereType<String>()
+          .where((entry) => entry != path),
+    ].take(8).toList();
+    await recentVaultsFile.writeAsString(jsonEncode(paths));
+    if (!mounted) return;
+    setState(() {
+      recentVaults = paths
+          .where((entry) => File(entry).existsSync())
+          .map((entry) => ExistingVault(
+                title: File(entry).uri.pathSegments.isEmpty
+                    ? entry
+                    : File(entry).uri.pathSegments.last,
+                path: entry,
+              ))
+          .toList();
+    });
+  }
+
+  Future<void> createSwlVault(String password) async {
+    final file = swlVaultFile;
+    final wallet = SpbWalletDatabase.create(file.path, password);
+    spbIconIdByUiIcon.clear();
+    final sourceTemplates = builtInTemplates();
+    final templateMap = <String, CardTemplate>{};
+    for (final template in sourceTemplates) {
+      final prepared = prepareSpbTemplate(template, true);
+      templateMap[template.id] = prepared;
+      wallet.saveTemplate(
+        SpbWalletTemplateDraft(
+          id: prepared.id,
+          name: prepared.name,
+          iconId: syntheticSpbIconIdForUi(prepared.iconId),
+          fields: prepared.fields
+              .where((field) => field.id != spbDescriptionFieldId)
+              .map((field) => SpbWalletTemplateFieldRecord(
+                  id: field.id,
+                  name: field.label,
+                  templateId: prepared.id,
+                  fieldTypeId: spbFieldTypeId(field)))
+              .toList(),
+        ),
+      );
+    }
+
+    for (final item in demoItems()) {
+      final template = templateMap[item.templateId];
+      if (template == null) continue;
+      final original =
+          sourceTemplates.firstWhere((entry) => entry.id == item.templateId);
+      final fieldMap = <String, String>{};
+      for (var i = 0;
+          i < original.fields.length && i < template.fields.length;
+          i++) {
+        fieldMap[original.fields[i].id] = template.fields[i].id;
+      }
+      wallet.saveCard(
+        SpbWalletCardDraft(
+          id: SpbWalletDatabase.makeId(),
+          title: item.title,
+          description: '',
+          categoryPath: item.category,
+          templateId: template.id,
+          iconId: syntheticSpbIconIdForUi(item.iconId ?? template.iconId),
+          fieldValues: {
+            for (final entry in item.values.entries)
+              if (fieldMap[entry.key] != null)
+                fieldMap[entry.key]!: entry.value,
+          },
+          cardColor: paletteColorToSpb(item.colorId),
+          backgroundImageBase64: item.backgroundImageBase64,
+        ),
+      );
+    }
+
+    final snapshot = wallet.loadSnapshot();
+    spbWallet?.close();
+    spbWallet = wallet;
+    setState(() {
+      spbWalletPath = file.path;
+      spbWalletUri = null;
+      syncSourcePath = null;
+      syncSourceUrl = null;
+      syncOriginProvider = null;
+      templates = spbTemplatesToUi(snapshot.templates);
+      items = spbCardsToUi(snapshot.cards);
+      conflicts = [];
+      lastSyncAt = null;
+      selectedItemId = items.isEmpty ? null : items.first.id;
+      unlocked = true;
+      activeView = 'cards';
+      message = null;
+    });
+    await rememberRecentVault(file.path);
+  }
+
+  Future<void> connectSyncVault(String password) async {
+    if (syncProvider == 'mounted_folder') {
+      final source = resolveMountedFolderSyncFile();
+      final localName = vaultNameController.text.trim().isEmpty
+          ? source.uri.pathSegments.last
+              .replaceAll(RegExp(r'\.swl$', caseSensitive: false), '')
+          : vaultNameController.text.trim();
+      vaultNameController.text = localName;
+      final local = swlVaultFile;
+      await source.copy(local.path);
+      await openSyncedLocalWallet(
+        localPath: local.path,
+        password: password,
+        sourcePath: source.path,
+        sourceUrl: null,
+      );
+      return;
+    }
+    if (syncProvider == 'webdav') {
+      final uri = webDavSyncUri();
+      final bytes = await downloadWebDavVault(uri);
+      final localName = vaultNameController.text.trim().isEmpty
+          ? webDavFileName(uri)
+              .replaceAll(RegExp(r'\.swl$', caseSensitive: false), '')
+          : vaultNameController.text.trim();
+      vaultNameController.text = localName;
+      final local = swlVaultFile;
+      await local.writeAsBytes(bytes, flush: true);
+      await openSyncedLocalWallet(
+        localPath: local.path,
+        password: password,
+        sourcePath: null,
+        sourceUrl: uri.toString(),
+      );
+      return;
+    }
+    throw StateError(
+        'Для автоматического подключения сейчас поддержаны папка/SMB/NFS и WebDAV. Для SFTP/FTP/почты сначала подключите хранилище как папку или откройте .swl файл вручную.');
+  }
+
+  Future<void> openSyncedLocalWallet({
+    required String localPath,
+    required String password,
+    required String? sourcePath,
+    required String? sourceUrl,
+  }) async {
+    spbWallet?.close();
+    final wallet = SpbWalletDatabase.open(localPath, password);
+    final snapshot = wallet.loadSnapshot();
+    spbWallet = wallet;
+    spbIconIdByUiIcon.clear();
+    setState(() {
+      spbWalletPath = localPath;
+      spbWalletUri = null;
+      syncSourcePath = sourcePath;
+      syncSourceUrl = sourceUrl;
+      syncOriginProvider = syncProvider;
+      templates = spbTemplatesToUi(snapshot.templates);
+      items = spbCardsToUi(snapshot.cards);
+      conflicts = [];
+      lastSyncAt = DateTime.now();
+      selectedItemId = items.isEmpty ? null : items.first.id;
+      unlocked = true;
+      activeView = 'cards';
+      message = null;
+    });
+    await rememberRecentVault(localPath);
+  }
+
+  File resolveMountedFolderSyncFile() {
+    final directoryPath = syncConfig['mounted_folder:directory']?.trim() ?? '';
+    if (directoryPath.isEmpty) {
+      throw StateError('Укажите путь к папке с .swl файлом.');
+    }
+    final directory = Directory(directoryPath);
+    if (!directory.existsSync()) {
+      throw StateError('Папка не найдена: $directoryPath');
+    }
+    final configuredName = syncConfig['mounted_folder:database']?.trim() ?? '';
+    if (configuredName.isNotEmpty) {
+      final file =
+          File('${directory.path}${Platform.pathSeparator}$configuredName');
+      if (!file.existsSync()) {
+        throw StateError('В папке нет файла $configuredName.');
+      }
+      return file;
+    }
+    final swlFiles = directory
+        .listSync(followLinks: false)
+        .whereType<File>()
+        .where((file) => file.path.toLowerCase().endsWith('.swl'))
+        .toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+    if (swlFiles.isEmpty) throw StateError('В папке нет .swl базы.');
+    if (swlFiles.length > 1) {
+      throw StateError(
+          'В папке несколько .swl баз. Укажите имя файла в поле “Имя .swl файла”.');
+    }
+    return swlFiles.single;
+  }
+
+  Uri webDavSyncUri() {
+    final rawUrl = syncConfig['webdav:url']?.trim() ?? '';
+    if (rawUrl.isEmpty) throw StateError('Укажите WebDAV URL.');
+    final base = Uri.parse(rawUrl);
+    if (base.path.toLowerCase().endsWith('.swl')) return base;
+    final configuredName = syncConfig['webdav:database']?.trim() ?? '';
+    final fileName = configuredName.isEmpty
+        ? '${vaultNameController.text.trim().isEmpty ? 'personal' : vaultNameController.text.trim()}.swl'
+        : configuredName;
+    final separator = rawUrl.endsWith('/') ? '' : '/';
+    return Uri.parse('$rawUrl$separator${Uri.encodeComponent(fileName)}');
+  }
+
+  String webDavFileName(Uri uri) =>
+      uri.pathSegments.isEmpty ? 'personal.swl' : uri.pathSegments.last;
+
+  Future<List<int>> downloadWebDavVault(Uri uri) async {
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(uri);
+      applyWebDavAuth(request);
+      final response = await request.close();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError('WebDAV вернул HTTP ${response.statusCode}.');
+      }
+      final bytes = BytesBuilder(copy: false);
+      await for (final chunk in response) {
+        bytes.add(chunk);
+      }
+      return bytes.takeBytes();
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> uploadWebDavVault(Uri uri, List<int> bytes) async {
+    final client = HttpClient();
+    try {
+      final request = await client.putUrl(uri);
+      applyWebDavAuth(request);
+      request.headers.contentType = ContentType.binary;
+      request.contentLength = bytes.length;
+      request.add(bytes);
+      final response = await request.close();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError(
+            'WebDAV вернул HTTP ${response.statusCode} при записи.');
+      }
+      await response.drain();
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  void applyWebDavAuth(HttpClientRequest request) {
+    final username = syncConfig['webdav:username']?.trim() ?? '';
+    final password = syncConfig['webdav:password'] ?? '';
+    if (username.isEmpty && password.isEmpty) return;
+    request.headers.set(HttpHeaders.authorizationHeader,
+        'Basic ${base64Encode(utf8.encode('$username:$password'))}');
+  }
+
+  void chooseExistingVault(ExistingVault vault) {
+    setState(() {
+      entryMode = EntryMode.openSwl;
+      message = null;
+      spbWalletPath = vault.path;
+      spbWalletUri = null;
+      syncSourcePath = null;
+      syncSourceUrl = null;
+      syncOriginProvider = null;
+      vaultNameController.text = vault.title;
     });
   }
 
   Future<bool> writeBackSpbWallet() async {
-    if (!Platform.isAndroid || spbWalletUri == null || spbWalletPath == null) return true;
+    var ok = true;
     try {
-      await spbWalletChannel.invokeMethod<bool>('writeSpbWallet', {
-        'uri': spbWalletUri,
-        'localPath': spbWalletPath,
-      });
-      return true;
+      if (Platform.isAndroid && spbWalletUri != null && spbWalletPath != null) {
+        await spbWalletChannel.invokeMethod<bool>('writeSpbWallet', {
+          'uri': spbWalletUri,
+          'localPath': spbWalletPath,
+        });
+      }
+      if (syncSourcePath != null &&
+          spbWalletPath != null &&
+          syncSourcePath != spbWalletPath) {
+        await File(spbWalletPath!).copy(syncSourcePath!);
+      }
+      if (syncSourceUrl != null && spbWalletPath != null) {
+        await uploadWebDavVault(Uri.parse(syncSourceUrl!),
+            await File(spbWalletPath!).readAsBytes());
+      }
+      if (spbWalletUri != null ||
+          syncSourcePath != null ||
+          syncSourceUrl != null) {
+        lastSyncAt = DateTime.now();
+      }
     } catch (error) {
-      setState(() => message = 'Изменения сохранены во временный файл, но не записаны обратно в SPB Wallet: $error');
-      return false;
+      ok = false;
+      setState(() => message =
+          'Изменения сохранены во временный файл, но не записаны обратно в исходную .swl базу: $error');
     }
+    return ok;
   }
 
   List<SecretItem> demoItems() {
@@ -811,18 +1456,20 @@ class _VaultShellState extends State<VaultShell> {
         colorId: 'neutral',
         modifiedAt: now,
         values: {
-          'note': 'База хранится локально. Для совместимости можно открывать файл SPB Wallet .swl напрямую: изменения записываются обратно в тот же формат.',
+          'note':
+              'База хранится локально в формате .swl. Изменения записываются обратно в тот же файл.',
         },
       ),
       SecretItem(
         id: makeId('item'),
         templateId: 'tpl_note',
-        title: 'Синхронизация',
+        title: 'Открытие базы',
         category: 'О программе ActitPassStorage',
         colorId: 'neutral',
         modifiedAt: now,
         values: {
-          'note': 'Синхронизация настраивается отдельно: папка, WebDAV, FTP/SFTP или почта. В строке состояния видно имя базы и время последней синхронизации.',
+          'note':
+              'На стартовом экране можно выбрать .swl файл вручную или открыть один из последних выбранных файлов.',
         },
       ),
       SecretItem(
@@ -833,7 +1480,8 @@ class _VaultShellState extends State<VaultShell> {
         colorId: 'neutral',
         modifiedAt: now,
         values: {
-          'note': 'У карточек есть отдельные кнопки заметок и вложений со счетчиками. Для SPB Wallet вложения сохраняются в родном zlib+AES формате.',
+          'note':
+              'У карточек есть отдельные кнопки заметок и вложений со счетчиками. Вложения сохраняются в родном zlib+AES формате .swl.',
         },
       ),
     ];
@@ -851,12 +1499,20 @@ class _VaultShellState extends State<VaultShell> {
             secret: secret,
           );
         }),
-        const FieldDefinition(id: spbDescriptionFieldId, label: 'Заметки', type: 'multiline_note'),
+        const FieldDefinition(
+            id: spbDescriptionFieldId,
+            label: 'Заметки',
+            type: 'multiline_note'),
       ];
+      final iconId = defaultIconForTemplateName(
+        template.name,
+        template.fields.map((field) => field.name),
+      );
+      rememberSpbIcon(iconId, template.iconId);
       return CardTemplate(
         id: template.id,
         name: template.name,
-        iconId: 'key',
+        iconId: iconId,
         colorId: 'neutral',
         fields: fields,
       );
@@ -865,12 +1521,16 @@ class _VaultShellState extends State<VaultShell> {
 
   List<SecretItem> spbCardsToUi(List<SpbWalletCardRecord> source) {
     return source.map((card) {
+      final template = templateFor(card.templateId);
+      final iconId = uiIconForSpbIcon(card.iconId) ?? template.iconId;
+      rememberSpbIcon(iconId, card.iconId);
       return SecretItem(
         id: card.id,
         templateId: card.templateId,
-        title: card.title.isEmpty ? 'SPB Wallet card' : card.title,
+        title: card.title.isEmpty ? '.swl карточка' : card.title,
         category: card.categoryPath,
-        colorId: 'neutral',
+        colorId: spbColorToPaletteId(card.cardColor),
+        iconId: iconId,
         values: {
           ...card.fieldValues,
           spbDescriptionFieldId: card.description,
@@ -887,8 +1547,32 @@ class _VaultShellState extends State<VaultShell> {
             .toList(),
         modifiedAt: DateTime.now(),
         hitCount: card.hitCount,
+        backgroundImageBase64: card.backgroundImageBase64,
       );
     }).toList();
+  }
+
+  void rememberSpbIcon(String uiIconId, String spbIconId) {
+    if (spbIconId.isEmpty || !isSpbHexId(spbIconId)) return;
+    spbIconIdByUiIcon.putIfAbsent(uiIconId, () => spbIconId);
+  }
+
+  String? uiIconForSpbIcon(String spbIconId) {
+    if (spbIconId.isEmpty) return null;
+    final synthetic = uiIconIdFromSyntheticSpbIcon(spbIconId);
+    if (synthetic != null) return synthetic;
+    for (final entry in spbIconIdByUiIcon.entries) {
+      if (entry.value == spbIconId) return entry.key;
+    }
+    return null;
+  }
+
+  String? spbIconIdForUi(String uiIconId, String fallbackUiIconId) {
+    final direct = spbIconIdByUiIcon[uiIconId];
+    if (direct != null && isSpbHexId(direct)) return direct;
+    final fallback = spbIconIdByUiIcon[fallbackUiIconId];
+    if (fallback != null && isSpbHexId(fallback)) return fallback;
+    return syntheticSpbIconIdForUi(uiIconId);
   }
 
   bool isSpbSecretField(String label) {
@@ -902,63 +1586,29 @@ class _VaultShellState extends State<VaultShell> {
         normalized.contains('код');
   }
 
-  Future<void> loadVault() async {
-    final raw = await vaultFile.readAsString();
-    final json = jsonDecode(utf8.decode(base64.decode(raw))) as Map<String, dynamic>;
-    if (json['passwordHash'] != passwordHash(passwordController.text)) {
-      throw StateError('wrong password');
-    }
-    templates = (json['templates'] as List<dynamic>)
-        .map((template) => CardTemplate.fromJson(template as Map<String, dynamic>))
-        .toList();
-    items = (json['items'] as List<dynamic>)
-        .map((item) => SecretItem.fromJson(item as Map<String, dynamic>))
-        .toList();
-    conflicts = (json['conflicts'] as List<dynamic>? ?? [])
-        .map((conflict) => ConflictRecord.fromJson(conflict as Map<String, dynamic>))
-        .toList();
-    lastSyncAt = json['lastSyncAt'] == null ? null : DateTime.tryParse(json['lastSyncAt'] as String);
-  }
-
-  Future<void> saveVault() async {
-    final payload = {
-      'format': 'actitpass-flutter-alpha',
-      'passwordHash': passwordHash(passwordController.text),
-      'templates': templates.map((template) => template.toJson()).toList(),
-      'items': items.map((item) => item.toJson()).toList(),
-      'conflicts': conflicts.map((conflict) => conflict.toJson()).toList(),
-      'lastSyncAt': lastSyncAt?.toIso8601String(),
-    };
-    await vaultFile.writeAsString(base64.encode(utf8.encode(jsonEncode(payload))));
-  }
-
-  String passwordHash(String password) {
-    var hash = 2166136261;
-    for (final codeUnit in password.codeUnits) {
-      hash ^= codeUnit;
-      hash = (hash * 16777619) & 0xffffffff;
-    }
-    return hash.toRadixString(16);
-  }
-
   @override
   Widget build(BuildContext context) {
     if (!unlocked) return buildLocked();
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 820;
+        final menuOpen = isMenuOpen(compact);
         return Scaffold(
           body: SafeArea(
             child: compact
                 ? Column(
                     children: [
-                      buildTopRail(compact: true),
+                      buildMenuHeader(compact: true),
+                      if (menuOpen) buildTopRail(compact: true),
                       Expanded(child: buildContent()),
                     ],
                   )
                 : Row(
                     children: [
-                      SizedBox(width: 260, child: buildSideRail()),
+                      SizedBox(
+                          width: 52, child: buildMenuHandle(compact: false)),
+                      if (menuOpen)
+                        SizedBox(width: 260, child: buildSideRail()),
                       Expanded(child: buildContent()),
                     ],
                   ),
@@ -966,6 +1616,56 @@ class _VaultShellState extends State<VaultShell> {
           bottomNavigationBar: databaseStatusBar(),
         );
       },
+    );
+  }
+
+  bool isMenuOpen(bool compact) => menuOpenOverride ?? !compact;
+
+  void toggleMenu(bool compact) {
+    final current = isMenuOpen(compact);
+    setState(() => menuOpenOverride = !current);
+  }
+
+  Widget buildMenuHeader({required bool compact}) {
+    return Material(
+      color: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Меню',
+              icon: const Icon(Icons.menu),
+              onPressed: () => toggleMenu(compact),
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                openDatabaseTitle(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildMenuHandle({required bool compact}) {
+    return Material(
+      color: Colors.white,
+      child: Column(
+        children: [
+          const SizedBox(height: 8),
+          IconButton(
+            tooltip: 'Меню',
+            icon: const Icon(Icons.menu),
+            onPressed: () => toggleMenu(compact),
+          ),
+        ],
+      ),
     );
   }
 
@@ -982,7 +1682,7 @@ class _VaultShellState extends State<VaultShell> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  '${openDatabaseTitle()} · Последняя синхронизация: ${lastSyncText()}',
+                  openDatabaseTitle(),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 12),
@@ -998,8 +1698,10 @@ class _VaultShellState extends State<VaultShell> {
   String openDatabaseTitle() {
     if (spbWallet != null) {
       final path = spbWalletPath;
-      if (path == null || path.isEmpty) return 'SPB Wallet';
-      return File(path).uri.pathSegments.isEmpty ? path : File(path).uri.pathSegments.last;
+      if (path == null || path.isEmpty) return '.swl база';
+      return File(path).uri.pathSegments.isEmpty
+          ? path
+          : File(path).uri.pathSegments.last;
     }
     final name = vaultNameController.text.trim();
     return name.isEmpty ? 'personal' : name;
@@ -1032,11 +1734,15 @@ class _VaultShellState extends State<VaultShell> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const CircleAvatar(radius: 32, child: Text('A', style: TextStyle(fontSize: 28))),
+                      const CircleAvatar(
+                          radius: 32,
+                          child: Text('A', style: TextStyle(fontSize: 28))),
                       const SizedBox(height: 18),
-                      Text('ActitPassStorage', style: Theme.of(context).textTheme.headlineMedium),
+                      Text('ActitPassStorage',
+                          style: Theme.of(context).textTheme.headlineMedium),
                       const SizedBox(height: 8),
-                      const Text('Менеджер паролей, заметок и настраиваемых карточек. Локальная база на устройстве, мастер-пароль и понятная синхронизация.'),
+                      const Text(
+                          'Менеджер паролей, заметок и настраиваемых карточек. Локальная .swl база на устройстве.'),
                     ],
                   ),
                 ),
@@ -1051,9 +1757,12 @@ class _VaultShellState extends State<VaultShell> {
                         children: [
                           SegmentedButton<EntryMode>(
                             segments: const [
-                              ButtonSegment(value: EntryMode.openActitPass, label: Text('Открыть ActitPass')),
-                              ButtonSegment(value: EntryMode.createActitPass, label: Text('Создать ActitPass')),
-                              ButtonSegment(value: EntryMode.openSpbWallet, label: Text('Открыть SPB Wallet')),
+                              ButtonSegment(
+                                  value: EntryMode.openSwl,
+                                  label: Text('Открыть .swl')),
+                              ButtonSegment(
+                                  value: EntryMode.createSwl,
+                                  label: Text('Создать .swl')),
                             ],
                             selected: {entryMode},
                             onSelectionChanged: (value) => setState(() {
@@ -1062,7 +1771,45 @@ class _VaultShellState extends State<VaultShell> {
                             }),
                           ),
                           const SizedBox(height: 18),
-                          if (entryMode == EntryMode.openSpbWallet) ...[
+                          if (!createMode && recentVaults.isNotEmpty) ...[
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text('Последние файлы',
+                                  style:
+                                      Theme.of(context).textTheme.titleSmall),
+                            ),
+                            const SizedBox(height: 8),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 150),
+                              child: ListView.separated(
+                                shrinkWrap: true,
+                                itemCount: recentVaults.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(height: 4),
+                                itemBuilder: (context, index) {
+                                  final vault = recentVaults[index];
+                                  return ListTile(
+                                    dense: true,
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8)),
+                                    tileColor: Theme.of(context)
+                                        .colorScheme
+                                        .surfaceContainerHighest,
+                                    leading: const Icon(Icons.history),
+                                    title: Text(vault.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis),
+                                    subtitle: Text(vault.path ?? '',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis),
+                                    onTap: () => chooseExistingVault(vault),
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                          ],
+                          if (!createMode) ...[
                             OutlinedButton.icon(
                               onPressed: pickSpbWalletFile,
                               icon: const Icon(Icons.folder_open),
@@ -1072,7 +1819,9 @@ class _VaultShellState extends State<VaultShell> {
                             Align(
                               alignment: Alignment.centerLeft,
                               child: Text(
-                                spbWalletPath == null ? 'Файл SPB Wallet не выбран' : spbWalletPath!,
+                                spbWalletPath == null
+                                    ? 'Файл .swl не выбран'
+                                    : spbWalletPath!,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -1080,22 +1829,26 @@ class _VaultShellState extends State<VaultShell> {
                           ] else
                             TextField(
                               controller: vaultNameController,
-                              decoration: const InputDecoration(labelText: 'Название базы', border: OutlineInputBorder()),
+                              decoration: const InputDecoration(
+                                  labelText: 'Название базы',
+                                  border: OutlineInputBorder()),
                             ),
                           const SizedBox(height: 12),
                           PasswordField(
                             controller: passwordController,
-                            label: entryMode == EntryMode.openSpbWallet ? 'Пароль SPB Wallet' : 'Мастер-пароль',
+                            label: 'Пароль .swl базы',
                             visible: showPassword,
-                            onToggle: () => setState(() => showPassword = !showPassword),
+                            onToggle: () =>
+                                setState(() => showPassword = !showPassword),
                           ),
                           if (createMode) ...[
                             const SizedBox(height: 12),
                             PasswordField(
                               controller: confirmController,
-                              label: 'Повторите мастер-пароль',
+                              label: 'Повторите пароль',
                               visible: showConfirm,
-                              onToggle: () => setState(() => showConfirm = !showConfirm),
+                              onToggle: () =>
+                                  setState(() => showConfirm = !showConfirm),
                             ),
                           ],
                           const SizedBox(height: 16),
@@ -1103,16 +1856,17 @@ class _VaultShellState extends State<VaultShell> {
                             width: double.infinity,
                             child: FilledButton(
                               onPressed: unlock,
-                              child: Text(entryMode == EntryMode.createActitPass
-                                  ? 'Создать базу'
-                                  : entryMode == EntryMode.openSpbWallet
-                                      ? 'Открыть базу SPB Wallet'
-                                      : 'Открыть базу'),
+                              child: Text(entryMode == EntryMode.createSwl
+                                  ? 'Создать .swl базу'
+                                  : 'Открыть .swl базу'),
                             ),
                           ),
                           if (message != null) ...[
                             const SizedBox(height: 12),
-                            Text(message!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                            Text(message!,
+                                style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.error)),
                           ],
                         ],
                       ),
@@ -1137,8 +1891,8 @@ class _VaultShellState extends State<VaultShell> {
           children: [
             ListTile(
               leading: const CircleAvatar(child: Text('A')),
-              title: Text(spbWallet == null ? 'ActitPass' : 'SPB Wallet'),
-              subtitle: Text(spbWallet == null ? 'локальная база' : (spbWalletPath ?? 'открытая .swl база')),
+              title: const Text('.swl база'),
+              subtitle: Text(spbWalletPath ?? 'открытая .swl база'),
             ),
             const SizedBox(height: 12),
             ...navButtons(),
@@ -1149,6 +1903,9 @@ class _VaultShellState extends State<VaultShell> {
                 spbWallet?.close();
                 spbWallet = null;
                 spbWalletUri = null;
+                syncSourcePath = null;
+                syncSourceUrl = null;
+                syncOriginProvider = null;
                 setState(() => unlocked = false);
               },
               icon: const Icon(Icons.lock_outline),
@@ -1176,14 +1933,13 @@ class _VaultShellState extends State<VaultShell> {
       ('cards', Icons.credit_card, 'Карточки'),
       ('frequent', Icons.star_outline, 'Частые'),
       ('templates', Icons.dashboard_customize_outlined, 'Шаблоны'),
-      ('sync', Icons.sync, 'Синхронизация'),
-      ('conflicts', Icons.warning_amber, 'Конфликты'),
       ('settings', Icons.settings_outlined, 'Настройки'),
     ];
     return entries
         .map(
           (entry) => Padding(
-            padding: EdgeInsets.only(bottom: compact ? 0 : 8, right: compact ? 8 : 0),
+            padding: EdgeInsets.only(
+                bottom: compact ? 0 : 8, right: compact ? 8 : 0),
             child: NavigationButton(
               selected: activeView == entry.$1,
               icon: entry.$2,
@@ -1210,8 +1966,10 @@ class _VaultShellState extends State<VaultShell> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(viewTitle(), style: Theme.of(context).textTheme.headlineSmall),
-                  const Text('Секреты скрыты по умолчанию. Изменения сохраняются локально.'),
+                  Text(viewTitle(),
+                      style: Theme.of(context).textTheme.headlineSmall),
+                  const Text(
+                      'Секреты скрыты по умолчанию. Изменения сохраняются локально.'),
                 ],
               ),
               FilledButton.icon(
@@ -1229,31 +1987,21 @@ class _VaultShellState extends State<VaultShell> {
   }
 
   String viewTitle() => {
-      'cards': 'Карточки',
-      'frequent': 'Часто используемые',
-      'templates': 'Шаблоны',
-        'sync': 'Синхронизация',
-        'conflicts': 'Конфликты',
+        'cards': 'Карточки',
+        'frequent': 'Часто используемые',
+        'templates': 'Шаблоны',
         'settings': 'Настройки',
       }[activeView]!;
 
-  String primaryLabel() => activeView == 'templates'
-      ? 'Новый шаблон'
-      : activeView == 'sync'
-          ? 'Синхронизировать'
-          : 'Новая карточка';
+  String primaryLabel() =>
+      activeView == 'templates' ? 'Новый шаблон' : 'Новая карточка';
 
-  IconData primaryIcon() => activeView == 'templates'
-      ? Icons.add_box_outlined
-      : activeView == 'sync'
-          ? Icons.sync
-          : Icons.add;
+  IconData primaryIcon() =>
+      activeView == 'templates' ? Icons.add_box_outlined : Icons.add;
 
   void primaryAction() {
     if (activeView == 'templates') {
       openTemplateDialog();
-    } else if (activeView == 'sync') {
-      runSync();
     } else {
       openItemDialog();
     }
@@ -1265,10 +2013,6 @@ class _VaultShellState extends State<VaultShell> {
         return buildFrequentView();
       case 'templates':
         return buildTemplatesView();
-      case 'sync':
-        return buildSyncView();
-      case 'conflicts':
-        return buildConflictsView();
       case 'settings':
         return buildSettingsView();
       default:
@@ -1286,7 +2030,10 @@ class _VaultShellState extends State<VaultShell> {
             Expanded(
               child: TextField(
                 controller: searchController,
-                decoration: const InputDecoration(prefixIcon: Icon(Icons.search), labelText: 'Поиск', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    labelText: 'Поиск',
+                    border: OutlineInputBorder()),
               ),
             ),
             const SizedBox(width: 8),
@@ -1295,7 +2042,8 @@ class _VaultShellState extends State<VaultShell> {
               child: IconButton.filledTonal(
                 onPressed: openCardFilterDialog,
                 icon: Badge(
-                  isLabelVisible: templateFilter.isNotEmpty || sortMode != 'modified_desc',
+                  isLabelVisible:
+                      templateFilter.isNotEmpty || sortMode != 'modified_desc',
                   child: const Icon(Icons.filter_alt_outlined),
                 ),
               ),
@@ -1308,20 +2056,19 @@ class _VaultShellState extends State<VaultShell> {
             builder: (context, constraints) {
               final compact = constraints.maxWidth < 760;
               if (compact) {
-                return Column(
-                  children: [
-                    SizedBox(height: 260, child: walletTree(filtered)),
-                    const SizedBox(height: 12),
-                    Expanded(child: selected == null ? emptyCardDetail() : itemDetail(selected)),
-                  ],
-                );
+                return walletTree(filtered, openCardsInDialog: true);
               }
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   SizedBox(width: 320, child: walletTree(filtered)),
                   const SizedBox(width: 12),
-                  Expanded(child: selected == null ? emptyCardDetail() : itemDetail(selected)),
+                  Expanded(
+                      child: selected == null
+                          ? emptyCardDetail()
+                          : itemDetail(selected)),
+                  const SizedBox(width: 12),
+                  SizedBox(width: 230, child: spbRightPanel(filtered)),
                 ],
               );
             },
@@ -1346,23 +2093,32 @@ class _VaultShellState extends State<VaultShell> {
               children: [
                 DropdownButtonFormField<String>(
                   initialValue: nextTemplateFilter,
-                  decoration: const InputDecoration(labelText: 'Шаблон', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                      labelText: 'Шаблон', border: OutlineInputBorder()),
                   items: [
-                    const DropdownMenuItem(value: '', child: Text('Все шаблоны')),
-                    ...templates.map((template) => DropdownMenuItem(value: template.id, child: Text(template.name))),
+                    const DropdownMenuItem(
+                        value: '', child: Text('Все шаблоны')),
+                    ...templates.map((template) => DropdownMenuItem(
+                        value: template.id, child: Text(template.name))),
                   ],
-                  onChanged: (value) => setDialogState(() => nextTemplateFilter = value ?? ''),
+                  onChanged: (value) =>
+                      setDialogState(() => nextTemplateFilter = value ?? ''),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: nextSortMode,
-                  decoration: const InputDecoration(labelText: 'Сортировка', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                      labelText: 'Сортировка', border: OutlineInputBorder()),
                   items: const [
-                    DropdownMenuItem(value: 'modified_desc', child: Text('Сначала новые')),
-                    DropdownMenuItem(value: 'title_asc', child: Text('По названию')),
-                    DropdownMenuItem(value: 'template_asc', child: Text('По шаблону')),
+                    DropdownMenuItem(
+                        value: 'modified_desc', child: Text('Сначала новые')),
+                    DropdownMenuItem(
+                        value: 'title_asc', child: Text('По названию')),
+                    DropdownMenuItem(
+                        value: 'template_asc', child: Text('По шаблону')),
                   ],
-                  onChanged: (value) => setDialogState(() => nextSortMode = value ?? 'modified_desc'),
+                  onChanged: (value) => setDialogState(
+                      () => nextSortMode = value ?? 'modified_desc'),
                 ),
               ],
             ),
@@ -1376,8 +2132,12 @@ class _VaultShellState extends State<VaultShell> {
               },
               child: const Text('Сбросить'),
             ),
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Применить')),
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Отмена')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Применить')),
           ],
         ),
       ),
@@ -1392,13 +2152,18 @@ class _VaultShellState extends State<VaultShell> {
   List<SecretItem> filteredItems() {
     final filtered = items.where((item) {
       final template = templateFor(item.templateId);
-      final text = '${item.title} ${item.category} ${template.name} ${item.values.values.join(' ')}'.toLowerCase();
-      return (templateFilter.isEmpty || item.templateId == templateFilter) && text.contains(searchController.text.toLowerCase());
+      final text =
+          '${item.title} ${item.category} ${template.name} ${item.values.values.join(' ')}'
+              .toLowerCase();
+      return (templateFilter.isEmpty || item.templateId == templateFilter) &&
+          text.contains(searchController.text.toLowerCase());
     }).toList();
     if (sortMode == 'title_asc') {
       filtered.sort((a, b) => a.title.compareTo(b.title));
     } else if (sortMode == 'template_asc') {
-      filtered.sort((a, b) => templateFor(a.templateId).name.compareTo(templateFor(b.templateId).name));
+      filtered.sort((a, b) => templateFor(a.templateId)
+          .name
+          .compareTo(templateFor(b.templateId).name));
     } else {
       filtered.sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
     }
@@ -1413,7 +2178,7 @@ class _VaultShellState extends State<VaultShell> {
     return candidates.first;
   }
 
-  Widget walletTree(List<SecretItem> source) {
+  Widget walletTree(List<SecretItem> source, {bool openCardsInDialog = false}) {
     final root = buildCategoryTree(source);
     return Card(
       elevation: 0,
@@ -1424,7 +2189,8 @@ class _VaultShellState extends State<VaultShell> {
           Container(
             color: const Color(0xffd8e4f0),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: const Text('Мои карточки', style: TextStyle(fontWeight: FontWeight.w700)),
+            child: const Text('Мои карточки',
+                style: TextStyle(fontWeight: FontWeight.w700)),
           ),
           Expanded(
             child: root.isEmpty
@@ -1433,9 +2199,11 @@ class _VaultShellState extends State<VaultShell> {
                     children: [
                       ExpansionTile(
                         initiallyExpanded: true,
-                        leading: const Icon(Icons.account_balance_wallet_outlined),
+                        leading:
+                            const Icon(Icons.account_balance_wallet_outlined),
                         title: const Text('Мой кошелёк'),
-                        children: treeChildren(root, 0),
+                        children: treeChildren(root, 0,
+                            openCardsInDialog: openCardsInDialog),
                       ),
                     ],
                   ),
@@ -1465,9 +2233,20 @@ class _VaultShellState extends State<VaultShell> {
         .toList();
   }
 
-  List<Widget> treeChildren(CategoryTreeNode node, int depth) {
+  List<String> existingCategories() {
+    final categories = {
+      for (final item in items)
+        if (item.category.trim().isNotEmpty) item.category.trim(),
+    }.toList();
+    categories.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return categories;
+  }
+
+  List<Widget> treeChildren(CategoryTreeNode node, int depth,
+      {required bool openCardsInDialog}) {
     final children = <Widget>[];
-    final folders = node.children.values.toList()..sort((a, b) => a.name.compareTo(b.name));
+    final folders = node.children.values.toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
     for (final folder in folders) {
       children.add(
         Padding(
@@ -1475,8 +2254,10 @@ class _VaultShellState extends State<VaultShell> {
           child: ExpansionTile(
             initiallyExpanded: true,
             leading: const Icon(Icons.folder_outlined, size: 20),
-            title: Text(folder.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            children: treeChildren(folder, depth + 1),
+            title:
+                Text(folder.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            children: treeChildren(folder, depth + 1,
+                openCardsInDialog: openCardsInDialog),
           ),
         ),
       );
@@ -1490,10 +2271,14 @@ class _VaultShellState extends State<VaultShell> {
           child: ListTile(
             dense: true,
             selected: selectedItemId == item.id,
-            leading: Text(iconById(template.iconId).symbol),
-            title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(template.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            onTap: () => selectItem(item),
+            leading: Text(iconById(itemIconId(item, template)).symbol),
+            title:
+                Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(template.name,
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            onTap: () => openCardsInDialog
+                ? openCardPreviewDialog(item)
+                : selectItem(item),
             onLongPress: () => openItemDialog(item: item),
           ),
         ),
@@ -1513,6 +2298,75 @@ class _VaultShellState extends State<VaultShell> {
     return itemCard(item);
   }
 
+  Widget spbRightPanel(List<SecretItem> visibleItems) {
+    final frequent = [...items]..sort((a, b) {
+        final byHits = b.hitCount.compareTo(a.hitCount);
+        return byHits == 0 ? a.title.compareTo(b.title) : byHits;
+      });
+    final top = frequent.take(10).toList();
+    final selected = selectedItem(visibleItems);
+    return ListView(
+      children: [
+        SpbPanel(
+          title: 'Задачи',
+          children: [
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.add_card_outlined),
+              title: const Text('Создать новую карточку'),
+              onTap: () => openItemDialog(),
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Редактировать'),
+              enabled: selected != null,
+              onTap: selected == null
+                  ? null
+                  : () => openItemDialog(item: selected),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SpbPanel(
+          title: 'Часто используемые',
+          children: [
+            if (top.isEmpty)
+              const ListTile(dense: true, title: Text('Пока нет данных'))
+            else
+              ...top.map((item) {
+                final template = templateFor(item.templateId);
+                return ListTile(
+                  dense: true,
+                  leading: Text(iconById(itemIconId(item, template)).symbol),
+                  title: Text(item.title,
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                  onTap: () => selectItem(item),
+                );
+              }),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SpbPanel(
+          title: 'Найти карточки',
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: TextField(
+                controller: searchController,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  prefixIcon: Icon(Icons.search),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Future<void> selectItem(SecretItem item) async {
     setState(() {
       selectedItemId = item.id;
@@ -1529,6 +2383,8 @@ class _VaultShellState extends State<VaultShell> {
                   modifiedAt: entry.modifiedAt,
                   attachments: entry.attachments,
                   hitCount: entry.hitCount + 1,
+                  iconId: entry.iconId,
+                  backgroundImageBase64: entry.backgroundImageBase64,
                 )
               : entry,
       ];
@@ -1538,11 +2394,30 @@ class _VaultShellState extends State<VaultShell> {
         spbWallet!.recordCardHit(item.id);
         await writeBackSpbWallet();
       } catch (error) {
-        setState(() => message = 'Не удалось обновить счетчик SPB Wallet: $error');
+        setState(
+            () => message = 'Не удалось обновить счетчик .swl базы: $error');
       }
     } else {
-      await saveVault();
+      setState(() => message =
+          'Откройте или создайте .swl базу перед изменением карточек.');
     }
+  }
+
+  Future<void> openCardPreviewDialog(SecretItem item) async {
+    await selectItem(item);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: min(MediaQuery.of(context).size.width - 24, 520),
+            maxHeight: MediaQuery.of(context).size.height - 48,
+          ),
+          child: itemCard(item),
+        ),
+      ),
+    );
   }
 
   Widget buildFrequentView() {
@@ -1552,7 +2427,9 @@ class _VaultShellState extends State<VaultShell> {
       });
     final top = frequent.where((item) => item.hitCount > 0).take(10).toList();
     if (top.isEmpty) {
-      return const Center(child: Text('Часто используемые карточки появятся после открытия карточек из дерева.'));
+      return const Center(
+          child: Text(
+              'Часто используемые карточки появятся после открытия карточек из дерева.'));
     }
     return ListView.separated(
       itemCount: top.length,
@@ -1563,7 +2440,8 @@ class _VaultShellState extends State<VaultShell> {
         return Card(
           elevation: 0,
           child: ListTile(
-            leading: Text(iconById(template.iconId).symbol, style: const TextStyle(fontSize: 24)),
+            leading: Text(iconById(itemIconId(item, template)).symbol,
+                style: const TextStyle(fontSize: 24)),
             title: Text(item.title),
             subtitle: Text('${template.name} · открытий: ${item.hitCount}'),
             trailing: const Icon(Icons.chevron_right),
@@ -1581,30 +2459,52 @@ class _VaultShellState extends State<VaultShell> {
 
   Widget itemCard(SecretItem item) {
     final template = templateFor(item.templateId);
-    final color = colorById(item.colorId.isEmpty ? template.colorId : item.colorId);
+    final color =
+        colorById(item.colorId.isEmpty ? template.colorId : item.colorId);
     final noteCount = noteText(item).trim().isEmpty ? 0 : 1;
-    final attachmentCount = item.attachments.where((attachment) => !attachment.deleted).length;
+    final attachmentCount =
+        item.attachments.where((attachment) => !attachment.deleted).length;
+    final backgroundImage = backgroundImageFor(item);
     return Card(
-      color: color.bg,
+      color: backgroundImage == null ? color.bg : Colors.white,
       elevation: 0,
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => openItemDialog(item: item),
-        child: Padding(
+        child: Container(
+          decoration: backgroundImage == null
+              ? null
+              : BoxDecoration(
+                  image: DecorationImage(
+                    image: backgroundImage,
+                    fit: BoxFit.cover,
+                    colorFilter: ColorFilter.mode(
+                        Colors.white.withValues(alpha: 0.28),
+                        BlendMode.srcOver),
+                  ),
+                ),
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Text(iconById(template.iconId).symbol, style: const TextStyle(fontSize: 28)),
+                  Text(iconById(itemIconId(item, template)).symbol,
+                      style: const TextStyle(fontSize: 28)),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.w700, color: color.fg)),
-                        Text(template.name, style: TextStyle(color: color.fg.withValues(alpha: 0.72))),
+                        Text(item.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontWeight: FontWeight.w700, color: color.fg)),
+                        Text(template.name,
+                            style: TextStyle(
+                                color: color.fg.withValues(alpha: 0.72))),
                       ],
                     ),
                   ),
@@ -1614,38 +2514,34 @@ class _VaultShellState extends State<VaultShell> {
               Expanded(
                 child: ListView(
                   physics: const NeverScrollableScrollPhysics(),
-                  children: template.fields.where((field) => (item.values[field.id] ?? '').isNotEmpty).map((field) {
+                  children: template.fields
+                      .where(
+                          (field) => (item.values[field.id] ?? '').isNotEmpty)
+                      .map((field) {
                     final revealKey = '${item.id}:${field.id}';
                     final isRevealed = revealed.contains(revealKey);
                     final value = item.values[field.id]!;
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              '${field.label}: ${field.secret && !isRevealed ? '••••••••' : value}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(color: color.fg),
-                            ),
-                          ),
-                          if (field.secret)
-                            IconButton(
-                              tooltip: isRevealed ? 'Скрыть' : 'Показать',
-                              icon: Icon(isRevealed ? Icons.visibility_off : Icons.visibility),
-                              onPressed: () => setState(() {
-                                isRevealed ? revealed.remove(revealKey) : revealed.add(revealKey);
-                              }),
-                            ),
-                        ],
-                      ),
+                    return FieldValueRow(
+                      label: field.label,
+                      value: field.secret && !isRevealed ? '••••••••' : value,
+                      foreground: color.fg,
+                      secret: field.secret,
+                      revealed: isRevealed,
+                      onToggle: field.secret
+                          ? () => setState(() {
+                                isRevealed
+                                    ? revealed.remove(revealKey)
+                                    : revealed.add(revealKey);
+                              })
+                          : null,
                     );
                   }).toList(),
                 ),
               ),
               const SizedBox(height: 8),
-              Text('Категория: ${item.category.isEmpty ? 'Без категории' : item.category}', style: TextStyle(color: color.fg.withValues(alpha: 0.72))),
+              Text(
+                  'Категория: ${item.category.isEmpty ? 'Без категории' : item.category}',
+                  style: TextStyle(color: color.fg.withValues(alpha: 0.72))),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -1671,7 +2567,9 @@ class _VaultShellState extends State<VaultShell> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('Цвет: ', style: TextStyle(color: color.fg.withValues(alpha: 0.72))),
+                      Text('Цвет: ',
+                          style: TextStyle(
+                              color: color.fg.withValues(alpha: 0.72))),
                       CircleAvatar(radius: 6, backgroundColor: color.bg),
                     ],
                   ),
@@ -1683,9 +2581,21 @@ class _VaultShellState extends State<VaultShell> {
     );
   }
 
+  ImageProvider? backgroundImageFor(SecretItem item) {
+    final encoded = item.backgroundImageBase64;
+    if (encoded == null || encoded.isEmpty) return null;
+    try {
+      return MemoryImage(base64Decode(encoded));
+    } catch (_) {
+      return null;
+    }
+  }
+
   String noteFieldIdFor(SecretItem item) {
     final template = templateFor(item.templateId);
-    if (template.fields.any((field) => field.id == spbDescriptionFieldId)) return spbDescriptionFieldId;
+    if (template.fields.any((field) => field.id == spbDescriptionFieldId)) {
+      return spbDescriptionFieldId;
+    }
     if (template.fields.any((field) => field.id == 'notes')) return 'notes';
     if (template.fields.any((field) => field.id == 'note')) return 'note';
     return spbDescriptionFieldId;
@@ -1706,12 +2616,17 @@ class _VaultShellState extends State<VaultShell> {
             controller: controller,
             minLines: 8,
             maxLines: 14,
-            decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Заметка'),
+            decoration: const InputDecoration(
+                border: OutlineInputBorder(), labelText: 'Заметка'),
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Сохранить')),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('Сохранить')),
         ],
       ),
     );
@@ -1728,6 +2643,8 @@ class _VaultShellState extends State<VaultShell> {
         modifiedAt: DateTime.now(),
         attachments: item.attachments,
         hitCount: item.hitCount,
+        iconId: item.iconId,
+        backgroundImageBase64: item.backgroundImageBase64,
       ),
     );
   }
@@ -1746,9 +2663,15 @@ class _VaultShellState extends State<VaultShell> {
         return Card(
           elevation: 0,
           child: ListTile(
-            leading: CircleAvatar(backgroundColor: color.bg, foregroundColor: color.fg, child: Text(iconById(template.iconId).symbol)),
+            leading: CircleAvatar(
+                backgroundColor: color.bg,
+                foregroundColor: color.fg,
+                child: Text(iconById(template.iconId).symbol)),
             title: Text(template.name),
-            subtitle: Text(template.fields.map((field) => '${field.label}${field.secret ? ' (скрыто)' : ''}').join(', ')),
+            subtitle: Text(template.fields
+                .map((field) =>
+                    '${field.label}${field.secret ? ' (скрыто)' : ''}')
+                .join(', ')),
             trailing: Wrap(
               spacing: 4,
               children: [
@@ -1793,9 +2716,14 @@ class _VaultShellState extends State<VaultShell> {
           SpbWalletTemplateDraft(
             id: prepared.id,
             name: prepared.name,
+            iconId: spbIconIdForUi(prepared.iconId, prepared.iconId),
             fields: prepared.fields
                 .where((field) => field.id != spbDescriptionFieldId)
-                .map((field) => SpbWalletTemplateFieldRecord(id: field.id, name: field.label, templateId: prepared.id, fieldTypeId: spbFieldTypeId(field)))
+                .map((field) => SpbWalletTemplateFieldRecord(
+                    id: field.id,
+                    name: field.label,
+                    templateId: prepared.id,
+                    fieldTypeId: spbFieldTypeId(field)))
                 .toList(),
           ),
         );
@@ -1805,151 +2733,13 @@ class _VaultShellState extends State<VaultShell> {
           items = spbCardsToUi(snapshot.cards);
         });
       } catch (error) {
-        setState(() => message = 'Не удалось скопировать шаблон SPB Wallet: $error');
+        setState(
+            () => message = 'Не удалось скопировать шаблон .swl базы: $error');
       }
       return;
     }
-    setState(() => templates = [...templates, copy]);
-    await saveVault();
-  }
-
-  Widget buildSyncView() {
-    return ListView(
-      children: [
-        Wrap(
-          spacing: 16,
-          runSpacing: 16,
-          children: [
-            SizedBox(
-              width: 360,
-              child: Card(
-                elevation: 0,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      DropdownButtonFormField<String>(
-                        initialValue: syncProvider,
-                        decoration: const InputDecoration(labelText: 'Тип синхронизации', border: OutlineInputBorder()),
-                        items: const [
-                          DropdownMenuItem(value: 'mounted_folder', child: Text('Папка / SMB / NFS')),
-                          DropdownMenuItem(value: 'email', child: Text('Почта IMAP/SMTP')),
-                          DropdownMenuItem(value: 'webdav', child: Text('WebDAV')),
-                          DropdownMenuItem(value: 'sftp', child: Text('SFTP')),
-                          DropdownMenuItem(value: 'ftp', child: Text('FTP/FTPS')),
-                        ],
-                        onChanged: (value) => setState(() => syncProvider = value ?? 'mounted_folder'),
-                      ),
-                      const SizedBox(height: 12),
-                      ...syncFields(syncProvider),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed: () => showSyncHelp(syncProvider),
-                        icon: const Icon(Icons.help_outline),
-                        label: const Text('Как настроить этот способ'),
-                      ),
-                      const SizedBox(height: 8),
-                      FilledButton.icon(
-                        onPressed: runSync,
-                        icon: const Icon(Icons.sync),
-                        label: const Text('Синхронизировать'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 420,
-              child: Card(
-                elevation: 0,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Как это работает', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      const Text('Каждое устройство хранит локальную копию базы. Синхронизация обменивается зашифрованными пакетами изменений. Если два устройства изменили одну карточку, выигрывает более поздняя версия, а конфликт попадает в журнал.'),
-                      const SizedBox(height: 12),
-                      Text('Текущий провайдер: ${syncTitle(syncProvider)}'),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  List<Widget> syncFields(String provider) {
-    final specs = {
-      'mounted_folder': [
-        ('directory', 'Путь к папке', '/home/user/ActitPassSync', false),
-      ],
-      'email': [
-        ('email', 'Почтовый ящик', 'user@example.com', false),
-        ('imapHost', 'IMAP сервер', 'imap.example.com', false),
-        ('imapPort', 'IMAP порт', '993', false),
-        ('smtpHost', 'SMTP сервер', 'smtp.example.com', false),
-        ('smtpPort', 'SMTP порт', '465', false),
-        ('login', 'Логин', 'user@example.com', false),
-        ('password', 'Пароль приложения', '', true),
-        ('folder', 'Папка/метка', 'ActitPassStorage', false),
-      ],
-      'webdav': [
-        ('url', 'WebDAV URL папки', 'https://example.com/remote.php/dav/files/user/ActitPass/', false),
-        ('username', 'Пользователь', '', false),
-        ('password', 'Пароль или токен', '', true),
-      ],
-      'sftp': [
-        ('host', 'SFTP хост', 'storage.example.com', false),
-        ('port', 'Порт', '22', false),
-        ('username', 'Пользователь', '', false),
-        ('password', 'Пароль или фраза ключа', '', true),
-        ('path', 'Удаленная папка', '/ActitPass', false),
-      ],
-      'ftp': [
-        ('host', 'FTP/FTPS хост', 'ftp.example.com', false),
-        ('port', 'Порт', '21', false),
-        ('username', 'Пользователь', '', false),
-        ('password', 'Пароль', '', true),
-        ('path', 'Удаленная папка', '/ActitPass', false),
-        ('security', 'Режим: FTP / FTPS явный / FTPS неявный', 'FTP', false),
-      ],
-    }[provider]!;
-    return specs.map((spec) => SyncTextField(
-          label: spec.$2,
-          hint: spec.$3,
-          secret: spec.$4,
-          initialValue: syncConfig['$provider:${spec.$1}'] ?? '',
-          onChanged: (value) => syncConfig['$provider:${spec.$1}'] = value,
-        )).toList();
-  }
-
-  Widget buildConflictsView() {
-    if (conflicts.isEmpty) {
-      return const Center(child: Text('Конфликтов пока нет. Если они появятся, здесь будет видно старую и новую версию.'));
-    }
-    return ListView.separated(
-      itemCount: conflicts.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, index) {
-        final conflict = conflicts[index];
-        return Card(
-          elevation: 0,
-          child: ListTile(
-            leading: Icon(conflict.reviewed ? Icons.check_circle_outline : Icons.warning_amber),
-            title: Text(conflict.title),
-            subtitle: Text(conflict.description),
-            trailing: Text(conflict.reviewed ? 'Просмотрено' : 'Новое'),
-          ),
-        );
-      },
-    );
+    setState(() =>
+        message = 'Откройте или создайте .swl базу перед изменением шаблонов.');
   }
 
   Widget buildSettingsView() {
@@ -1962,27 +2752,33 @@ class _VaultShellState extends State<VaultShell> {
           child: ListTile(
             leading: const Icon(Icons.storage_outlined),
             title: Text(openDatabaseTitle()),
-            subtitle: Text('Последняя синхронизация: ${lastSyncText()}'),
+            subtitle: Text(spbWalletPath ?? 'локальный .swl файл'),
           ),
         ),
         const SizedBox(height: 24),
-        Text('Палитра карточек', style: Theme.of(context).textTheme.titleMedium),
+        Text('Палитра карточек',
+            style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 10),
         Wrap(
           spacing: 10,
           runSpacing: 10,
-          children: palette.map((color) => Chip(
-                avatar: CircleAvatar(backgroundColor: color.bg),
-                label: Text(color.label),
-              )).toList(),
+          children: palette
+              .map((color) => Chip(
+                    avatar: CircleAvatar(backgroundColor: color.bg),
+                    label: Text(color.label),
+                  ))
+              .toList(),
         ),
         const SizedBox(height: 24),
-        Text('Пиктограммы шаблонов', style: Theme.of(context).textTheme.titleMedium),
+        Text('Пиктограммы шаблонов',
+            style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 10),
         Wrap(
           spacing: 10,
           runSpacing: 10,
-          children: templateIcons.map((icon) => Chip(label: Text('${icon.symbol} ${icon.label}'))).toList(),
+          children: templateIcons
+              .map((icon) => Chip(label: Text('${icon.symbol} ${icon.label}')))
+              .toList(),
         ),
       ],
     );
@@ -1998,8 +2794,13 @@ class _VaultShellState extends State<VaultShell> {
       context: context,
       builder: (context) => ItemEditorDialog(
         templates: templates,
+        categories: existingCategories(),
         initial: item,
         supportsAttachments: spbWallet != null,
+        loadAttachmentBytes: spbWallet == null
+            ? null
+            : (attachmentId) async =>
+                spbWallet!.readAttachmentBytes(attachmentId),
       ),
     );
     if (saved == null) return;
@@ -2011,14 +2812,8 @@ class _VaultShellState extends State<VaultShell> {
       await saveSpbItem(saved);
       return;
     }
-    setState(() {
-      items = [
-        ...items.where((entry) => entry.id != saved.id),
-        saved,
-      ];
-      selectedItemId = saved.id;
-    });
-    await saveVault();
+    setState(() => message =
+        'Откройте или создайте .swl базу перед сохранением карточек.');
   }
 
   Future<void> saveSpbItem(SecretItem saved) async {
@@ -2037,6 +2832,12 @@ class _VaultShellState extends State<VaultShell> {
             for (final entry in saved.values.entries)
               if (entry.key != spbDescriptionFieldId) entry.key: entry.value,
           },
+          cardColor: paletteColorToSpb(saved.colorId),
+          iconId: spbIconIdForUi(
+            itemIconId(saved, templateFor(saved.templateId)),
+            templateFor(saved.templateId).iconId,
+          ),
+          backgroundImageBase64: saved.backgroundImageBase64,
         ),
       );
       for (final attachment in saved.attachments) {
@@ -2060,7 +2861,7 @@ class _VaultShellState extends State<VaultShell> {
         message = null;
       });
     } catch (error) {
-      setState(() => message = 'Не удалось сохранить SPB Wallet: $error');
+      setState(() => message = 'Не удалось сохранить .swl базу: $error');
     }
   }
 
@@ -2077,9 +2878,14 @@ class _VaultShellState extends State<VaultShell> {
           SpbWalletTemplateDraft(
             id: prepared.id,
             name: prepared.name,
+            iconId: spbIconIdForUi(prepared.iconId, prepared.iconId),
             fields: prepared.fields
                 .where((field) => field.id != spbDescriptionFieldId)
-                .map((field) => SpbWalletTemplateFieldRecord(id: field.id, name: field.label, templateId: prepared.id, fieldTypeId: spbFieldTypeId(field)))
+                .map((field) => SpbWalletTemplateFieldRecord(
+                    id: field.id,
+                    name: field.label,
+                    templateId: prepared.id,
+                    fieldTypeId: spbFieldTypeId(field)))
                 .toList(),
           ),
         );
@@ -2091,22 +2897,17 @@ class _VaultShellState extends State<VaultShell> {
           message = null;
         });
       } catch (error) {
-        setState(() => message = 'Не удалось сохранить шаблон SPB Wallet: $error');
+        setState(
+            () => message = 'Не удалось сохранить шаблон .swl базы: $error');
       }
       return;
     }
-    setState(() {
-      templates = [
-        ...templates.where((entry) => entry.id != saved.id),
-        saved,
-      ];
-    });
-    await saveVault();
+    setState(() => message =
+        'Откройте или создайте .swl базу перед сохранением шаблонов.');
   }
 
   CardTemplate prepareSpbTemplate(CardTemplate template, bool isNew) {
-    if (!isNew) return template;
-    final id = SpbWalletDatabase.makeId();
+    final id = isNew ? SpbWalletDatabase.makeId() : template.id;
     return CardTemplate(
       id: id,
       name: template.name,
@@ -2114,7 +2915,9 @@ class _VaultShellState extends State<VaultShell> {
       colorId: template.colorId,
       fields: template.fields
           .map((field) => FieldDefinition(
-                id: SpbWalletDatabase.makeId(),
+                id: isSpbHexId(field.id)
+                    ? field.id
+                    : SpbWalletDatabase.makeId(),
                 label: field.label,
                 type: field.type,
                 required: field.required,
@@ -2124,79 +2927,24 @@ class _VaultShellState extends State<VaultShell> {
     );
   }
 
-  bool isSpbHexId(String value) => RegExp(r'^[0-9A-Fa-f]+$').hasMatch(value) && value.length.isEven;
+  bool isSpbHexId(String value) =>
+      RegExp(r'^[0-9A-Fa-f]+$').hasMatch(value) && value.length.isEven;
 
   Future<void> runSync() async {
-    final now = DateTime.now();
+    if (spbWallet == null) {
+      setState(() => message = 'Запись доступна после открытия .swl базы.');
+      return;
+    }
+    final ok = await writeBackSpbWallet();
+    if (!mounted) return;
     setState(() {
-      lastSyncAt = now;
-      conflicts = [
-        ConflictRecord(
-          id: makeId('conflict'),
-          title: 'Проверка синхронизации: ${syncTitle(syncProvider)}',
-          description: 'Демо-запись показывает журнал конфликтов. В промышленном Rust-ядре здесь будет результат last-write-wins merge.',
-          createdAt: now,
-        ),
-        ...conflicts,
-      ];
-      activeView = 'conflicts';
+      if (ok) {
+        lastSyncAt = DateTime.now();
+        message = syncSourcePath == null && syncSourceUrl == null
+            ? 'База сохранена локально.'
+            : 'База записана в исходное хранилище.';
+      }
     });
-    await saveVault();
-  }
-
-  String syncTitle(String provider) => {
-        'mounted_folder': 'Папка / SMB / NFS',
-        'email': 'Почта IMAP/SMTP',
-        'webdav': 'WebDAV',
-        'sftp': 'SFTP',
-        'ftp': 'FTP/FTPS',
-      }[provider]!;
-
-  void showSyncHelp(String provider) {
-    final steps = {
-      'mounted_folder': [
-        'Создайте отдельную папку для пакетов ActitPassStorage.',
-        'Для SMB/NFS сначала подключите сетевой ресурс средствами системы.',
-        'В поле пути укажите локальный путь к уже доступной папке.',
-      ],
-      'email': [
-        'Создайте отдельный ящик или папку/метку для писем синхронизации.',
-        'Укажите IMAP для чтения и SMTP для отправки.',
-        'Используйте пароль приложения. Пакеты в письмах зашифрованы мастер-паролем.',
-      ],
-      'webdav': [
-        'Создайте папку в Nextcloud, ownCloud, NAS или другом WebDAV-хранилище.',
-        'Вставьте полный WebDAV URL папки.',
-        'Если нужна авторизация, используйте отдельный пароль приложения.',
-      ],
-      'sftp': [
-        'Подготовьте SSH/SFTP доступ и отдельную удаленную папку.',
-        'Укажите хост, порт, пользователя и путь.',
-        'Для ключа с фразой введите фразу ключа в поле пароля.',
-      ],
-      'ftp': [
-        'Создайте отдельную FTP/FTPS папку.',
-        'Укажите хост, порт, пользователя, пароль и путь.',
-        'Обычный FTP не защищает учетные данные в сети; лучше FTPS/WebDAV HTTPS/SFTP.',
-      ],
-    }[provider]!;
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Как настроить: ${syncTitle(provider)}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: steps.map((step) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text('• $step'),
-              )).toList(),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Понятно')),
-        ],
-      ),
-    );
   }
 }
 
@@ -2232,54 +2980,6 @@ class PasswordField extends StatelessWidget {
   }
 }
 
-class SyncTextField extends StatefulWidget {
-  const SyncTextField({
-    required this.label,
-    required this.hint,
-    required this.initialValue,
-    required this.secret,
-    required this.onChanged,
-    super.key,
-  });
-
-  final String label;
-  final String hint;
-  final String initialValue;
-  final bool secret;
-  final ValueChanged<String> onChanged;
-
-  @override
-  State<SyncTextField> createState() => _SyncTextFieldState();
-}
-
-class _SyncTextFieldState extends State<SyncTextField> {
-  bool visible = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: TextFormField(
-        initialValue: widget.initialValue,
-        obscureText: widget.secret && !visible,
-        onChanged: widget.onChanged,
-        decoration: InputDecoration(
-          labelText: widget.label,
-          hintText: widget.hint,
-          border: const OutlineInputBorder(),
-          suffixIcon: widget.secret
-              ? IconButton(
-                  tooltip: visible ? 'Скрыть' : 'Показать',
-                  icon: Icon(visible ? Icons.visibility_off : Icons.visibility),
-                  onPressed: () => setState(() => visible = !visible),
-                )
-              : null,
-        ),
-      ),
-    );
-  }
-}
-
 class NavigationButton extends StatelessWidget {
   const NavigationButton({
     required this.selected,
@@ -2304,7 +3004,8 @@ class NavigationButton extends StatelessWidget {
         label: Text(label),
         style: OutlinedButton.styleFrom(
           alignment: Alignment.centerLeft,
-          backgroundColor: selected ? Theme.of(context).colorScheme.primaryContainer : null,
+          backgroundColor:
+              selected ? Theme.of(context).colorScheme.primaryContainer : null,
         ),
       ),
     );
@@ -2362,44 +3063,256 @@ class CountBadgeButton extends StatelessWidget {
   }
 }
 
+class FieldValueRow extends StatelessWidget {
+  const FieldValueRow({
+    required this.label,
+    required this.value,
+    required this.foreground,
+    this.secret = false,
+    this.revealed = false,
+    this.onToggle,
+    super.key,
+  });
+
+  final String label;
+  final String value;
+  final Color foreground;
+  final bool secret;
+  final bool revealed;
+  final VoidCallback? onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.44),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: foreground.withValues(alpha: 0.10)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foreground.withValues(alpha: 0.62),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style:
+                      TextStyle(color: foreground, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+          if (secret && onToggle != null)
+            IconButton(
+              tooltip: revealed ? 'Скрыть' : 'Показать',
+              icon: Icon(revealed ? Icons.visibility_off : Icons.visibility),
+              onPressed: onToggle,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class SpbPanel extends StatelessWidget {
+  const SpbPanel({
+    required this.title,
+    required this.children,
+    super.key,
+  });
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            color: const Color(0xffb9cee4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Text(title,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+          ),
+          ...children,
+        ],
+      ),
+    );
+  }
+}
+
+class IconPickerField extends StatelessWidget {
+  const IconPickerField({
+    required this.label,
+    required this.iconId,
+    required this.onChanged,
+    super.key,
+  });
+
+  final String label;
+  final String iconId;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = iconById(iconId);
+    return Row(
+      children: [
+        CircleAvatar(child: Text(icon.symbol)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: () async {
+              final picked = await showIconPickerDialog(context, iconId);
+              if (picked != null) onChanged(picked);
+            },
+            icon: Text(icon.symbol, style: const TextStyle(fontSize: 18)),
+            label: Text(label),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+Future<String?> showIconPickerDialog(
+  BuildContext context,
+  String selectedIconId,
+) {
+  return showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Все пиктограммы'),
+      content: SizedBox(
+        width: min(MediaQuery.of(context).size.width - 48, 560),
+        height: min(MediaQuery.of(context).size.height - 180, 420),
+        child: GridView.builder(
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 52,
+            mainAxisSpacing: 6,
+            crossAxisSpacing: 6,
+          ),
+          itemCount: templateIcons.length,
+          itemBuilder: (context, index) {
+            final icon = templateIcons[index];
+            final selected = icon.id == selectedIconId;
+            return Tooltip(
+              message: icon.label,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => Navigator.pop(context, icon.id),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? Theme.of(context).colorScheme.primaryContainer
+                        : Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).dividerColor,
+                    ),
+                  ),
+                  child: Center(
+                    child:
+                        Text(icon.symbol, style: const TextStyle(fontSize: 24)),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Отмена'),
+        ),
+      ],
+    ),
+  );
+}
+
 class ItemEditorDialog extends StatefulWidget {
   const ItemEditorDialog({
     required this.templates,
+    required this.categories,
     this.initial,
     this.supportsAttachments = false,
+    this.loadAttachmentBytes,
     super.key,
   });
 
   final List<CardTemplate> templates;
+  final List<String> categories;
   final SecretItem? initial;
   final bool supportsAttachments;
+  final Future<List<int>> Function(String attachmentId)? loadAttachmentBytes;
 
   @override
   State<ItemEditorDialog> createState() => _ItemEditorDialogState();
 }
 
 class _ItemEditorDialogState extends State<ItemEditorDialog> {
+  static const emptyCategoryValue = '__empty_category__';
+  static const newCategoryValue = '__new_category__';
+
   late String templateId;
   late String colorId;
+  late String categorySelection;
+  late String iconId;
   late final TextEditingController title;
   late final TextEditingController category;
   late final Map<String, TextEditingController> values;
   late List<SecretAttachment> attachments;
+  String? backgroundImageBase64;
   final Set<String> visibleSecrets = {};
 
-  CardTemplate get template => widget.templates.firstWhere((entry) => entry.id == templateId);
+  CardTemplate get template =>
+      widget.templates.firstWhere((entry) => entry.id == templateId);
 
   @override
   void initState() {
     super.initState();
     templateId = widget.initial?.templateId ?? widget.templates.first.id;
     colorId = widget.initial?.colorId ?? template.colorId;
+    iconId = widget.initial?.iconId ?? template.iconId;
     title = TextEditingController(text: widget.initial?.title ?? '');
-    category = TextEditingController(text: widget.initial?.category ?? '');
+    final initialCategory = widget.initial?.category.trim() ?? '';
+    category = TextEditingController(text: initialCategory);
+    categorySelection = initialCategory.isEmpty
+        ? emptyCategoryValue
+        : widget.categories.contains(initialCategory)
+            ? initialCategory
+            : newCategoryValue;
     values = {
-      for (final field in template.fields) field.id: TextEditingController(text: widget.initial?.values[field.id] ?? ''),
+      for (final field in template.fields)
+        field.id:
+            TextEditingController(text: widget.initial?.values[field.id] ?? ''),
     };
     attachments = [...?widget.initial?.attachments];
+    backgroundImageBase64 = widget.initial?.backgroundImageBase64;
   }
 
   @override
@@ -2415,7 +3328,8 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.initial == null ? 'Новая карточка' : 'Редактировать карточку'),
+      title: Text(
+          widget.initial == null ? 'Новая карточка' : 'Редактировать карточку'),
       content: SizedBox(
         width: min(MediaQuery.of(context).size.width - 48, 680),
         child: SingleChildScrollView(
@@ -2424,44 +3338,91 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
             children: [
               DropdownButtonFormField<String>(
                 initialValue: templateId,
-                decoration: const InputDecoration(labelText: 'Шаблон', border: OutlineInputBorder()),
-                items: widget.templates.map((template) => DropdownMenuItem(value: template.id, child: Text('${iconById(template.iconId).symbol} ${template.name}'))).toList(),
+                decoration: const InputDecoration(
+                    labelText: 'Шаблон', border: OutlineInputBorder()),
+                items: widget.templates
+                    .map((template) => DropdownMenuItem(
+                        value: template.id,
+                        child: Text(
+                            '${iconById(template.iconId).symbol} ${template.name}')))
+                    .toList(),
                 onChanged: (value) => setState(() {
                   templateId = value ?? templateId;
+                  if (widget.initial == null ||
+                      widget.initial?.iconId == null) {
+                    iconId = template.iconId;
+                  }
                   for (final field in template.fields) {
                     values.putIfAbsent(field.id, () => TextEditingController());
                   }
                 }),
               ),
               const SizedBox(height: 10),
-              TextField(controller: title, decoration: const InputDecoration(labelText: 'Название', border: OutlineInputBorder())),
+              TextField(
+                  controller: title,
+                  decoration: const InputDecoration(
+                      labelText: 'Название', border: OutlineInputBorder())),
               const SizedBox(height: 10),
-              TextField(controller: category, decoration: const InputDecoration(labelText: 'Категория', border: OutlineInputBorder())),
+              categoryEditor(),
               const SizedBox(height: 10),
-              ColorPicker(value: colorId, onChanged: (value) => setState(() => colorId = value)),
+              IconPickerField(
+                label: 'Пиктограмма карточки',
+                iconId: iconId,
+                onChanged: (value) => setState(() => iconId = value),
+              ),
+              const SizedBox(height: 10),
+              ColorPicker(
+                  value: colorId,
+                  onChanged: (value) => setState(() => colorId = value)),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: pickBackgroundImage,
+                      icon: const Icon(Icons.image_outlined),
+                      label: Text(backgroundImageBase64 == null
+                          ? 'Добавить фон'
+                          : 'Заменить фон'),
+                    ),
+                  ),
+                  if (backgroundImageBase64 != null) ...[
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: 'Убрать фон',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () =>
+                          setState(() => backgroundImageBase64 = null),
+                    ),
+                  ],
+                ],
+              ),
               const SizedBox(height: 10),
               ...template.fields.map((field) {
-                final controller = values.putIfAbsent(field.id, () => TextEditingController());
+                final controller =
+                    values.putIfAbsent(field.id, () => TextEditingController());
                 final visible = visibleSecrets.contains(field.id);
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: TextField(
                     controller: controller,
                     obscureText: field.secret && !visible,
+                    keyboardType: keyboardTypeForField(field),
+                    inputFormatters: inputFormattersForField(field),
+                    onEditingComplete: () {
+                      if (field.type == 'url') {
+                        controller.text = normalizeUrlInput(controller.text);
+                        controller.selection = TextSelection.collapsed(
+                            offset: controller.text.length);
+                      }
+                    },
                     minLines: field.type == 'multiline_note' ? 3 : 1,
                     maxLines: field.type == 'multiline_note' ? 5 : 1,
                     decoration: InputDecoration(
                       labelText: '${field.label}${field.required ? ' *' : ''}',
+                      hintText: hintTextForField(field),
                       border: const OutlineInputBorder(),
-                      suffixIcon: field.secret
-                          ? IconButton(
-                              tooltip: visible ? 'Скрыть' : 'Показать',
-                              icon: Icon(visible ? Icons.visibility_off : Icons.visibility),
-                              onPressed: () => setState(() {
-                                visible ? visibleSecrets.remove(field.id) : visibleSecrets.add(field.id);
-                              }),
-                            )
-                          : null,
+                      suffixIcon: fieldSuffixIcon(field, controller, visible),
                     ),
                   ),
                 );
@@ -2470,10 +3431,13 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                 const SizedBox(height: 8),
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: Text('Вложения SPB Wallet', style: Theme.of(context).textTheme.titleSmall),
+                  child: Text('Вложения .swl',
+                      style: Theme.of(context).textTheme.titleSmall),
                 ),
                 const SizedBox(height: 8),
-                ...attachments.where((attachment) => !attachment.deleted).map((attachment) {
+                ...attachments
+                    .where((attachment) => !attachment.deleted)
+                    .map((attachment) {
                   final subtitle = attachment.decodeError != null
                       ? 'Ошибка чтения: ${attachment.decodeError}'
                       : attachment.pendingBytes != null
@@ -2486,10 +3450,18 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                     child: ListTile(
                       leading: const Icon(Icons.attach_file),
                       title: Text(attachment.fileName),
-                      subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(subtitle,
+                          maxLines: 2, overflow: TextOverflow.ellipsis),
                       trailing: Wrap(
                         spacing: 4,
                         children: [
+                          if (attachment.id.isNotEmpty &&
+                              attachment.decodeError == null)
+                            IconButton(
+                              tooltip: 'Сохранить вложение',
+                              icon: const Icon(Icons.download_outlined),
+                              onPressed: () => exportAttachment(attachment),
+                            ),
                           IconButton(
                             tooltip: 'Заменить файл',
                             icon: const Icon(Icons.drive_file_move_outline),
@@ -2500,7 +3472,9 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                             icon: const Icon(Icons.delete_outline),
                             onPressed: () => setState(() {
                               attachments = attachments
-                                  .map((entry) => entry.id == attachment.id ? entry.copyWith(deleted: true) : entry)
+                                  .map((entry) => entry.id == attachment.id
+                                      ? entry.copyWith(deleted: true)
+                                      : entry)
                                   .toList();
                             }),
                           ),
@@ -2523,7 +3497,9 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена')),
         FilledButton(
           onPressed: () {
             Navigator.pop(
@@ -2531,13 +3507,24 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
               SecretItem(
                 id: widget.initial?.id ?? makeId('item'),
                 templateId: templateId,
-                title: title.text.trim().isEmpty ? template.name : title.text.trim(),
+                title: title.text.trim().isEmpty
+                    ? template.name
+                    : title.text.trim(),
                 category: category.text.trim(),
                 colorId: colorId,
-                values: {for (final entry in values.entries) entry.key: entry.value.text.trim()},
+                values: {
+                  for (final field in widget.templates
+                      .firstWhere((entry) => entry.id == templateId)
+                      .fields)
+                    field.id: field.type == 'url'
+                        ? normalizeUrlInput((values[field.id]?.text ?? ''))
+                        : (values[field.id]?.text.trim() ?? ''),
+                },
                 attachments: attachments,
                 modifiedAt: DateTime.now(),
                 hitCount: widget.initial?.hitCount ?? 0,
+                iconId: iconId,
+                backgroundImageBase64: backgroundImageBase64,
               ),
             );
           },
@@ -2547,11 +3534,133 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
     );
   }
 
+  Widget categoryEditor() {
+    final dropdownValues = <String>{
+      emptyCategoryValue,
+      ...widget.categories,
+      newCategoryValue,
+    }.toList();
+    final selectedValue = dropdownValues.contains(categorySelection)
+        ? categorySelection
+        : newCategoryValue;
+    return Column(
+      children: [
+        DropdownButtonFormField<String>(
+          initialValue: selectedValue,
+          decoration: const InputDecoration(
+            labelText: 'Категория',
+            border: OutlineInputBorder(),
+          ),
+          items: [
+            const DropdownMenuItem(
+              value: emptyCategoryValue,
+              child: Text('Без категории'),
+            ),
+            ...widget.categories.map(
+              (entry) => DropdownMenuItem(value: entry, child: Text(entry)),
+            ),
+            const DropdownMenuItem(
+              value: newCategoryValue,
+              child: Text('Создать новую категорию'),
+            ),
+          ],
+          onChanged: (value) => setState(() {
+            categorySelection = value ?? emptyCategoryValue;
+            if (categorySelection == emptyCategoryValue) {
+              category.clear();
+            } else if (categorySelection != newCategoryValue) {
+              category.text = categorySelection;
+            }
+          }),
+        ),
+        if (selectedValue == newCategoryValue) ...[
+          const SizedBox(height: 10),
+          TextField(
+            controller: category,
+            decoration: const InputDecoration(
+              labelText: 'Новая категория',
+              hintText: 'Например: Финансы / Банк',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  TextInputType keyboardTypeForField(FieldDefinition field) {
+    if (field.type == 'url') return TextInputType.url;
+    if (field.type == 'date') return TextInputType.datetime;
+    return TextInputType.text;
+  }
+
+  List<TextInputFormatter>? inputFormattersForField(FieldDefinition field) {
+    if (field.type == 'date') return [DateTextInputFormatter()];
+    return null;
+  }
+
+  String? hintTextForField(FieldDefinition field) {
+    if (field.type == 'url') return 'https://example.com';
+    if (field.type == 'date') return 'дд.мм.гггг';
+    return null;
+  }
+
+  Widget? fieldSuffixIcon(
+    FieldDefinition field,
+    TextEditingController controller,
+    bool visible,
+  ) {
+    final buttons = <Widget>[];
+    if (field.type == 'date') {
+      buttons.add(
+        IconButton(
+          tooltip: 'Выбрать дату',
+          icon: const Icon(Icons.calendar_month_outlined),
+          onPressed: () => pickDateForField(controller),
+        ),
+      );
+    }
+    if (field.secret) {
+      buttons.add(
+        IconButton(
+          tooltip: visible ? 'Скрыть' : 'Показать',
+          icon: Icon(visible ? Icons.visibility_off : Icons.visibility),
+          onPressed: () => setState(() {
+            visible
+                ? visibleSecrets.remove(field.id)
+                : visibleSecrets.add(field.id);
+          }),
+        ),
+      );
+    }
+    if (buttons.isEmpty) return null;
+    if (buttons.length == 1) return buttons.single;
+    return SizedBox(
+      width: 96,
+      child: Row(mainAxisSize: MainAxisSize.min, children: buttons),
+    );
+  }
+
+  Future<void> pickDateForField(TextEditingController controller) async {
+    final initialDate = parseDateInput(controller.text) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate.year < 1900 || initialDate.year > 2200
+          ? DateTime.now()
+          : initialDate,
+      firstDate: DateTime(1900),
+      lastDate: DateTime(2200),
+    );
+    if (picked == null) return;
+    setState(() => controller.text = formatDateInput(picked));
+  }
+
   Future<void> addAttachment() async {
     final picked = await FilePicker.platform.pickFiles(withData: true);
     final file = picked?.files.single;
     if (file == null) return;
-    final bytes = file.bytes ?? (file.path == null ? null : await File(file.path!).readAsBytes());
+    final bytes = file.bytes ??
+        (file.path == null ? null : await File(file.path!).readAsBytes());
     if (bytes == null) return;
     setState(() {
       attachments = [
@@ -2566,11 +3675,25 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
     });
   }
 
+  Future<void> pickBackgroundImage() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = picked?.files.single;
+    if (file == null) return;
+    final bytes = file.bytes ??
+        (file.path == null ? null : await File(file.path!).readAsBytes());
+    if (bytes == null) return;
+    setState(() => backgroundImageBase64 = base64Encode(bytes));
+  }
+
   Future<void> replaceAttachment(SecretAttachment attachment) async {
     final picked = await FilePicker.platform.pickFiles(withData: true);
     final file = picked?.files.single;
     if (file == null) return;
-    final bytes = file.bytes ?? (file.path == null ? null : await File(file.path!).readAsBytes());
+    final bytes = file.bytes ??
+        (file.path == null ? null : await File(file.path!).readAsBytes());
     if (bytes == null) return;
     setState(() {
       attachments = attachments
@@ -2585,6 +3708,31 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
           .toList();
     });
   }
+
+  Future<void> exportAttachment(SecretAttachment attachment) async {
+    final loader = widget.loadAttachmentBytes;
+    if (loader == null || attachment.id.isEmpty) return;
+    try {
+      final bytes = await loader(attachment.id);
+      final data = Uint8List.fromList(bytes);
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Сохранить вложение',
+        fileName: attachment.fileName,
+        bytes: data,
+      );
+      if (path != null && !Platform.isAndroid && !Platform.isIOS) {
+        final file = File(path);
+        if (!file.existsSync() || file.lengthSync() != data.length) {
+          await file.writeAsBytes(data, flush: true);
+        }
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить вложение: $error')),
+      );
+    }
+  }
 }
 
 class TemplateEditorDialog extends StatefulWidget {
@@ -2596,10 +3744,36 @@ class TemplateEditorDialog extends StatefulWidget {
   State<TemplateEditorDialog> createState() => _TemplateEditorDialogState();
 }
 
+class TemplateFieldDraft {
+  TemplateFieldDraft(FieldDefinition field)
+      : id = field.id,
+        type = field.type,
+        required = field.required,
+        secret = field.secret,
+        label = TextEditingController(text: field.label);
+
+  final String id;
+  final TextEditingController label;
+  String type;
+  bool required;
+  bool secret;
+
+  void dispose() => label.dispose();
+
+  FieldDefinition toField() => FieldDefinition(
+        id: id,
+        label: label.text.trim().isEmpty ? 'Поле' : label.text.trim(),
+        type: type,
+        required: required,
+        secret: secret || type == 'password' || type == 'custom_secret',
+      );
+}
+
 class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
   late final TextEditingController name;
   late String iconId;
   late String colorId;
+  late final List<TemplateFieldDraft> fields;
 
   @override
   void initState() {
@@ -2607,11 +3781,28 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
     name = TextEditingController(text: widget.initial?.name ?? '');
     iconId = widget.initial?.iconId ?? 'key';
     colorId = widget.initial?.colorId ?? 'neutral';
+    fields = [
+      for (final field in widget.initial?.fields ??
+          const [
+            FieldDefinition(id: 'username', label: 'Логин', type: 'username'),
+            FieldDefinition(
+                id: 'password',
+                label: 'Пароль',
+                type: 'password',
+                secret: true),
+            FieldDefinition(
+                id: 'notes', label: 'Заметки', type: 'multiline_note'),
+          ])
+        TemplateFieldDraft(field),
+    ];
   }
 
   @override
   void dispose() {
     name.dispose();
+    for (final field in fields) {
+      field.dispose();
+    }
     super.dispose();
   }
 
@@ -2626,42 +3817,50 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              TextField(controller: name, decoration: const InputDecoration(labelText: 'Название шаблона', border: OutlineInputBorder())),
+              TextField(
+                  controller: name,
+                  decoration: const InputDecoration(
+                      labelText: 'Название шаблона',
+                      border: OutlineInputBorder())),
               const SizedBox(height: 14),
               const Text('Пиктограмма'),
               const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: templateIcons.map((icon) => ChoiceChip(
-                      selected: icon.id == iconId,
-                      label: Text('${icon.symbol} ${icon.label}'),
-                      onSelected: (_) => setState(() => iconId = icon.id),
-                    )).toList(),
-              ),
+              templateIconPicker(),
               const SizedBox(height: 14),
-              const Text('Новый пользовательский шаблон стартует с полями “Логин”, “Пароль” и “Заметки”. Секретные поля всегда получают кнопку-глаз.'),
+              Row(
+                children: [
+                  Text('Поля', style: Theme.of(context).textTheme.titleSmall),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: addField,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Добавить поле'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ...fields.map(fieldEditor),
             ],
           ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена')),
         FilledButton(
           onPressed: () {
             Navigator.pop(
               context,
               CardTemplate(
                 id: widget.initial?.id ?? makeId('tpl'),
-                name: name.text.trim().isEmpty ? 'Новый шаблон' : name.text.trim(),
+                name: name.text.trim().isEmpty
+                    ? 'Новый шаблон'
+                    : name.text.trim(),
                 iconId: iconId,
                 colorId: colorId,
                 builtIn: widget.initial?.builtIn ?? false,
-                fields: const [
-                  FieldDefinition(id: 'username', label: 'Логин', type: 'username'),
-                  FieldDefinition(id: 'password', label: 'Пароль', type: 'password', secret: true),
-                  FieldDefinition(id: 'notes', label: 'Заметки', type: 'multiline_note'),
-                ],
+                fields: fields.map((field) => field.toField()).toList(),
               ),
             );
           },
@@ -2669,6 +3868,125 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
         ),
       ],
     );
+  }
+
+  Widget templateIconPicker() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        ...quickTemplateIcons(iconId).map((icon) => ChoiceChip(
+              selected: icon.id == iconId,
+              label: Text(icon.symbol, style: const TextStyle(fontSize: 18)),
+              tooltip: icon.label,
+              onSelected: (_) => setState(() => iconId = icon.id),
+            )),
+        OutlinedButton.icon(
+          onPressed: () async {
+            final picked = await showIconPickerDialog(context, iconId);
+            if (picked != null) setState(() => iconId = picked);
+          },
+          icon: const Icon(Icons.apps_outlined),
+          label: const Text('Все пиктограммы'),
+        ),
+      ],
+    );
+  }
+
+  Widget fieldEditor(TemplateFieldDraft field) {
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          children: [
+            TextField(
+              controller: field.label,
+              decoration: const InputDecoration(
+                  labelText: 'Название поля', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: field.type,
+                    decoration: const InputDecoration(
+                        labelText: 'Тип', border: OutlineInputBorder()),
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'text', child: Text('Маленькая строка')),
+                      DropdownMenuItem(value: 'username', child: Text('Логин')),
+                      DropdownMenuItem(
+                          value: 'multiline_note',
+                          child: Text('Большая строка')),
+                      DropdownMenuItem(
+                          value: 'password', child: Text('Пароль')),
+                      DropdownMenuItem(
+                          value: 'custom_secret', child: Text('Секрет')),
+                      DropdownMenuItem(value: 'number', child: Text('Число')),
+                      DropdownMenuItem(value: 'url', child: Text('Сайт')),
+                      DropdownMenuItem(value: 'email', child: Text('Email')),
+                      DropdownMenuItem(value: 'phone', child: Text('Телефон')),
+                      DropdownMenuItem(value: 'date', child: Text('Дата')),
+                      DropdownMenuItem(value: 'totp', child: Text('TOTP')),
+                    ],
+                    onChanged: (value) => setState(() {
+                      field.type = value ?? 'text';
+                      if (field.type == 'password' ||
+                          field.type == 'custom_secret') {
+                        field.secret = true;
+                      }
+                    }),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Удалить поле',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed:
+                      fields.length <= 1 ? null : () => removeField(field),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 10,
+              children: [
+                FilterChip(
+                  selected: field.required,
+                  label: const Text('Обязательное'),
+                  onSelected: (value) => setState(() => field.required = value),
+                ),
+                FilterChip(
+                  selected: field.secret,
+                  label: const Text('Скрывать'),
+                  onSelected: (value) => setState(() => field.secret = value),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void addField() {
+    setState(() {
+      fields.add(
+        TemplateFieldDraft(
+          FieldDefinition(
+              id: makeId('field'), label: 'Новое поле', type: 'text'),
+        ),
+      );
+    });
+  }
+
+  void removeField(TemplateFieldDraft field) {
+    setState(() {
+      fields.remove(field);
+      field.dispose();
+    });
   }
 }
 
@@ -2706,7 +4024,9 @@ class ColorPicker extends StatelessWidget {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: selected ? Theme.of(context).colorScheme.primary : Colors.transparent,
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.transparent,
                       width: 2,
                     ),
                   ),
