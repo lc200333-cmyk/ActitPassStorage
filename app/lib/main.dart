@@ -50,6 +50,8 @@ class TemplateIcon {
   final String id;
   final String label;
   final String symbol;
+
+  IconData get glyph => templateIconGlyphs[id] ?? Icons.vpn_key_outlined;
 }
 
 class FieldDefinition {
@@ -508,6 +510,130 @@ const templateIcons = [
   TemplateIcon('info', 'Информация', 'ℹ️'),
 ];
 
+const templateIconGlyphs = {
+  'key': Icons.vpn_key_outlined,
+  'note': Icons.notes_outlined,
+  'card': Icons.credit_card,
+  'id': Icons.badge_outlined,
+  'server': Icons.dns_outlined,
+  'license': Icons.sell_outlined,
+  'wifi': Icons.wifi,
+  'bank': Icons.account_balance,
+  'mail': Icons.mail_outline,
+  'shield': Icons.security,
+  'lock': Icons.lock_outline,
+  'unlock': Icons.lock_open,
+  'safe': Icons.inventory_2_outlined,
+  'briefcase': Icons.business_center_outlined,
+  'folder': Icons.folder_outlined,
+  'file': Icons.insert_drive_file_outlined,
+  'bookmark': Icons.bookmark_border,
+  'tag': Icons.label_outline,
+  'receipt': Icons.receipt_long,
+  'money': Icons.attach_money,
+  'coin': Icons.monetization_on_outlined,
+  'wallet': Icons.account_balance_wallet_outlined,
+  'chart': Icons.trending_up,
+  'calculator': Icons.calculate_outlined,
+  'home': Icons.home_outlined,
+  'car': Icons.directions_car,
+  'plane': Icons.flight_takeoff,
+  'train': Icons.train,
+  'passport': Icons.assignment_ind_outlined,
+  'ticket': Icons.confirmation_number_outlined,
+  'phone': Icons.phone_iphone,
+  'desktop': Icons.desktop_windows,
+  'laptop': Icons.laptop_mac,
+  'printer': Icons.print,
+  'keyboard': Icons.keyboard,
+  'mouse': Icons.mouse,
+  'disk': Icons.save,
+  'cd': Icons.album,
+  'camera': Icons.photo_camera,
+  'video': Icons.videocam,
+  'tv': Icons.tv,
+  'game': Icons.sports_esports,
+  'headphones': Icons.headphones,
+  'watch': Icons.watch,
+  'satellite': Icons.settings_input_antenna,
+  'globe': Icons.public,
+  'link': Icons.link,
+  'cloud': Icons.cloud_outlined,
+  'database': Icons.storage,
+  'gear': Icons.settings,
+  'tool': Icons.construction,
+  'wrench': Icons.build,
+  'bug': Icons.bug_report_outlined,
+  'code': Icons.code,
+  'package': Icons.inventory_2,
+  'rocket': Icons.rocket_launch,
+  'lab': Icons.science,
+  'medical': Icons.medical_services,
+  'heart': Icons.favorite_border,
+  'pill': Icons.medication,
+  'school': Icons.school,
+  'book': Icons.menu_book,
+  'pen': Icons.edit,
+  'clipboard': Icons.assignment,
+  'calendar': Icons.calendar_month,
+  'clock': Icons.schedule,
+  'pin': Icons.push_pin,
+  'location': Icons.place,
+  'map': Icons.map_outlined,
+  'house_key': Icons.key,
+  'building': Icons.business,
+  'shop': Icons.local_mall,
+  'factory': Icons.factory,
+  'hammer': Icons.hardware,
+  'scales': Icons.balance,
+  'certificate': Icons.workspace_premium,
+  'medal': Icons.emoji_events,
+  'star': Icons.star_border,
+  'warning': Icons.warning_amber,
+  'bell': Icons.notifications_none,
+  'gift': Icons.card_giftcard,
+  'cart': Icons.shopping_cart,
+  'food': Icons.restaurant,
+  'coffee': Icons.local_cafe,
+  'hotel': Icons.hotel,
+  'taxi': Icons.local_taxi,
+  'fuel': Icons.local_gas_station,
+  'bicycle': Icons.directions_bike,
+  'ship': Icons.directions_boat,
+  'anchor': Icons.anchor,
+  'crypto': Icons.currency_bitcoin,
+  'diamond': Icons.diamond_outlined,
+  'gem': Icons.diamond,
+  'mailbox': Icons.markunread_mailbox_outlined,
+  'inbox': Icons.move_to_inbox,
+  'outbox': Icons.outbox,
+  'chat': Icons.chat_bubble_outline,
+  'contact': Icons.person_outline,
+  'group': Icons.group_outlined,
+  'family': Icons.family_restroom,
+  'fingerprint': Icons.fingerprint,
+  'magnifier': Icons.search,
+  'battery': Icons.battery_full,
+  'plug': Icons.power,
+  'fire': Icons.local_fire_department,
+  'snowflake': Icons.ac_unit,
+  'plant': Icons.grass,
+  'tree': Icons.park,
+  'sun': Icons.wb_sunny,
+  'moon': Icons.dark_mode,
+  'umbrella': Icons.beach_access,
+  'magnet': Icons.tungsten,
+  'dna': Icons.biotech,
+  'microchip': Icons.memory,
+  'qr': Icons.qr_code,
+  'check': Icons.check_circle_outline,
+  'cross': Icons.cancel_outlined,
+  'plus': Icons.add_circle_outline,
+  'minus': Icons.remove_circle_outline,
+  'question': Icons.help_outline,
+  'info': Icons.info_outline,
+};
+
 const quickTemplateIconIds = [
   'key',
   'note',
@@ -719,6 +845,21 @@ TemplateIcon iconById(String id) => templateIcons.firstWhere(
       (icon) => icon.id == id,
       orElse: () => templateIcons.first,
     );
+
+Widget templateIconWidget(String id, {double size = 20, Color? color}) {
+  return Icon(iconById(id).glyph, size: size, color: color);
+}
+
+Widget templateMenuIconLabel(String iconId, String text) {
+  return Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      templateIconWidget(iconId, size: 18),
+      const SizedBox(width: 8),
+      Flexible(child: Text(text, overflow: TextOverflow.ellipsis)),
+    ],
+  );
+}
 
 String defaultIconForTemplateName(String name, Iterable<String> fieldLabels) {
   final text = ([name, ...fieldLabels]).join(' ').toLowerCase();
@@ -2271,7 +2412,7 @@ class _VaultShellState extends State<VaultShell> {
           child: ListTile(
             dense: true,
             selected: selectedItemId == item.id,
-            leading: Text(iconById(itemIconId(item, template)).symbol),
+            leading: templateIconWidget(itemIconId(item, template)),
             title:
                 Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
             subtitle: Text(template.name,
@@ -2338,7 +2479,7 @@ class _VaultShellState extends State<VaultShell> {
                 final template = templateFor(item.templateId);
                 return ListTile(
                   dense: true,
-                  leading: Text(iconById(itemIconId(item, template)).symbol),
+                  leading: templateIconWidget(itemIconId(item, template)),
                   title: Text(item.title,
                       maxLines: 2, overflow: TextOverflow.ellipsis),
                   onTap: () => selectItem(item),
@@ -2440,8 +2581,7 @@ class _VaultShellState extends State<VaultShell> {
         return Card(
           elevation: 0,
           child: ListTile(
-            leading: Text(iconById(itemIconId(item, template)).symbol,
-                style: const TextStyle(fontSize: 24)),
+            leading: templateIconWidget(itemIconId(item, template), size: 24),
             title: Text(item.title),
             subtitle: Text('${template.name} · открытий: ${item.hitCount}'),
             trailing: const Icon(Icons.chevron_right),
@@ -2490,8 +2630,7 @@ class _VaultShellState extends State<VaultShell> {
             children: [
               Row(
                 children: [
-                  Text(iconById(itemIconId(item, template)).symbol,
-                      style: const TextStyle(fontSize: 28)),
+                  templateIconWidget(itemIconId(item, template), size: 28),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -2666,7 +2805,7 @@ class _VaultShellState extends State<VaultShell> {
             leading: CircleAvatar(
                 backgroundColor: color.bg,
                 foregroundColor: color.fg,
-                child: Text(iconById(template.iconId).symbol)),
+                child: templateIconWidget(template.iconId, color: color.fg)),
             title: Text(template.name),
             subtitle: Text(template.fields
                 .map((field) =>
@@ -2777,7 +2916,10 @@ class _VaultShellState extends State<VaultShell> {
           spacing: 10,
           runSpacing: 10,
           children: templateIcons
-              .map((icon) => Chip(label: Text('${icon.symbol} ${icon.label}')))
+              .map((icon) => Chip(
+                    avatar: Icon(icon.glyph, size: 18),
+                    label: Text(icon.label),
+                  ))
               .toList(),
         ),
       ],
@@ -3179,7 +3321,7 @@ class IconPickerField extends StatelessWidget {
     final icon = iconById(iconId);
     return Row(
       children: [
-        CircleAvatar(child: Text(icon.symbol)),
+        CircleAvatar(child: Icon(icon.glyph, size: 20)),
         const SizedBox(width: 10),
         Expanded(
           child: OutlinedButton.icon(
@@ -3187,7 +3329,7 @@ class IconPickerField extends StatelessWidget {
               final picked = await showIconPickerDialog(context, iconId);
               if (picked != null) onChanged(picked);
             },
-            icon: Text(icon.symbol, style: const TextStyle(fontSize: 18)),
+            icon: Icon(icon.glyph, size: 18),
             label: Text(label),
           ),
         ),
@@ -3235,8 +3377,7 @@ Future<String?> showIconPickerDialog(
                     ),
                   ),
                   child: Center(
-                    child:
-                        Text(icon.symbol, style: const TextStyle(fontSize: 24)),
+                    child: Icon(icon.glyph, size: 24),
                   ),
                 ),
               ),
@@ -3343,8 +3484,8 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                 items: widget.templates
                     .map((template) => DropdownMenuItem(
                         value: template.id,
-                        child: Text(
-                            '${iconById(template.iconId).symbol} ${template.name}')))
+                        child: templateMenuIconLabel(
+                            template.iconId, template.name)))
                     .toList(),
                 onChanged: (value) => setState(() {
                   templateId = value ?? templateId;
@@ -3877,7 +4018,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
       children: [
         ...quickTemplateIcons(iconId).map((icon) => ChoiceChip(
               selected: icon.id == iconId,
-              label: Text(icon.symbol, style: const TextStyle(fontSize: 18)),
+              label: Icon(icon.glyph, size: 18),
               tooltip: icon.label,
               onSelected: (_) => setState(() => iconId = icon.id),
             )),

@@ -64,12 +64,6 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 RUN flutter precache --linux --android \
   && flutter doctor -v
 
-RUN apt-get update \
-  && curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/google-chrome-stable.deb \
-  && apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb \
-  && rm -f /tmp/google-chrome-stable.deb \
-  && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /workspace
 
 CMD ["bash"]

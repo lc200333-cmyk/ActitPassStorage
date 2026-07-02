@@ -95,7 +95,6 @@ const dockerfile = read('docker/build-env/Dockerfile');
   'ndk;28.2.13676358',
   'rustup target add',
   'flutter precache --linux --android',
-  'google-chrome-stable_current_amd64.deb',
 ].forEach((needle) => assert.ok(dockerfile.includes(needle), `Dockerfile missing ${needle}`));
 
 const compose = read('docker-compose.yml');

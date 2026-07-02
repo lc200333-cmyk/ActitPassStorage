@@ -4,8 +4,6 @@
   "private": true,
   "description": "Локальный менеджер секретов с зашифрованными базами",
   "scripts": {
-    "predev": "fuser -k 4173/tcp || true",
-    "dev": "node tools/dev-server.js",
     "check:release-tools": "tools/check_release_toolchains.sh",
     "build:apk": "tools/build_android_apk.sh",
     "build:deb": "tools/build_linux_deb.sh",
@@ -14,12 +12,7 @@
     "docker:apk": "mkdir -p dist && COMPOSE_HTTP_TIMEOUT=300 docker-compose build build-apk && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm build-apk",
     "docker:deb": "mkdir -p dist && COMPOSE_HTTP_TIMEOUT=300 docker-compose build build-deb && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm build-deb",
     "docker:release": "mkdir -p dist && COMPOSE_HTTP_TIMEOUT=300 docker-compose build build-apk build-deb && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm build-apk && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm build-deb",
-    "test:ux": "node tests/ui_requirements.test.js",
-    "test:browser": "node tests/browser_smoke.test.js",
     "test:packaging": "node tests/packaging_scaffold.test.js",
-    "test": "node tests/vault_core.test.js && node tests/dev_server_api.test.js && node tests/ui_requirements.test.js && node tests/packaging_scaffold.test.js && node tests/browser_smoke.test.js"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.14"
+    "test": "node tests/packaging_scaffold.test.js"
   }
 }

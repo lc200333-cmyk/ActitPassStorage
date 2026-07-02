@@ -35,7 +35,7 @@ mkdir -p \
   "$PACKAGE_ROOT/usr/share/icons/hicolor/scalable/apps"
 
 cp -R "$APP_DIR/build/linux/x64/release/bundle/." "$PACKAGE_ROOT/opt/ActitPassStorage/"
-cp "$ROOT_DIR/web/icon.svg" "$PACKAGE_ROOT/usr/share/icons/hicolor/scalable/apps/actit-pass-storage.svg"
+cp "$ROOT_DIR/assets/icon.svg" "$PACKAGE_ROOT/usr/share/icons/hicolor/scalable/apps/actit-pass-storage.svg"
 
 cat > "$PACKAGE_ROOT/DEBIAN/control" <<CONTROL
 Package: actit-pass-storage
