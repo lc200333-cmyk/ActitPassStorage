@@ -3,7 +3,7 @@ name: Windows setup
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
     paths:
       - "app/**"
       - "core/**"

@@ -781,7 +781,7 @@ class _VaultShellState extends State<VaultShell> {
             SizedBox(
               width: 220,
               child: DropdownButtonFormField<String>(
-                value: templateFilter,
+                initialValue: templateFilter,
                 decoration: const InputDecoration(labelText: 'Шаблон', border: OutlineInputBorder()),
                 items: [
                   const DropdownMenuItem(value: '', child: Text('Все шаблоны')),
@@ -793,7 +793,7 @@ class _VaultShellState extends State<VaultShell> {
             SizedBox(
               width: 220,
               child: DropdownButtonFormField<String>(
-                value: sortMode,
+                initialValue: sortMode,
                 decoration: const InputDecoration(labelText: 'Сортировка', border: OutlineInputBorder()),
                 items: const [
                   DropdownMenuItem(value: 'modified_desc', child: Text('Сначала новые')),
@@ -845,7 +845,7 @@ class _VaultShellState extends State<VaultShell> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.w700, color: color.fg)),
-                        Text(template.name, style: TextStyle(color: color.fg.withOpacity(0.72))),
+                        Text(template.name, style: TextStyle(color: color.fg.withValues(alpha: 0.72))),
                       ],
                     ),
                   ),
@@ -885,7 +885,7 @@ class _VaultShellState extends State<VaultShell> {
                   }).toList(),
                 ),
               ),
-              Text('Категория: ${item.category.isEmpty ? 'Без категории' : item.category}', style: TextStyle(color: color.fg.withOpacity(0.72))),
+              Text('Категория: ${item.category.isEmpty ? 'Без категории' : item.category}', style: TextStyle(color: color.fg.withValues(alpha: 0.72))),
             ],
           ),
         ),
@@ -931,7 +931,7 @@ class _VaultShellState extends State<VaultShell> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       DropdownButtonFormField<String>(
-                        value: syncProvider,
+                        initialValue: syncProvider,
                         decoration: const InputDecoration(labelText: 'Тип синхронизации', border: OutlineInputBorder()),
                         items: const [
                           DropdownMenuItem(value: 'mounted_folder', child: Text('Папка / SMB / NFS')),
@@ -1356,7 +1356,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
-                value: templateId,
+                initialValue: templateId,
                 decoration: const InputDecoration(labelText: 'Шаблон', border: OutlineInputBorder()),
                 items: widget.templates.map((template) => DropdownMenuItem(value: template.id, child: Text('${iconById(template.iconId).symbol} ${template.name}'))).toList(),
                 onChanged: (value) => setState(() {
