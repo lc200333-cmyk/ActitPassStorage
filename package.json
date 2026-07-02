@@ -18,5 +18,8 @@
     "test:browser": "node tests/browser_smoke.test.js",
     "test:packaging": "node tests/packaging_scaffold.test.js",
     "test": "node tests/vault_core.test.js && node tests/dev_server_api.test.js && node tests/ui_requirements.test.js && node tests/packaging_scaffold.test.js && node tests/browser_smoke.test.js"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
   }
 }
