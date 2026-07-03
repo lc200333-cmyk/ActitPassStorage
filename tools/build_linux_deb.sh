@@ -22,7 +22,9 @@ command -v dpkg-deb >/dev/null 2>&1 || {
 mkdir -p "$DIST_DIR"
 cd "$APP_DIR"
 
-flutter create --platforms=linux,android,windows .
+if [ ! -f "linux/CMakeLists.txt" ]; then
+  flutter create --platforms=linux .
+fi
 flutter pub get
 flutter build linux --release
 
@@ -67,4 +69,5 @@ LAUNCHER
 chmod 0755 "$PACKAGE_ROOT/usr/bin/actit-pass-storage"
 
 fakeroot dpkg-deb --build "$PACKAGE_ROOT" "$DEB_PATH"
+cp "$DEB_PATH" "$DIST_DIR/ActitPassStorage-linux-amd64.deb"
 echo "deb готов: $DEB_PATH"

@@ -588,10 +588,14 @@ CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
       samples.addAll(rows.map((row) => row['value']));
     }
     if (samples.isEmpty) return;
-    if (!samples.any(crypto.looksLikeValidText)) {
+    final validSamples =
+        samples.where((sample) => crypto.looksLikeValidText(sample)).length;
+    final requiredSamples = samples.length >= 3 ? 2 : 1;
+    if (validSamples < requiredSamples) {
       throw const SpbWalletOpenException(
           'Пароль SPB Wallet не подходит или база повреждена.');
     }
+    crypto.detectTextEndian(samples);
   }
 
   Map<String, SpbWalletCategoryRecord> _loadCategories() {

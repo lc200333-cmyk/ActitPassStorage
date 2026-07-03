@@ -51,5 +51,5 @@ jobs:
       - name: Upload setup.exe
         uses: actions/upload-artifact@v4
         with:
-          name: ActitPassStorage-Setup-0.1.0
-          path: dist/ActitPassStorage-Setup-0.1.0.exe
+          name: ActitPassStorage-Setup
+          path: dist/ActitPassStorage-Setup-*.exe

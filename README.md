@@ -1,6 +1,18 @@
+nom
+
 # ActitPassStorage
 
 Современный локальный менеджер секретов в духе SPB Wallet.
+
+## Скачать
+
+Актуальные сборки публикуются в GitHub Releases:
+
+- [Windows setup.exe](releases/latest/download/ActitPassStorage-Setup.exe)
+- [Android APK](releases/latest/download/ActitPassStorage-android.apk)
+- [Linux deb amd64](releases/latest/download/ActitPassStorage-linux-amd64.deb)
+
+Если ссылки не открываются, смотри страницу [последнего релиза](releases/latest).
 
 В текущем состоянии репозитория есть:
 
@@ -49,6 +61,13 @@ sudo apt install --reinstall ./dist/actit-pass-storage_0.1.0_amd64.deb
 npm run docker:release
 ```
 
+Эта команда собирает release APK и deb. Для быстрых повторных сборок без пересборки Docker image:
+
+```bash
+npm run docker:apk:fast
+npm run docker:deb:fast
+```
+
 Проверить проект внутри контейнера:
 
 ```bash
@@ -79,7 +98,23 @@ Windows `setup.exe` собирается на Windows runner через GitHub A
 Ожидаемый артефакт workflow:
 
 ```text
-ActitPassStorage-Setup-0.1.0.exe
+ActitPassStorage-Setup-<version>.exe
+```
+
+## Релизы
+
+На каждый push в `master` workflow `.github/workflows/release.yml`:
+
+1. увеличивает patch-версию;
+2. коммитит обновленные версии с пометкой `[skip release]`;
+3. создает тег `vX.Y.Z`;
+4. собирает Windows setup, Android release APK и Linux deb;
+5. публикует файлы в GitHub Release.
+
+Версию можно поднять вручную:
+
+```bash
+npm run version:bump
 ```
 
 ## Локальные сборки без Docker

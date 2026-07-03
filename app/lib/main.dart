@@ -970,7 +970,42 @@ enum EntryMode { openSwl, createSwl }
 const spbDescriptionFieldId = '__spb_description';
 const spbWalletChannel = MethodChannel('actit_pass_storage/spb_wallet');
 
+bool isNotesLabel(String label) {
+  final normalized = label.trim().toLowerCase();
+  return normalized == 'note' ||
+      normalized == 'notes' ||
+      normalized == 'заметка' ||
+      normalized == 'заметки' ||
+      normalized.contains('замет');
+}
+
+bool isRealNotesField(FieldDefinition field) {
+  if (field.id == spbDescriptionFieldId) return false;
+  final normalizedId = field.id.trim().toLowerCase();
+  return normalizedId == 'note' ||
+      normalizedId == 'notes' ||
+      isNotesLabel(field.label);
+}
+
+bool fieldTypeIsSecret(String type) => type == 'password' || type == 'custom_secret';
+
+bool fieldDefinitionIsSecret(FieldDefinition field) =>
+    fieldTypeIsSecret(field.type);
+
+String noteFieldIdForTemplate(CardTemplate template) {
+  for (final field in template.fields) {
+    if (isRealNotesField(field)) return field.id;
+  }
+  for (final field in template.fields) {
+    if (field.id == spbDescriptionFieldId) return spbDescriptionFieldId;
+  }
+  return spbDescriptionFieldId;
+}
+
 int spbFieldTypeId(FieldDefinition field) {
+  if (fieldTypeIsSecret(field.type)) {
+    return 2;
+  }
   switch (field.type) {
     case 'multiline_note':
       return 4;
@@ -983,9 +1018,9 @@ int spbFieldTypeId(FieldDefinition field) {
     case 'phone':
       return 8;
     case 'number':
-      return 2;
+      return 1;
     default:
-      return field.secret ? 2 : 1;
+      return 1;
   }
 }
 
@@ -1664,22 +1699,22 @@ class _VaultShellState extends State<VaultShell> {
 
   List<CardTemplate> spbTemplatesToUi(List<SpbWalletTemplateRecord> source) {
     return source.map((template) {
-      final fields = [
-        ...template.fields.map((field) {
-          final type = spbFieldTypeToUi(field.fieldTypeId);
-          final secret = spbFieldTypeIsSecret(field.fieldTypeId);
-          return FieldDefinition(
-            id: field.id,
-            label: field.name.isEmpty ? 'Поле' : field.name,
-            type: type,
-            secret: secret,
-          );
-        }),
-        const FieldDefinition(
+      final fields = template.fields.map((field) {
+        final type = spbFieldTypeToUi(field.fieldTypeId, field.name);
+        final secret = spbFieldTypeIsSecret(field.fieldTypeId);
+        return FieldDefinition(
+          id: field.id,
+          label: field.name.isEmpty ? 'Поле' : field.name,
+          type: type,
+          secret: secret,
+        );
+      }).toList();
+      if (!fields.any(isRealNotesField)) {
+        fields.add(const FieldDefinition(
             id: spbDescriptionFieldId,
             label: 'Заметки',
-            type: 'multiline_note'),
-      ];
+            type: 'multiline_note'));
+      }
       final iconId = defaultIconForTemplateName(
         template.name,
         template.fields.map((field) => field.name),
@@ -1701,10 +1736,10 @@ class _VaultShellState extends State<VaultShell> {
     categoryIconsByPath = spbCategoryIconsToUi(snapshot.categories);
   }
 
-  String spbFieldTypeToUi(int fieldTypeId) {
+  String spbFieldTypeToUi(int fieldTypeId, [String fieldName = '']) {
     switch (fieldTypeId) {
       case 2:
-        return 'password';
+        return secretFieldTypeForName(fieldName);
       case 3:
         return 'date';
       case 4:
@@ -1722,10 +1757,26 @@ class _VaultShellState extends State<VaultShell> {
 
   bool spbFieldTypeIsSecret(int fieldTypeId) => fieldTypeId == 2;
 
+  String secretFieldTypeForName(String fieldName) {
+    final normalized = fieldName.trim().toLowerCase();
+    if (normalized.contains('парол') ||
+        normalized.contains('password') ||
+        normalized.contains('pass')) {
+      return 'password';
+    }
+    return 'custom_secret';
+  }
+
   List<SecretItem> spbCardsToUi(List<SpbWalletCardRecord> source) {
     return source.map((card) {
       final template = templateFor(card.templateId);
       final iconId = uiIconForSpbIcon(card.iconId) ?? template.iconId;
+      final values = Map<String, String>.from(card.fieldValues);
+      final descriptionFieldId = noteFieldIdForTemplate(template);
+      if (card.description.trim().isNotEmpty &&
+          (values[descriptionFieldId]?.trim().isEmpty ?? true)) {
+        values[descriptionFieldId] = card.description;
+      }
       rememberSpbIcon(iconId, card.iconId);
       return SecretItem(
         id: card.id,
@@ -1734,10 +1785,7 @@ class _VaultShellState extends State<VaultShell> {
         category: card.categoryPath,
         colorId: spbColorToPaletteId(card.cardColor),
         iconId: iconId,
-        values: {
-          ...card.fieldValues,
-          spbDescriptionFieldId: card.description,
-        },
+        values: values,
         attachments: card.attachments
             .map(
               (attachment) => SecretAttachment(
@@ -2237,15 +2285,14 @@ class _VaultShellState extends State<VaultShell> {
                 children: [
                   Text(viewTitle(),
                       style: Theme.of(context).textTheme.headlineSmall),
-                  const Text(
-                      'Секреты скрыты по умолчанию. Изменения сохраняются локально.'),
                 ],
               ),
-              FilledButton.icon(
-                onPressed: primaryAction,
-                icon: Icon(primaryIcon()),
-                label: Text(primaryLabel()),
-              ),
+              if (activeView != 'settings')
+                FilledButton.icon(
+                  onPressed: primaryAction,
+                  icon: Icon(primaryIcon()),
+                  label: Text(primaryLabel()),
+                ),
             ],
           ),
           const SizedBox(height: 16),
@@ -2691,7 +2738,7 @@ class _VaultShellState extends State<VaultShell> {
                   leading: templateIconWidget(itemIconId(item, template)),
                   title: Text(item.title,
                       maxLines: 2, overflow: TextOverflow.ellipsis),
-                  onTap: () => selectItem(item),
+                  onTap: () => openCardPreviewDialog(item),
                 );
               }),
           ],
@@ -2758,198 +2805,78 @@ class _VaultShellState extends State<VaultShell> {
     if (!mounted) return;
     await showDialog<void>(
       context: context,
-      builder: (context) => Dialog(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: min(MediaQuery.of(context).size.width - 24, 520),
-            maxHeight: MediaQuery.of(context).size.height - 48,
-          ),
-          child: itemCard(item),
-        ),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, dialogSetState) {
+          final currentItem = items.firstWhere(
+            (entry) => entry.id == item.id,
+            orElse: () => item,
+          );
+          return Dialog(
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: min(MediaQuery.of(context).size.width - 24, 520),
+                maxHeight: MediaQuery.of(context).size.height - 40,
+              ),
+              child: itemCard(
+                currentItem,
+                onClose: () => Navigator.pop(dialogContext),
+                showFooterActions: true,
+                showNotesAction: false,
+                attachmentsReadOnly: true,
+                onEdit: (editedItem) async {
+                  final updated = await openItemDialog(item: editedItem);
+                  if (updated == null || !mounted) return;
+                  dialogSetState(() {});
+                },
+                onStateChange: (action) {
+                  setState(action);
+                  dialogSetState(() {});
+                },
+              ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget buildFrequentView() {
-    final frequent = [...items]..sort((a, b) {
-        final byHits = b.hitCount.compareTo(a.hitCount);
-        return byHits == 0 ? a.title.compareTo(b.title) : byHits;
-      });
-    final top = frequent.where((item) => item.hitCount > 0).take(10).toList();
-    if (top.isEmpty) {
-      return const Center(
-          child: Text(
-              'Часто используемые карточки появятся после открытия карточек из дерева.'));
+  void updateItemCardState(
+    VoidCallback action,
+    void Function(VoidCallback action)? onStateChange,
+  ) {
+    if (onStateChange == null) {
+      setState(action);
+    } else {
+      onStateChange(action);
     }
-    return ListView.separated(
-      itemCount: top.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final item = top[index];
-        final template = templateFor(item.templateId);
-        return Card(
-          elevation: 0,
-          child: ListTile(
-            leading: templateIconWidget(itemIconId(item, template), size: 24),
-            title: Text(item.title),
-            subtitle: Text('${template.name} · открытий: ${item.hitCount}'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              setState(() {
-                selectedItemId = item.id;
-                activeView = 'cards';
-              });
-            },
-          ),
-        );
-      },
-    );
   }
 
-  Widget itemCard(SecretItem item) {
-    final template = templateFor(item.templateId);
-    final color =
-        colorById(item.colorId.isEmpty ? template.colorId : item.colorId);
-    final noteCount = noteText(item).trim().isEmpty ? 0 : 1;
-    final attachmentCount =
-        item.attachments.where((attachment) => !attachment.deleted).length;
-    final backgroundImage = backgroundImageFor(item);
-    return Card(
-      color: backgroundImage == null ? color.bg : Colors.white,
-      elevation: 0,
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => openItemDialog(item: item),
-        child: Container(
-          decoration: backgroundImage == null
-              ? null
-              : BoxDecoration(
-                  image: DecorationImage(
-                    image: backgroundImage,
-                    fit: BoxFit.cover,
-                    colorFilter: ColorFilter.mode(
-                        Colors.white.withValues(alpha: 0.28),
-                        BlendMode.srcOver),
-                  ),
-                ),
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  templateIconWidget(itemIconId(item, template), size: 28),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(item.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                fontWeight: FontWeight.w700, color: color.fg)),
-                        Text(template.name,
-                            style: TextStyle(
-                                color: color.fg.withValues(alpha: 0.72))),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: ListView(
-                  physics: const NeverScrollableScrollPhysics(),
-                  children: template.fields
-                      .where(
-                          (field) => (item.values[field.id] ?? '').isNotEmpty)
-                      .map((field) {
-                    final revealKey = '${item.id}:${field.id}';
-                    final isRevealed = revealed.contains(revealKey);
-                    final value = item.values[field.id]!;
-                    return FieldValueRow(
-                      label: field.label,
-                      value: field.secret && !isRevealed ? '••••••••' : value,
-                      foreground: color.fg,
-                      secret: field.secret,
-                      revealed: isRevealed,
-                      onToggle: field.secret
-                          ? () => setState(() {
-                                isRevealed
-                                    ? revealed.remove(revealKey)
-                                    : revealed.add(revealKey);
-                              })
-                          : null,
-                    );
-                  }).toList(),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                  'Категория: ${item.category.isEmpty ? 'Без категории' : item.category}',
-                  style: TextStyle(color: color.fg.withValues(alpha: 0.72))),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  CountBadgeButton(
-                    icon: Icons.notes_outlined,
-                    label: 'Заметки',
-                    count: noteCount,
-                    onPressed: () => openNotesDialog(item),
-                  ),
-                  CountBadgeButton(
-                    icon: Icons.attach_file,
-                    label: 'Вложения',
-                    count: attachmentCount,
-                    onPressed: () => openAttachmentsDialog(item),
-                  ),
-                ],
-              ),
-              if (item.colorId.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('Цвет: ',
-                          style: TextStyle(
-                              color: color.fg.withValues(alpha: 0.72))),
-                      CircleAvatar(radius: 6, backgroundColor: color.bg),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ),
+  Future<void> saveNoteFromDialog(
+    SecretItem item,
+    String fieldId,
+    String saved,
+  ) async {
+    if (!mounted) return;
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    await persistItem(
+      SecretItem(
+        id: item.id,
+        templateId: item.templateId,
+        title: item.title,
+        category: item.category,
+        colorId: item.colorId,
+        values: {...item.values, fieldId: saved},
+        modifiedAt: DateTime.now(),
+        attachments: item.attachments,
+        hitCount: item.hitCount,
+        iconId: item.iconId,
+        backgroundImageBase64: item.backgroundImageBase64,
       ),
     );
   }
-
-  ImageProvider? backgroundImageFor(SecretItem item) {
-    final encoded = item.backgroundImageBase64;
-    if (encoded == null || encoded.isEmpty) return null;
-    try {
-      return MemoryImage(base64Decode(encoded));
-    } catch (_) {
-      return null;
-    }
-  }
-
-  String noteFieldIdFor(SecretItem item) {
-    final template = templateFor(item.templateId);
-    if (template.fields.any((field) => field.id == spbDescriptionFieldId)) {
-      return spbDescriptionFieldId;
-    }
-    if (template.fields.any((field) => field.id == 'notes')) return 'notes';
-    if (template.fields.any((field) => field.id == 'note')) return 'note';
-    return spbDescriptionFieldId;
-  }
-
-  String noteText(SecretItem item) => item.values[noteFieldIdFor(item)] ?? '';
 
   Future<void> openNotesDialog(SecretItem item) async {
     final fieldId = noteFieldIdFor(item);
@@ -2980,25 +2907,283 @@ class _VaultShellState extends State<VaultShell> {
     );
     controller.dispose();
     if (saved == null) return;
-    await persistItem(
-      SecretItem(
-        id: item.id,
-        templateId: item.templateId,
-        title: item.title,
-        category: item.category,
-        colorId: item.colorId,
-        values: {...item.values, fieldId: saved},
-        modifiedAt: DateTime.now(),
-        attachments: item.attachments,
-        hitCount: item.hitCount,
-        iconId: item.iconId,
-        backgroundImageBase64: item.backgroundImageBase64,
+    await saveNoteFromDialog(item, fieldId, saved);
+  }
+
+  Widget buildFrequentView() {
+    final frequent = [...items]..sort((a, b) {
+        final byHits = b.hitCount.compareTo(a.hitCount);
+        return byHits == 0 ? a.title.compareTo(b.title) : byHits;
+      });
+    final top = frequent.where((item) => item.hitCount > 0).take(10).toList();
+    if (top.isEmpty) {
+      return const Center(
+          child: Text(
+              'Часто используемые карточки появятся после открытия карточек из дерева.'));
+    }
+    return ListView.separated(
+      itemCount: top.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final item = top[index];
+        final template = templateFor(item.templateId);
+        return Card(
+          elevation: 0,
+          child: ListTile(
+            leading: templateIconWidget(itemIconId(item, template), size: 24),
+            title: Text(item.title),
+            subtitle: Text('${template.name} · открытий: ${item.hitCount}'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => openCardPreviewDialog(item),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget itemCard(
+    SecretItem item, {
+    VoidCallback? onClose,
+    bool showFooterActions = true,
+    bool showNotesAction = false,
+    bool attachmentsReadOnly = true,
+    Future<void> Function(SecretItem item)? onEdit,
+    void Function(VoidCallback action)? onStateChange,
+  }) {
+    final template = templateFor(item.templateId);
+    final color =
+        colorById(item.colorId.isEmpty ? template.colorId : item.colorId);
+    final noteCount = noteText(item).trim().isEmpty ? 0 : 1;
+    final attachmentCount =
+        item.attachments.where((attachment) => !attachment.deleted).length;
+    final backgroundImage = backgroundImageFor(item);
+    return Card(
+      color: backgroundImage == null ? color.bg : Colors.white,
+      elevation: 0,
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(
+            decoration: backgroundImage == null
+                ? null
+                : BoxDecoration(
+                    image: DecorationImage(
+                      image: backgroundImage,
+                      fit: BoxFit.cover,
+                      colorFilter: ColorFilter.mode(
+                          Colors.white.withValues(alpha: 0.28),
+                          BlendMode.srcOver),
+                    ),
+                  ),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 72),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    templateIconWidget(itemIconId(item, template), size: 28),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: color.fg)),
+                          Text(template.name,
+                              style: TextStyle(
+                                  color: color.fg.withValues(alpha: 0.72))),
+                        ],
+                      ),
+                    ),
+                    if (onClose != null) ...[
+                      const SizedBox(width: 8),
+                      IconButton.filledTonal(
+                        tooltip: 'Закрыть',
+                        icon: const Icon(Icons.close),
+                        onPressed: onClose,
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: ListView(
+                    physics: const NeverScrollableScrollPhysics(),
+                    children: template.fields
+                        .where((field) =>
+                            (item.values[field.id] ?? '').isNotEmpty)
+                        .map((field) {
+                      final revealKey = '${item.id}:${field.id}';
+                      final isRevealed = revealed.contains(revealKey);
+                      final value = item.values[field.id]!;
+                      final secret = fieldDefinitionIsSecret(field);
+                      return FieldValueRow(
+                        label: field.label,
+                        value: secret && !isRevealed ? '••••••••' : value,
+                        foreground: color.fg,
+                        secret: secret,
+                        revealed: isRevealed,
+                        onToggle: secret
+                            ? () => updateItemCardState(() {
+                                  isRevealed
+                                      ? revealed.remove(revealKey)
+                                      : revealed.add(revealKey);
+                                }, onStateChange)
+                            : null,
+                      );
+                    }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                    'Категория: ${item.category.isEmpty ? 'Без категории' : item.category}',
+                    style: TextStyle(color: color.fg.withValues(alpha: 0.72))),
+                const SizedBox(height: 8),
+                if (showFooterActions)
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (showNotesAction)
+                        CountBadgeButton(
+                          icon: Icons.notes_outlined,
+                          label: 'Заметки',
+                          count: noteCount,
+                          onPressed: () => openNotesDialog(item),
+                        ),
+                      CountBadgeButton(
+                        icon: Icons.attach_file,
+                        label: 'Вложения',
+                        count: attachmentCount,
+                        onPressed: () => attachmentsReadOnly
+                            ? openAttachmentsPreviewDialog(item)
+                            : openAttachmentsDialog(item),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+          Positioned(
+            right: 12,
+            bottom: 12,
+            child: IconButton.filled(
+              tooltip: 'Редактировать',
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: () async {
+                if (onEdit == null) {
+                  await openItemDialog(item: item);
+                } else {
+                  await onEdit(item);
+                }
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
 
+  ImageProvider? backgroundImageFor(SecretItem item) {
+    final encoded = item.backgroundImageBase64;
+    if (encoded == null || encoded.isEmpty) return null;
+    try {
+      return MemoryImage(base64Decode(encoded));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String noteFieldIdFor(SecretItem item) {
+    return noteFieldIdForTemplate(templateFor(item.templateId));
+  }
+
+  String noteText(SecretItem item) => item.values[noteFieldIdFor(item)] ?? '';
+
   Future<void> openAttachmentsDialog(SecretItem item) async {
     await openItemDialog(item: item);
+  }
+
+  Future<void> openAttachmentsPreviewDialog(SecretItem item) async {
+    final visibleAttachments =
+        item.attachments.where((attachment) => !attachment.deleted).toList();
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Вложения: ${item.title}'),
+        content: SizedBox(
+          width: min(MediaQuery.of(context).size.width - 48, 560),
+          child: visibleAttachments.isEmpty
+              ? const Text('Вложений нет')
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: visibleAttachments.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final attachment = visibleAttachments[index];
+                    final hasError = attachment.decodeError != null;
+                    return ListTile(
+                      leading: Icon(hasError
+                          ? Icons.error_outline
+                          : Icons.attach_file),
+                      title: Text(attachment.fileName),
+                      subtitle: Text(
+                        hasError
+                            ? 'Ошибка чтения: ${attachment.decodeError}'
+                            : attachment.size >= 0
+                                ? '${attachment.size} байт'
+                                : 'Размер неизвестен',
+                      ),
+                      trailing: hasError
+                          ? null
+                          : IconButton(
+                              tooltip: 'Сохранить вложение',
+                              icon: const Icon(Icons.download_outlined),
+                              onPressed: () =>
+                                  exportReadOnlyAttachment(attachment),
+                            ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> exportReadOnlyAttachment(SecretAttachment attachment) async {
+    final wallet = spbWallet;
+    if (wallet == null || attachment.id.isEmpty) return;
+    try {
+      final bytes =
+          Uint8List.fromList(wallet.readAttachmentBytes(attachment.id));
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Сохранить вложение',
+        fileName: attachment.fileName,
+        bytes: bytes,
+      );
+      if (path != null && !Platform.isAndroid && !Platform.isIOS) {
+        final file = File(path);
+        if (!file.existsSync() || file.lengthSync() != bytes.length) {
+          await file.writeAsBytes(bytes, flush: true);
+        }
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить вложение: $error')),
+      );
+    }
   }
 
   Widget buildTemplatesView() {
@@ -3041,7 +3226,7 @@ class _VaultShellState extends State<VaultShell> {
                   subtitle: Text(
                     template.fields
                         .map((field) =>
-                            '${field.label}${field.secret ? ' (скрыто)' : ''}')
+                            '${field.label}${fieldDefinitionIsSecret(field) ? ' (скрыто)' : ''}')
                         .join(', '),
                   ),
                   trailing: Wrap(
@@ -3077,7 +3262,7 @@ class _VaultShellState extends State<VaultShell> {
             label: field.label,
             type: field.type,
             required: field.required,
-            secret: field.secret,
+            secret: fieldDefinitionIsSecret(field),
           ),
       ],
     );
@@ -3097,34 +3282,6 @@ class _VaultShellState extends State<VaultShell> {
             subtitle: Text(spbWalletPath ?? 'локальный .swl файл'),
           ),
         ),
-        const SizedBox(height: 24),
-        Text('Палитра карточек',
-            style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: palette
-              .map((color) => Chip(
-                    avatar: CircleAvatar(backgroundColor: color.bg),
-                    label: Text(color.label),
-                  ))
-              .toList(),
-        ),
-        const SizedBox(height: 24),
-        Text('Пиктограммы шаблонов',
-            style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: templateIcons
-              .map((icon) => Chip(
-                    avatar: Icon(templateIconGlyph(icon.id), size: 18),
-                    label: Text(icon.label),
-                  ))
-              .toList(),
-        ),
       ],
     );
   }
@@ -3134,7 +3291,14 @@ class _VaultShellState extends State<VaultShell> {
         orElse: () => templates.first,
       );
 
-  Future<void> openItemDialog({SecretItem? item}) async {
+  SecretItem? itemById(String id) {
+    for (final item in items) {
+      if (item.id == id) return item;
+    }
+    return null;
+  }
+
+  Future<SecretItem?> openItemDialog({SecretItem? item}) async {
     final saved = await showDialog<SecretItem>(
       context: context,
       builder: (context) => ItemEditorDialog(
@@ -3148,29 +3312,35 @@ class _VaultShellState extends State<VaultShell> {
                 spbWallet!.readAttachmentBytes(attachmentId),
       ),
     );
-    if (saved == null) return;
-    await persistItem(saved);
+    if (saved == null) return null;
+    final savedId = await persistItem(saved);
+    if (savedId == null) return null;
+    return itemById(savedId) ?? saved;
   }
 
-  Future<void> persistItem(SecretItem saved) async {
+  Future<String?> persistItem(SecretItem saved) async {
     if (spbWallet != null) {
-      await saveSpbItem(saved);
-      return;
+      return saveSpbItem(saved);
     }
     setState(() => message =
         'Откройте или создайте .swl базу перед сохранением карточек.');
+    return null;
   }
 
-  Future<void> saveSpbItem(SecretItem saved) async {
+  Future<String?> saveSpbItem(SecretItem saved) async {
     final wallet = spbWallet;
-    if (wallet == null) return;
+    if (wallet == null) return null;
     final cardId = isSpbHexId(saved.id) ? saved.id : SpbWalletDatabase.makeId();
+    final template = templateFor(saved.templateId);
+    final descriptionFieldId = noteFieldIdForTemplate(template);
     try {
       wallet.saveCard(
         SpbWalletCardDraft(
           id: cardId,
           title: saved.title,
-          description: saved.values[spbDescriptionFieldId] ?? '',
+          description: descriptionFieldId == spbDescriptionFieldId
+              ? saved.values[spbDescriptionFieldId] ?? ''
+              : '',
           categoryPath: saved.category,
           templateId: saved.templateId,
           fieldValues: {
@@ -3179,8 +3349,8 @@ class _VaultShellState extends State<VaultShell> {
           },
           cardColor: paletteColorToSpb(saved.colorId),
           iconId: spbIconIdForUi(
-            itemIconId(saved, templateFor(saved.templateId)),
-            templateFor(saved.templateId).iconId,
+            itemIconId(saved, template),
+            template.iconId,
           ),
           backgroundImageBase64: saved.backgroundImageBase64,
         ),
@@ -3204,8 +3374,10 @@ class _VaultShellState extends State<VaultShell> {
         selectedItemId = cardId;
         message = null;
       });
+      return cardId;
     } catch (error) {
       setState(() => message = 'Не удалось сохранить .swl базу: $error');
+      return null;
     }
   }
 
@@ -3268,7 +3440,7 @@ class _VaultShellState extends State<VaultShell> {
                 label: field.label,
                 type: field.type,
                 required: field.required,
-                secret: field.secret,
+                secret: fieldTypeIsSecret(field.type),
               ))
           .toList(),
     );
@@ -3548,7 +3720,15 @@ class IconPickerField extends StatelessWidget {
               if (picked != null) onChanged(picked);
             },
             icon: Icon(templateIconGlyph(icon.id), size: 18),
-            label: Text(label),
+            label: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+            ),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
           ),
         ),
       ],
@@ -3686,16 +3866,22 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final dialogWidth = max(
+      260.0,
+      min(MediaQuery.of(context).size.width - 96, 680.0),
+    );
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       title: Text(
           widget.initial == null ? 'Новая карточка' : 'Редактировать карточку'),
       content: SizedBox(
-        width: min(MediaQuery.of(context).size.width - 48, 680),
+        width: dialogWidth,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
+                isExpanded: true,
                 initialValue: templateId,
                 decoration: const InputDecoration(
                     labelText: 'Шаблон', border: OutlineInputBorder()),
@@ -3734,26 +3920,25 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                   value: colorId,
                   onChanged: (value) => setState(() => colorId = value)),
               const SizedBox(height: 10),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.start,
                 children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: pickBackgroundImage,
-                      icon: const Icon(Icons.image_outlined),
-                      label: Text(backgroundImageBase64 == null
-                          ? 'Добавить фон'
-                          : 'Заменить фон'),
-                    ),
+                  OutlinedButton.icon(
+                    onPressed: pickBackgroundImage,
+                    icon: const Icon(Icons.image_outlined),
+                    label: Text(backgroundImageBase64 == null
+                        ? 'Добавить фон'
+                        : 'Заменить фон'),
                   ),
-                  if (backgroundImageBase64 != null) ...[
-                    const SizedBox(width: 8),
+                  if (backgroundImageBase64 != null)
                     IconButton(
                       tooltip: 'Убрать фон',
                       icon: const Icon(Icons.delete_outline),
                       onPressed: () =>
                           setState(() => backgroundImageBase64 = null),
                     ),
-                  ],
                 ],
               ),
               const SizedBox(height: 10),
@@ -3765,7 +3950,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                   padding: const EdgeInsets.only(bottom: 10),
                   child: TextField(
                     controller: controller,
-                    obscureText: field.secret && !visible,
+                    obscureText: fieldDefinitionIsSecret(field) && !visible,
                     keyboardType: keyboardTypeForField(field),
                     inputFormatters: inputFormattersForField(field),
                     onEditingComplete: () {
@@ -3905,6 +4090,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
     return Column(
       children: [
         DropdownButtonFormField<String>(
+          isExpanded: true,
           initialValue: selectedValue,
           decoration: const InputDecoration(
             labelText: 'Категория',
@@ -3979,7 +4165,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
         ),
       );
     }
-    if (field.secret) {
+    if (fieldDefinitionIsSecret(field)) {
       buttons.add(
         IconButton(
           tooltip: visible ? 'Скрыть' : 'Показать',
@@ -4107,13 +4293,12 @@ class TemplateFieldDraft {
   TemplateFieldDraft(FieldDefinition field)
       : id = field.id,
         type = field.type,
-        secret = field.secret,
         label = TextEditingController(text: field.label);
 
   final String id;
   final TextEditingController label;
   String type;
-  bool secret;
+  bool get secret => fieldTypeIsSecret(type);
 
   void dispose() => label.dispose();
 
@@ -4291,10 +4476,6 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                     ],
                     onChanged: (value) => setState(() {
                       field.type = value ?? 'text';
-                      if (field.type == 'password' ||
-                          field.type == 'custom_secret') {
-                        field.secret = true;
-                      }
                     }),
                   ),
                 ),
@@ -4304,17 +4485,6 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                   icon: const Icon(Icons.delete_outline),
                   onPressed:
                       fields.length <= 1 ? null : () => removeField(field),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 10,
-              children: [
-                FilterChip(
-                  selected: field.secret,
-                  label: const Text('Скрывать'),
-                  onSelected: (value) => setState(() => field.secret = value),
                 ),
               ],
             ),

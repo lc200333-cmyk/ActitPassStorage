@@ -1,0 +1,175 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump: patch, minor, major, or explicit x.y.z"
+        required: false
+        default: "patch"
+  push:
+    branches: [ master ]
+    paths:
+      - "app/**"
+      - "core/**"
+      - "tools/**"
+      - "docker/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/release.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-master
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: github.event_name == 'workflow_dispatch' || (github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, '[skip release]'))
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Bump version
+        id: version
+        shell: bash
+        run: |
+          BUMP="${{ github.event.inputs.bump || 'patch' }}"
+          VERSION="$(node tools/bump_version.js "$BUMP")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and tag version
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json app/pubspec.yaml core/Cargo.toml tools/windows/ActitPassStorage.iss tools/build_linux_deb.sh
+          git commit -m "chore: release v$VERSION [skip release]"
+          git tag "v$VERSION"
+          git push origin HEAD:master --follow-tags
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Prepare Flutter Windows
+        working-directory: app
+        run: flutter create --platforms=windows .
+
+      - name: Flutter pub get
+        working-directory: app
+        run: flutter pub get
+
+      - name: Analyze Flutter app
+        working-directory: app
+        run: flutter analyze
+
+      - name: Build Windows app
+        working-directory: app
+        run: flutter build windows --release
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build setup.exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "tools\windows\ActitPassStorage.iss"
+          Copy-Item "dist\ActitPassStorage-Setup-${{ needs.version.outputs.version }}.exe" "dist\ActitPassStorage-Setup.exe"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-setup
+          path: dist/ActitPassStorage-Setup.exe
+
+  android:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Build release APK in Docker
+        shell: bash
+        run: |
+          mkdir -p dist
+          docker compose build build-apk
+          HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose run --rm -e BUILD_MODE=release build-apk
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist/ActitPassStorage-android.apk
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Build deb in Docker
+        shell: bash
+        run: |
+          mkdir -p dist
+          docker compose build build-deb
+          HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose run --rm build-deb
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          path: dist/ActitPassStorage-linux-amd64.deb
+
+  publish:
+    needs: [version, windows, android, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ActitPassStorage ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            release-assets/ActitPassStorage-Setup.exe
+            release-assets/ActitPassStorage-android.apk
+            release-assets/ActitPassStorage-linux-amd64.deb

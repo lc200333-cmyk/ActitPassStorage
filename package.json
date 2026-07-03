@@ -10,8 +10,12 @@
     "docker:build-image": "COMPOSE_HTTP_TIMEOUT=300 docker-compose build",
     "docker:test": "mkdir -p dist && COMPOSE_HTTP_TIMEOUT=300 docker-compose build test && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm test",
     "docker:apk": "mkdir -p dist && COMPOSE_HTTP_TIMEOUT=300 docker-compose build build-apk && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm build-apk",
+    "docker:apk:fast": "mkdir -p dist && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm --no-deps build-apk",
+    "docker:apk:release": "mkdir -p dist && COMPOSE_HTTP_TIMEOUT=300 docker-compose build build-apk && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm -e BUILD_MODE=release build-apk",
     "docker:deb": "mkdir -p dist && COMPOSE_HTTP_TIMEOUT=300 docker-compose build build-deb && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm build-deb",
-    "docker:release": "mkdir -p dist && COMPOSE_HTTP_TIMEOUT=300 docker-compose build build-apk build-deb && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm build-apk && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm build-deb",
+    "docker:deb:fast": "mkdir -p dist && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm --no-deps build-deb",
+    "docker:release": "mkdir -p dist && COMPOSE_HTTP_TIMEOUT=300 docker-compose build build-apk build-deb && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm -e BUILD_MODE=release build-apk && COMPOSE_HTTP_TIMEOUT=300 HOST_UID=$(id -u) HOST_GID=$(id -g) docker-compose run --rm build-deb",
+    "version:bump": "node tools/bump_version.js patch",
     "test:packaging": "node tests/packaging_scaffold.test.js",
     "test": "node tests/packaging_scaffold.test.js"
   }

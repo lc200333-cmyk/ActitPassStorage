@@ -8,7 +8,10 @@
 
 ```text
 dist/ActitPassStorage-android-debug.apk
+dist/ActitPassStorage-android-release.apk
+dist/ActitPassStorage-android.apk
 dist/actit-pass-storage_0.1.0_amd64.deb
+dist/ActitPassStorage-linux-amd64.deb
 ```
 
 Windows `setup.exe` собирается отдельно через GitHub Actions на Windows runner:
@@ -85,7 +88,37 @@ sudo apt install --reinstall ./dist/actit-pass-storage_0.1.0_amd64.deb
 npm run docker:release
 ```
 
-Эта команда запускает Android APK и Linux deb сборки подряд и складывает оба файла в `dist/`.
+Эта команда запускает Android release APK и Linux deb сборки подряд и складывает оба файла в `dist/`.
+
+Быстрые повторные сборки после небольших изменений, без пересборки Docker image:
+
+```bash
+npm run docker:apk:fast
+npm run docker:deb:fast
+```
+
+Release APK отдельно:
+
+```bash
+npm run docker:apk:release
+```
+
+## GitHub Releases
+
+На каждый push в `master` workflow `.github/workflows/release.yml` автоматически:
+
+1. поднимает patch-версию;
+2. создает commit и tag `vX.Y.Z`;
+3. собирает Windows setup, Android APK и Linux deb;
+4. публикует файлы в GitHub Release.
+
+Стабильные имена артефактов последнего релиза:
+
+```text
+ActitPassStorage-Setup.exe
+ActitPassStorage-android.apk
+ActitPassStorage-linux-amd64.deb
+```
 
 ## Как проверить на Linux
 

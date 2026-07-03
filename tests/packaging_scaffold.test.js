@@ -26,6 +26,8 @@ function exists(relativePath) {
   'docker-compose.yml',
   'tools/windows/ActitPassStorage.iss',
   '.github/workflows/windows_setup.yml',
+  '.github/workflows/release.yml',
+  'tools/bump_version.js',
 ].forEach(exists);
 
 const app = read('app/lib/main.dart');
@@ -68,8 +70,10 @@ assert.match(app, /id:\s*'cvv'[\s\S]*label:\s*'CVV'[\s\S]*type:\s*'password'[\s\
 assert.match(app, /id:\s*'account'[\s\S]*label:\s*'Номер счета'[\s\S]*type:\s*'custom_secret'[\s\S]*required:\s*true/);
 
 const androidScript = read('tools/build_android_apk.sh');
-assert.ok(androidScript.includes('flutter build apk --debug'));
-assert.ok(androidScript.includes('ActitPassStorage-android-debug.apk'));
+assert.ok(androidScript.includes('BUILD_MODE="${BUILD_MODE:-debug}"'));
+assert.ok(androidScript.includes('flutter build apk "--$BUILD_MODE"'));
+assert.ok(androidScript.includes('ActitPassStorage-android-$BUILD_MODE.apk'));
+assert.ok(androidScript.includes('ActitPassStorage-android.apk'));
 
 const spbDatabase = read('app/lib/spb_wallet/spb_wallet_database.dart');
 assert.ok(spbDatabase.includes('saveCategoryIcon'));
@@ -79,11 +83,26 @@ const debScript = read('tools/build_linux_deb.sh');
 assert.ok(debScript.includes('flutter build linux --release'));
 assert.ok(debScript.includes('dpkg-deb --build'));
 assert.ok(debScript.includes('actit-pass-storage_${VERSION}_${ARCH}.deb'));
+assert.ok(debScript.includes('ActitPassStorage-linux-amd64.deb'));
 
 const workflow = read('.github/workflows/windows_setup.yml');
 assert.ok(workflow.includes('windows-latest'));
 assert.ok(workflow.includes('flutter build windows --release'));
-assert.ok(workflow.includes('ActitPassStorage-Setup-0.1.0.exe'));
+assert.ok(workflow.includes('ActitPassStorage-Setup-*.exe'));
+
+const releaseWorkflow = read('.github/workflows/release.yml');
+[
+  'name: Release',
+  'contents: write',
+  'node tools/bump_version.js',
+  'docker compose build build-apk',
+  'BUILD_MODE=release',
+  'docker compose build build-deb',
+  'ActitPassStorage-Setup.exe',
+  'ActitPassStorage-android.apk',
+  'ActitPassStorage-linux-amd64.deb',
+  'softprops/action-gh-release',
+].forEach((needle) => assert.ok(releaseWorkflow.includes(needle), `release workflow missing ${needle}`));
 
 const dockerfile = read('docker/build-env/Dockerfile');
 [
@@ -133,14 +152,18 @@ const pkg = JSON.parse(read('package.json'));
   'docker:build-image',
   'docker:test',
   'docker:apk',
+  'docker:apk:fast',
+  'docker:apk:release',
   'docker:deb',
+  'docker:deb:fast',
   'docker:release',
+  'version:bump',
 ].forEach((script) => assert.ok(pkg.scripts[script], `package script missing ${script}`));
 assert.ok(pkg.scripts['docker:apk'].includes('docker-compose run --rm build-apk'));
 assert.ok(pkg.scripts['docker:deb'].includes('docker-compose run --rm build-deb'));
 assert.ok(pkg.scripts['docker:apk'].includes('docker-compose build build-apk'));
 assert.ok(pkg.scripts['docker:deb'].includes('docker-compose build build-deb'));
-assert.ok(pkg.scripts['docker:release'].includes('docker-compose run --rm build-apk'));
+assert.ok(pkg.scripts['docker:release'].includes('docker-compose run --rm -e BUILD_MODE=release build-apk'));
 assert.ok(pkg.scripts['docker:release'].includes('docker-compose run --rm build-deb'));
 assert.ok(pkg.scripts['docker:release'].includes('docker-compose build build-apk build-deb'));
 assert.ok(pkg.scripts['docker:build-image'].includes('COMPOSE_HTTP_TIMEOUT=300'));
