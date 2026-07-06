@@ -1798,7 +1798,7 @@ class _VaultShellState extends State<VaultShell> {
         'Примеры / Работа': 'briefcase',
         'Примеры / Сервисы': 'globe',
         'Примеры / Документы': 'id',
-        'О программе ActitPassStorage': 'info',
+        'Примеры / О программе': 'info',
       };
 
   Future<void> connectSyncVault(String password) async {
@@ -2177,7 +2177,7 @@ class _VaultShellState extends State<VaultShell> {
         id: makeId('item'),
         templateId: 'tpl_note',
         title: 'Как устроена база',
-        category: 'О программе ActitPassStorage',
+        category: 'Примеры / О программе',
         colorId: 'neutral',
         modifiedAt: now,
         values: {
@@ -2189,7 +2189,7 @@ class _VaultShellState extends State<VaultShell> {
         id: makeId('item'),
         templateId: 'tpl_note',
         title: 'Открытие базы',
-        category: 'О программе ActitPassStorage',
+        category: 'Примеры / О программе',
         colorId: 'neutral',
         modifiedAt: now,
         values: {
@@ -2201,7 +2201,7 @@ class _VaultShellState extends State<VaultShell> {
         id: makeId('item'),
         templateId: 'tpl_note',
         title: 'Заметки и вложения',
-        category: 'О программе ActitPassStorage',
+        category: 'Примеры / О программе',
         colorId: 'neutral',
         modifiedAt: now,
         values: {
@@ -2213,7 +2213,7 @@ class _VaultShellState extends State<VaultShell> {
         id: makeId('item'),
         templateId: 'tpl_note',
         title: 'Копирование значений',
-        category: 'О программе ActitPassStorage',
+        category: 'Примеры / О программе',
         colorId: 'neutral',
         modifiedAt: now,
         values: {
@@ -2225,7 +2225,7 @@ class _VaultShellState extends State<VaultShell> {
         id: makeId('item'),
         templateId: 'tpl_note',
         title: 'Шаблоны',
-        category: 'О программе ActitPassStorage',
+        category: 'Примеры / О программе',
         colorId: 'neutral',
         modifiedAt: now,
         values: {
@@ -3397,20 +3397,20 @@ class _VaultShellState extends State<VaultShell> {
           padding: EdgeInsets.only(left: depth * 10.0),
           child: ExpansionTile(
             initiallyExpanded: true,
-            leading: Tooltip(
-              message: 'Изменить папку',
-              child: InkWell(
-                borderRadius: BorderRadius.circular(8),
-                onTap: () => openCategoryEditorDialog(folder: folder),
-                child: categoryFolderIcon(
-                    folder.iconId ?? defaultIconForCategoryPath(folder.path)),
-              ),
-            ),
+            leading: categoryFolderIcon(
+                folder.iconId ?? defaultIconForCategoryPath(folder.path)),
             title: Row(
               children: [
                 Expanded(
                   child: Text(folder.name,
                       maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                Tooltip(
+                  message: 'Изменить папку',
+                  child: IconButton(
+                    icon: const Icon(Icons.edit_outlined),
+                    onPressed: () => openCategoryEditorDialog(folder: folder),
+                  ),
                 ),
                 Tooltip(
                   message: 'Создать подпапку',
@@ -3546,17 +3546,27 @@ class _VaultShellState extends State<VaultShell> {
         ),
       ),
     );
-    nameController.dispose();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      nameController.dispose();
+    });
     if (saved == null) return;
     if (editing && saved.name == '__delete__') {
+      await Future<void>.delayed(Duration.zero);
+      if (!mounted) return;
       final confirmed = await confirmDeleteCategory(folder);
-      if (confirmed != true) return;
+      if (confirmed != true || !mounted) return;
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
       try {
         wallet.deleteCategory(folder.path);
         await writeBackSpbWallet();
         final snapshot = wallet.loadSnapshot();
         setState(() {
           applySpbSnapshot(snapshot);
+          if (selectedItemId != null &&
+              !items.any((entry) => entry.id == selectedItemId)) {
+            selectedItemId = null;
+          }
           message = null;
         });
       } catch (error) {
@@ -3593,7 +3603,7 @@ class _VaultShellState extends State<VaultShell> {
       builder: (context) => AlertDialog(
         title: const Text('Удалить папку?'),
         content: Text(
-          'Папка "${folder.name}" и ее подпапки будут удалены. Карточки из этих папок будут перенесены на уровень выше.',
+          'Папка "${folder.name}", ее подпапки и все карточки внутри будут удалены.',
         ),
         actions: [
           TextButton(
@@ -3617,7 +3627,7 @@ class _VaultShellState extends State<VaultShell> {
   }
 
   Widget itemDetail(SecretItem item) {
-    return itemCard(item);
+    return itemCard(item, onDelete: deleteItemWithConfirmation);
   }
 
   Widget spbRightPanel(List<SecretItem> visibleItems) {
@@ -3737,6 +3747,8 @@ class _VaultShellState extends State<VaultShell> {
             orElse: () => item,
           );
           return Dialog(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
             insetPadding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
             child: ConstrainedBox(
@@ -3754,6 +3766,13 @@ class _VaultShellState extends State<VaultShell> {
                   final updated = await openItemDialog(item: editedItem);
                   if (updated == null || !mounted) return;
                   dialogSetState(() {});
+                },
+                onDelete: (deletedItem) async {
+                  final deleted = await deleteItemWithConfirmation(deletedItem);
+                  if (deleted && dialogContext.mounted) {
+                    Navigator.pop(dialogContext);
+                  }
+                  return deleted;
                 },
                 onStateChange: (action) {
                   setState(action);
@@ -3873,6 +3892,7 @@ class _VaultShellState extends State<VaultShell> {
     bool showNotesAction = false,
     bool attachmentsReadOnly = true,
     Future<void> Function(SecretItem item)? onEdit,
+    Future<bool> Function(SecretItem item)? onDelete,
     void Function(VoidCallback action)? onStateChange,
   }) {
     final template = templateFor(item.templateId);
@@ -3885,6 +3905,7 @@ class _VaultShellState extends State<VaultShell> {
     return Card(
       color: backgroundImage == null ? color.bg : Colors.white,
       elevation: 0,
+      margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       child: Stack(
         fit: StackFit.expand,
@@ -3997,6 +4018,16 @@ class _VaultShellState extends State<VaultShell> {
               ],
             ),
           ),
+          if (onDelete != null)
+            Positioned(
+              left: 12,
+              bottom: 12,
+              child: IconButton.filledTonal(
+                tooltip: 'Удалить карточку',
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () => onDelete(item),
+              ),
+            ),
           Positioned(
             right: 12,
             bottom: 12,
@@ -4037,6 +4068,47 @@ class _VaultShellState extends State<VaultShell> {
     await openItemDialog(item: item);
   }
 
+  Future<bool> deleteItemWithConfirmation(SecretItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Удалить карточку?'),
+        content: Text('Карточка "${item.title}" будет удалена из базы.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return false;
+    final wallet = spbWallet;
+    if (wallet == null) {
+      setState(() => message =
+          'Откройте или создайте .swl базу перед удалением карточек.');
+      return false;
+    }
+    try {
+      wallet.deleteCard(item.id);
+      await writeBackSpbWallet();
+      final snapshot = wallet.loadSnapshot();
+      setState(() {
+        applySpbSnapshot(snapshot);
+        if (selectedItemId == item.id) selectedItemId = null;
+        message = null;
+      });
+      return true;
+    } catch (error) {
+      setState(() => message = 'Не удалось удалить карточку: $error');
+      return false;
+    }
+  }
+
   Future<void> openAttachmentsPreviewDialog(SecretItem item) async {
     final visibleAttachments =
         item.attachments.where((attachment) => !attachment.deleted).toList();
@@ -4056,8 +4128,7 @@ class _VaultShellState extends State<VaultShell> {
                     final attachment = visibleAttachments[index];
                     final hasError = attachment.decodeError != null;
                     return ListTile(
-                      leading: Icon(
-                          hasError ? Icons.error_outline : Icons.attach_file),
+                      leading: attachmentPreview(attachment, hasError),
                       title: Text(attachment.fileName),
                       subtitle: Text(
                         hasError
@@ -4066,6 +4137,9 @@ class _VaultShellState extends State<VaultShell> {
                                 ? '${attachment.size} байт'
                                 : 'Размер неизвестен',
                       ),
+                      onTap: hasError
+                          ? null
+                          : () => viewReadOnlyAttachment(attachment),
                       trailing: hasError
                           ? null
                           : IconButton(
@@ -4086,6 +4160,165 @@ class _VaultShellState extends State<VaultShell> {
         ],
       ),
     );
+  }
+
+  Widget attachmentPreview(SecretAttachment attachment, bool hasError) {
+    if (hasError) {
+      return const SizedBox(
+        width: 56,
+        height: 56,
+        child: Icon(Icons.error_outline),
+      );
+    }
+    if (isImageAttachment(attachment.fileName) && attachment.id.isNotEmpty) {
+      return FutureBuilder<Uint8List>(
+        future: readAttachmentData(attachment),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const SizedBox(
+              width: 56,
+              height: 56,
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            );
+          }
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Image.memory(
+              snapshot.data!,
+              width: 56,
+              height: 56,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SizedBox(
+                width: 56,
+                height: 56,
+                child: Icon(Icons.broken_image_outlined),
+              ),
+            ),
+          );
+        },
+      );
+    }
+    return SizedBox(
+      width: 56,
+      height: 56,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Theme.of(context).colorScheme.outline),
+        ),
+        child: Icon(
+          isPdfAttachment(attachment.fileName)
+              ? Icons.picture_as_pdf_outlined
+              : Icons.insert_drive_file_outlined,
+        ),
+      ),
+    );
+  }
+
+  Future<Uint8List> readAttachmentData(SecretAttachment attachment) async {
+    final wallet = spbWallet;
+    if (wallet == null || attachment.id.isEmpty) return Uint8List(0);
+    return Uint8List.fromList(wallet.readAttachmentBytes(attachment.id));
+  }
+
+  bool isImageAttachment(String fileName) {
+    final lower = fileName.toLowerCase();
+    return lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.bmp');
+  }
+
+  bool isPdfAttachment(String fileName) =>
+      fileName.toLowerCase().endsWith('.pdf');
+
+  Future<void> viewReadOnlyAttachment(SecretAttachment attachment) async {
+    try {
+      final bytes = await readAttachmentData(attachment);
+      if (bytes.isEmpty) return;
+      if (isImageAttachment(attachment.fileName)) {
+        await showImageAttachmentDialog(attachment.fileName, bytes);
+      } else {
+        await openAttachmentExternally(attachment.fileName, bytes);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось открыть вложение: $error')),
+      );
+    }
+  }
+
+  Future<void> showImageAttachmentDialog(
+      String fileName, Uint8List bytes) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.all(16),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: min(MediaQuery.of(context).size.width - 32, 900),
+            maxHeight: MediaQuery.of(context).size.height - 32,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: Text(fileName,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                trailing: IconButton(
+                  tooltip: 'Закрыть',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ),
+              Flexible(
+                child: InteractiveViewer(
+                  child: Image.memory(bytes, fit: BoxFit.contain),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> openAttachmentExternally(
+      String fileName, Uint8List bytes) async {
+    final directory = await getTemporaryDirectory();
+    final safeName = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final file = File('${directory.path}/actitpass_$safeName');
+    await file.writeAsBytes(bytes, flush: true);
+    final mimeType = isPdfAttachment(fileName)
+        ? 'application/pdf'
+        : isImageAttachment(fileName)
+            ? 'image/*'
+            : 'application/octet-stream';
+    if (Platform.isAndroid) {
+      await spbWalletChannel.invokeMethod<bool>('openFile', {
+        'path': file.path,
+        'mimeType': mimeType,
+      });
+      return;
+    }
+    if (Platform.isWindows) {
+      await Process.start('cmd', ['/c', 'start', '', file.path],
+          runInShell: true);
+    } else if (Platform.isMacOS) {
+      await Process.start('open', [file.path]);
+    } else {
+      await Process.start('xdg-open', [file.path]);
+    }
   }
 
   Future<void> exportReadOnlyAttachment(SecretAttachment attachment) async {
@@ -4524,7 +4757,7 @@ class CountBadgeButton extends StatelessWidget {
   }
 }
 
-class FieldValueRow extends StatelessWidget {
+class FieldValueRow extends StatefulWidget {
   const FieldValueRow({
     required this.label,
     required this.value,
@@ -4545,19 +4778,72 @@ class FieldValueRow extends StatelessWidget {
   final VoidCallback? onToggle;
 
   @override
+  State<FieldValueRow> createState() => _FieldValueRowState();
+}
+
+class _FieldValueRowState extends State<FieldValueRow> {
+  Timer? copiedTimer;
+  bool copied = false;
+
+  @override
+  void dispose() {
+    copiedTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> copyValue() async {
+    await copyCardFieldValue(widget.copyValue);
+    if (!mounted) return;
+    copiedTimer?.cancel();
+    setState(() => copied = true);
+    copiedTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted) setState(() => copied = false);
+    });
+  }
+
+  Future<void> showCopyMenu(LongPressStartDetails details) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final picked = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(
+          details.globalPosition.dx,
+          details.globalPosition.dy,
+          1,
+          1,
+        ),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(
+          value: 'copy',
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.copy),
+            title: Text('Копировать'),
+          ),
+        ),
+      ],
+    );
+    if (picked == 'copy') await copyValue();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () => copyCardFieldValue(copyValue),
+        onTap: copyValue,
+        onLongPressStart: showCopyMenu,
         child: Container(
           margin: const EdgeInsets.only(bottom: 8),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.44),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: foreground.withValues(alpha: 0.10)),
+            border:
+                Border.all(color: widget.foreground.withValues(alpha: 0.10)),
           ),
           child: Row(
             children: [
@@ -4567,11 +4853,11 @@ class FieldValueRow extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      label,
+                      widget.label,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: foreground.withValues(alpha: 0.62),
+                        color: widget.foreground.withValues(alpha: 0.62),
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                       ),
@@ -4582,21 +4868,28 @@ class FieldValueRow extends StatelessWidget {
                       child: SingleChildScrollView(
                         primary: false,
                         child: Text(
-                          value,
+                          widget.value,
                           style: TextStyle(
-                              color: foreground, fontWeight: FontWeight.w600),
+                              color: widget.foreground,
+                              fontWeight: FontWeight.w600),
                         ),
                       ),
                     ),
                   ],
                 ),
               ),
-              if (secret && onToggle != null)
+              IconButton(
+                tooltip: copied ? 'Скопировано' : 'Копировать',
+                icon: Icon(copied ? Icons.check : Icons.copy),
+                onPressed: copyValue,
+              ),
+              if (widget.secret && widget.onToggle != null)
                 IconButton(
-                  tooltip: revealed ? 'Скрыть' : 'Показать',
-                  icon:
-                      Icon(revealed ? Icons.visibility_off : Icons.visibility),
-                  onPressed: onToggle,
+                  tooltip: widget.revealed ? 'Скрыть' : 'Показать',
+                  icon: Icon(widget.revealed
+                      ? Icons.visibility_off
+                      : Icons.visibility),
+                  onPressed: widget.onToggle,
                 ),
             ],
           ),

@@ -1,0 +1,14 @@
+# Single source of truth for cross-platform app branding.
+# Change values here, then run tools/apply_branding.sh (called automatically
+# by tools/build_android_apk.sh and tools/build_linux_deb.sh, and by the
+# Windows CI workflows) to propagate the name/icon to every platform.
+name: Pass Storage
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  image_path: "../assets/icon.png"
+  min_sdk_android: 21
+  windows:
+    generate: true
+    image_path: "../assets/icon.png"
+    icon_size: 256

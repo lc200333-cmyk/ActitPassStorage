@@ -31,6 +31,10 @@ jobs:
         working-directory: app
         run: flutter pub get
 
+      - name: Apply branding (name + icons)
+        shell: bash
+        run: tools/apply_branding.sh
+
       - name: Analyze Flutter app
         working-directory: app
         run: flutter analyze

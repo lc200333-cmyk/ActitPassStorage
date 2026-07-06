@@ -46,6 +46,7 @@ RUN mkdir -p "$ANDROID_HOME/cmdline-tools" \
   && yes | sdkmanager --licenses >/dev/null \
   && sdkmanager \
     "platform-tools" \
+    "platforms;android-35" \
     "platforms;android-36" \
     "build-tools;36.0.0" \
     "ndk;28.2.13676358" \

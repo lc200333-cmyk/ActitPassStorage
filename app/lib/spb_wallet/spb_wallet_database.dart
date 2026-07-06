@@ -332,8 +332,35 @@ class SpbWalletDatabase {
 
   void deleteCard(String cardId) {
     _transaction(() {
-      _db.execute('DELETE FROM spbwlt_Card WHERE hex(ID) = ?', [cardId]);
+      _deleteCardById(cardId);
     });
+  }
+
+  void _deleteCardById(String cardId) {
+    final rows = _db.select(
+      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card WHERE hex(ID) = ?',
+      [cardId],
+    );
+    final cardViewId = rows.isEmpty ? '' : _string(rows.first['CardViewID']);
+    _db.execute(
+        'DELETE FROM spbwlt_CardFieldValue WHERE hex(CardID) = ?', [cardId]);
+    _db.execute(
+        'DELETE FROM spbwlt_CardAttachment WHERE hex(CardID) = ?', [cardId]);
+    _db.execute('DELETE FROM spbwlt_Card WHERE hex(ID) = ?', [cardId]);
+    if (cardViewId.isNotEmpty) {
+      final stillUsed = _db.select(
+        'SELECT 1 FROM spbwlt_Card WHERE hex(CardViewID) = ? UNION SELECT 1 FROM spbwlt_Template WHERE hex(CardViewID) = ? LIMIT 1',
+        [cardViewId, cardViewId],
+      ).isNotEmpty;
+      if (!stillUsed) {
+        _db.execute(
+          'DELETE FROM spbwlt_CardViewField WHERE hex(CardViewID) = ?',
+          [cardViewId],
+        );
+        _db.execute(
+            'DELETE FROM spbwlt_CardView WHERE hex(ID) = ?', [cardViewId]);
+      }
+    }
   }
 
   void saveAttachment({
@@ -432,14 +459,16 @@ class SpbWalletDatabase {
       if (categoryId == null) {
         throw const SpbWalletOpenException('Папка SPB Wallet не найдена.');
       }
-      final parentId = _categoryParentId(categoryId);
       final descendants = _categoryDescendantIds(categoryId);
       final ids = [...descendants, categoryId];
       for (final id in ids) {
-        _db.execute(
-          'UPDATE spbwlt_Card SET ParentCategoryID = ? WHERE hex(ParentCategoryID) = ?',
-          [_idFromHex(parentId), id],
+        final cardRows = _db.select(
+          'SELECT hex(ID) AS ID FROM spbwlt_Card WHERE hex(ParentCategoryID) = ?',
+          [id],
         );
+        for (final row in cardRows) {
+          _deleteCardById(_string(row['ID']));
+        }
       }
       for (final id in descendants.reversed) {
         _db.execute('DELETE FROM spbwlt_Category WHERE hex(ID) = ?', [id]);

@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "actit_pass_storage" "\0"
+            VALUE "FileDescription", "Pass Storage" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "actit_pass_storage" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
             VALUE "OriginalFilename", "actit_pass_storage.exe" "\0"
-            VALUE "ProductName", "actit_pass_storage" "\0"
+            VALUE "ProductName", "Pass Storage" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

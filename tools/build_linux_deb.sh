@@ -7,8 +7,9 @@ DIST_DIR="$ROOT_DIR/dist"
 PACKAGE_ROOT="$ROOT_DIR/build/deb/actit-pass-storage"
 VERSION="0.1.4"
 ARCH="amd64"
-APP_NAME="actit_pass_storage"
+BIN_NAME="actit_pass_storage"
 DEB_PATH="$DIST_DIR/actit-pass-storage_${VERSION}_${ARCH}.deb"
+DISPLAY_NAME="$(sed -n 's/^name:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$APP_DIR/branding.yaml" | head -1)"
 
 command -v flutter >/dev/null 2>&1 || {
   echo "Flutter SDK не найден. Установите Flutter stable и добавьте flutter в PATH." >&2
@@ -26,6 +27,7 @@ if [ ! -f "linux/CMakeLists.txt" ]; then
   flutter create --platforms=linux .
 fi
 flutter pub get
+"$ROOT_DIR/tools/apply_branding.sh"
 flutter build linux --release
 
 rm -rf "$PACKAGE_ROOT"
@@ -34,10 +36,10 @@ mkdir -p \
   "$PACKAGE_ROOT/opt/ActitPassStorage" \
   "$PACKAGE_ROOT/usr/bin" \
   "$PACKAGE_ROOT/usr/share/applications" \
-  "$PACKAGE_ROOT/usr/share/icons/hicolor/scalable/apps"
+  "$PACKAGE_ROOT/usr/share/icons/hicolor/256x256/apps"
 
 cp -R "$APP_DIR/build/linux/x64/release/bundle/." "$PACKAGE_ROOT/opt/ActitPassStorage/"
-cp "$ROOT_DIR/assets/icon.svg" "$PACKAGE_ROOT/usr/share/icons/hicolor/scalable/apps/actit-pass-storage.svg"
+cp "$ROOT_DIR/assets/icon.png" "$PACKAGE_ROOT/usr/share/icons/hicolor/256x256/apps/actit-pass-storage.png"
 
 cat > "$PACKAGE_ROOT/DEBIAN/control" <<CONTROL
 Package: actit-pass-storage
@@ -54,9 +56,9 @@ CONTROL
 cat > "$PACKAGE_ROOT/usr/share/applications/actit-pass-storage.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=ActitPassStorage
+Name=$DISPLAY_NAME
 Comment=Локальный менеджер паролей, заметок и карточек
-Exec=/opt/ActitPassStorage/$APP_NAME
+Exec=/opt/ActitPassStorage/$BIN_NAME
 Icon=actit-pass-storage
 Terminal=false
 Categories=Utility;Security;
@@ -64,7 +66,7 @@ DESKTOP
 
 cat > "$PACKAGE_ROOT/usr/bin/actit-pass-storage" <<LAUNCHER
 #!/usr/bin/env bash
-exec /opt/ActitPassStorage/$APP_NAME "\$@"
+exec /opt/ActitPassStorage/$BIN_NAME "\$@"
 LAUNCHER
 chmod 0755 "$PACKAGE_ROOT/usr/bin/actit-pass-storage"
 

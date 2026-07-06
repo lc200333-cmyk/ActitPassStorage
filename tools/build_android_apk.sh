@@ -71,6 +71,10 @@ patch_plugin_compile_sdk() {
 flutter pub get
 patch_plugin_compile_sdk file_picker
 patch_plugin_compile_sdk flutter_plugin_android_lifecycle
+patch_plugin_compile_sdk sqlite3_flutter_libs
+patch_plugin_compile_sdk jni
+patch_plugin_compile_sdk jni_flutter
+"$ROOT_DIR/tools/apply_branding.sh"
 flutter build apk "--$BUILD_MODE"
 
 cp "$APP_DIR/build/app/outputs/flutter-apk/app-$BUILD_MODE.apk" "$DIST_DIR/ActitPassStorage-android-$BUILD_MODE.apk"
