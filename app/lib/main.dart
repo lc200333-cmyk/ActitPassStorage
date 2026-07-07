@@ -1205,7 +1205,7 @@ bool fieldTypeIsSecret(String type) =>
     type == 'password' || type == 'custom_secret';
 
 bool fieldDefinitionIsSecret(FieldDefinition field) =>
-    fieldTypeIsSecret(field.type);
+    field.secret || fieldTypeIsSecret(field.type);
 
 String noteFieldIdForTemplate(CardTemplate template) {
   for (final field in template.fields) {
@@ -2240,7 +2240,7 @@ class _VaultShellState extends State<VaultShell> {
     return source.map((template) {
       final fields = template.fields.map((field) {
         final type = spbFieldTypeToUi(field.fieldTypeId, field.name);
-        final secret = spbFieldTypeIsSecret(field.fieldTypeId);
+        final secret = spbFieldIsSecret(field.fieldTypeId, field.name);
         return FieldDefinition(
           id: field.id,
           label: field.name.isEmpty ? 'Поле' : field.name,
@@ -2277,9 +2277,10 @@ class _VaultShellState extends State<VaultShell> {
   }
 
   String spbFieldTypeToUi(int fieldTypeId, [String fieldName = '']) {
+    if (spbFieldIsSecret(fieldTypeId, fieldName)) {
+      return secretFieldTypeForName(fieldName);
+    }
     switch (fieldTypeId) {
-      case 2:
-        return secretFieldTypeForName(fieldName);
       case 3:
         return 'date';
       case 4:
@@ -2295,7 +2296,9 @@ class _VaultShellState extends State<VaultShell> {
     }
   }
 
-  bool spbFieldTypeIsSecret(int fieldTypeId) => fieldTypeId == 2;
+  bool spbFieldIsSecret(int fieldTypeId, String fieldName) {
+    return isSpbSecretField(fieldName);
+  }
 
   String secretFieldTypeForName(String fieldName) {
     final normalized = fieldName.trim().toLowerCase();
