@@ -17,6 +17,11 @@ class SpbWalletDatabase {
   final SpbWalletCrypto crypto;
   final SpbWalletAttachmentCodec attachmentCodec;
 
+  // Тот же разделитель, что и в _categoryPath() при сборке пути для чтения.
+  // Голый '/' не подходит: имя папки может содержать этот символ (например
+  // "AC/DC"), и тогда оно ошибочно разбилось бы на две вложенные папки.
+  static const String _categoryPathSeparator = ' / ';
+
   static SpbWalletDatabase open(String path, String password) {
     try {
       final db = sqlite3.open(path);
@@ -751,7 +756,7 @@ CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
 
   String _ensureCategoryPath(String path) {
     final cleanParts = path
-        .split('/')
+        .split(_categoryPathSeparator)
         .map((part) => part.trim())
         .where((part) => part.isNotEmpty)
         .toList();
@@ -790,7 +795,7 @@ CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
 
   String? _categoryIdForPath(String path) {
     final cleanParts = path
-        .split('/')
+        .split(_categoryPathSeparator)
         .map((part) => part.trim())
         .where((part) => part.isNotEmpty)
         .toList();
@@ -906,9 +911,14 @@ CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
     if (rows.isEmpty) return;
     final cardViewId = _string(rows.first['CardViewID']);
     if (cardViewId.isEmpty) return;
+    final viewRows = _db.select(
+        'SELECT hex(ImageID) AS ImageID FROM spbwlt_CardView WHERE hex(ID) = ?',
+        [cardViewId]);
+    final hasBackgroundImage =
+        viewRows.isNotEmpty && _string(viewRows.first['ImageID']).isNotEmpty;
     _db.execute(
       'UPDATE spbwlt_CardView SET CardColor = ?, FillCardWithColor = ? WHERE hex(ID) = ?',
-      [_cardColorBlob(cardColor), 1, cardViewId],
+      [_cardColorBlob(cardColor), hasBackgroundImage ? 0 : 1, cardViewId],
     );
     _db.execute('UPDATE spbwlt_Card SET HasOwnCardView = ? WHERE hex(ID) = ?',
         [1, cardId]);

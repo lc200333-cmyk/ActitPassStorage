@@ -156,6 +156,7 @@ class SecretItem {
     this.hitCount = 0,
     this.iconId,
     this.backgroundImageBase64,
+    this.spbColor,
   });
 
   final String id;
@@ -169,6 +170,10 @@ class SecretItem {
   final int hitCount;
   final String? iconId;
   final String? backgroundImageBase64;
+  // Точный RGB-цвет карточки, как он хранится в .swl (spbwlt_CardView.CardColor).
+  // Если задан, имеет приоритет над colorId при отрисовке и сохранении, чтобы
+  // не "квантовать" оригинальный цвет SPB Wallet до одного из 7 пресетов палитры.
+  final int? spbColor;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -183,6 +188,7 @@ class SecretItem {
         'hitCount': hitCount,
         'iconId': iconId,
         'backgroundImageBase64': backgroundImageBase64,
+        'spbColor': spbColor,
       };
 
   factory SecretItem.fromJson(Map<String, dynamic> json) => SecretItem(
@@ -201,6 +207,7 @@ class SecretItem {
         hitCount: json['hitCount'] as int? ?? 0,
         iconId: json['iconId'] as String?,
         backgroundImageBase64: json['backgroundImageBase64'] as String?,
+        spbColor: json['spbColor'] as int?,
       );
 }
 
@@ -344,9 +351,10 @@ class SpbWalletSession implements VaultSession {
           for (final entry in item.values.entries)
             if (entry.key != spbDescriptionFieldId) entry.key: entry.value,
         },
-        cardColor: paletteColorToSpb(item.colorId),
+        cardColor: item.spbColor ?? paletteColorToSpb(item.colorId),
         iconId:
             item.iconId == null ? null : syntheticSpbIconIdForUi(item.iconId!),
+        backgroundImageBase64: item.backgroundImageBase64,
       ),
     );
     await load();
@@ -1054,6 +1062,19 @@ String spbColorToPaletteId(int color) {
     }
   }
   return best.id;
+}
+
+/// Цвет для отрисовки карточки: если известен точный RGB из SPB Wallet
+/// (`item.spbColor`), используется он напрямую, без округления до одного из
+/// 7 пресетов палитры. Иначе — прежнее поведение через colorId/пресет.
+PaletteColor itemDisplayColor(SecretItem item, CardTemplate template) {
+  final rawColor = item.spbColor;
+  if (rawColor == null) {
+    return colorById(item.colorId.isEmpty ? template.colorId : item.colorId);
+  }
+  final bg = Color(0xff000000 | (rawColor & 0x00ffffff));
+  final fg = bg.computeLuminance() > 0.55 ? const Color(0xff222831) : Colors.white;
+  return PaletteColor('custom', 'Свой цвет', bg, fg);
 }
 
 TemplateIcon iconById(String id) => templateIcons.firstWhere(
@@ -2342,6 +2363,7 @@ class _VaultShellState extends State<VaultShell> {
         modifiedAt: DateTime.now(),
         hitCount: card.hitCount,
         backgroundImageBase64: card.backgroundImageBase64,
+        spbColor: card.cardColor,
       );
     }).toList();
   }
@@ -3736,6 +3758,7 @@ class _VaultShellState extends State<VaultShell> {
                   hitCount: entry.hitCount + 1,
                   iconId: entry.iconId,
                   backgroundImageBase64: entry.backgroundImageBase64,
+                  spbColor: entry.spbColor,
                 )
               : entry,
       ];
@@ -3837,6 +3860,7 @@ class _VaultShellState extends State<VaultShell> {
         hitCount: item.hitCount,
         iconId: item.iconId,
         backgroundImageBase64: item.backgroundImageBase64,
+        spbColor: item.spbColor,
       ),
     );
   }
@@ -3915,8 +3939,7 @@ class _VaultShellState extends State<VaultShell> {
     void Function(VoidCallback action)? onStateChange,
   }) {
     final template = templateFor(item.templateId);
-    final color =
-        colorById(item.colorId.isEmpty ? template.colorId : item.colorId);
+    final color = itemDisplayColor(item, template);
     final noteCount = noteText(item).trim().isEmpty ? 0 : 1;
     final attachmentCount =
         item.attachments.where((attachment) => !attachment.deleted).length;
@@ -4527,7 +4550,7 @@ class _VaultShellState extends State<VaultShell> {
             for (final entry in saved.values.entries)
               if (entry.key != spbDescriptionFieldId) entry.key: entry.value,
           },
-          cardColor: paletteColorToSpb(saved.colorId),
+          cardColor: saved.spbColor ?? paletteColorToSpb(saved.colorId),
           iconId: spbIconIdForUi(
             itemIconId(saved, template),
             template.iconId,
@@ -5081,6 +5104,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
   late final Map<String, TextEditingController> values;
   late List<SecretAttachment> attachments;
   String? backgroundImageBase64;
+  int? spbColor;
   final Set<String> visibleSecrets = {};
 
   CardTemplate get template =>
@@ -5107,6 +5131,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
     };
     attachments = [...?widget.initial?.attachments];
     backgroundImageBase64 = widget.initial?.backgroundImageBase64;
+    spbColor = widget.initial?.spbColor;
   }
 
   @override
@@ -5173,7 +5198,12 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
               const SizedBox(height: 10),
               ColorPicker(
                   value: colorId,
-                  onChanged: (value) => setState(() => colorId = value)),
+                  onChanged: (value) => setState(() {
+                        colorId = value;
+                        // Пользователь явно выбрал новый цвет - заменяем
+                        // точный RGB из SPB Wallet на цвет выбранного пресета.
+                        spbColor = paletteColorToSpb(value);
+                      })),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
@@ -5324,6 +5354,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                 hitCount: widget.initial?.hitCount ?? 0,
                 iconId: iconId,
                 backgroundImageBase64: backgroundImageBase64,
+                spbColor: spbColor,
               ),
             );
           },
