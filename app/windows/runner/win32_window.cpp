@@ -134,10 +134,18 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
+  const int width = Scale(size.width, scale_factor);
+  const int height = Scale(size.height, scale_factor);
+  MONITORINFO monitor_info{};
+  monitor_info.cbSize = sizeof(MONITORINFO);
+  GetMonitorInfo(monitor, &monitor_info);
+  const RECT work = monitor_info.rcWork;
+  const int x = work.left + (work.right - work.left - width) / 2;
+  const int y = work.top + (work.bottom - work.top - height) / 2;
+
   HWND window = CreateWindow(
-      window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
-      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
-      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
+      window_class, title.c_str(), WS_POPUP,
+      x, y, width, height,
       nullptr, nullptr, GetModuleHandle(nullptr), this);
 
   if (!window) {
@@ -179,6 +187,21 @@ Win32Window::MessageHandler(HWND hwnd,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
+    case WM_NCHITTEST: {
+      const LRESULT hit = DefWindowProc(hwnd, message, wparam, lparam);
+      const LONG_PTR style = GetWindowLongPtr(hwnd, GWL_STYLE);
+      if (hit == HTCLIENT && (style & WS_CAPTION) == 0) {
+        POINT point = {static_cast<short>(LOWORD(lparam)),
+                       static_cast<short>(HIWORD(lparam))};
+        ScreenToClient(hwnd, &point);
+        const double scale = GetDpiForWindow(hwnd) / 96.0;
+        if (point.y >= 0 && point.y < Scale(44, scale)) {
+          return HTCAPTION;
+        }
+      }
+      return hit;
+    }
+
     case WM_DESTROY:
       window_handle_ = nullptr;
       Destroy();

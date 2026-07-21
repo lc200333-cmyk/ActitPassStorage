@@ -1073,7 +1073,8 @@ PaletteColor itemDisplayColor(SecretItem item, CardTemplate template) {
     return colorById(item.colorId.isEmpty ? template.colorId : item.colorId);
   }
   final bg = Color(0xff000000 | (rawColor & 0x00ffffff));
-  final fg = bg.computeLuminance() > 0.55 ? const Color(0xff222831) : Colors.white;
+  final fg =
+      bg.computeLuminance() > 0.55 ? const Color(0xff222831) : Colors.white;
   return PaletteColor('custom', 'Свой цвет', bg, fg);
 }
 
@@ -1202,8 +1203,11 @@ String makeId(String prefix) {
 
 enum EntryMode { openSwl, createSwl }
 
+enum VirtualKeyboardMode { numeric, uppercase, lowercase, symbols }
+
 const spbDescriptionFieldId = '__spb_description';
 const spbWalletChannel = MethodChannel('actit_pass_storage/spb_wallet');
+const windowChannel = MethodChannel('actit_pass_storage/window');
 
 bool isNotesLabel(String label) {
   final normalized = label.trim().toLowerCase();
@@ -1414,6 +1418,7 @@ class _VaultShellState extends State<VaultShell> {
   final passwordController = TextEditingController();
   final confirmController = TextEditingController();
   final searchController = TextEditingController();
+  final passwordFocusNode = FocusNode(debugLabel: 'vaultPassword');
 
   EntryMode entryMode = EntryMode.openSwl;
   bool showPassword = false;
@@ -1421,6 +1426,8 @@ class _VaultShellState extends State<VaultShell> {
   bool unlocked = false;
   bool? menuOpenOverride;
   bool creatingVault = false;
+  String? configuredWindowMode;
+  VirtualKeyboardMode virtualKeyboardMode = VirtualKeyboardMode.numeric;
   String activeView = 'cards';
   String? message;
   String? spbWalletPath;
@@ -1436,9 +1443,6 @@ class _VaultShellState extends State<VaultShell> {
   String sortMode = 'modified_desc';
   String? selectedItemId;
   DateTime? lastSyncAt;
-  Timer? autoOpenTimer;
-  bool autoOpenInProgress = false;
-  String? lastAutoOpenPassword;
 
   List<CardTemplate> templates = builtInTemplates();
   List<SecretItem> items = [];
@@ -1502,16 +1506,60 @@ class _VaultShellState extends State<VaultShell> {
     super.initState();
     searchController.addListener(() => setState(() {}));
     loadRecentVaults();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        passwordFocusNode.requestFocus();
+      }
+    });
+  }
+
+  void synchronizeWindowMode() {
+    if (!Platform.isWindows) return;
+    final desiredMode = unlocked
+        ? 'main'
+        : message == null
+            ? 'login'
+            : 'loginExpanded';
+    if (configuredWindowMode == desiredMode) return;
+    configuredWindowMode = desiredMode;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (unlocked) {
+        configureMainWindow();
+      } else {
+        configureLoginWindow(expanded: message != null);
+      }
+    });
+  }
+
+  Future<void> configureLoginWindow({bool expanded = false}) async {
+    if (!Platform.isWindows) return;
+    try {
+      await windowChannel.invokeMethod<void>(
+        expanded ? 'showLoginExpanded' : 'showLogin',
+      );
+    } on MissingPluginException {
+      // Other Flutter targets do not provide the Win32 window channel.
+    }
+  }
+
+  Future<void> configureMainWindow() async {
+    if (!Platform.isWindows) return;
+    try {
+      await windowChannel.invokeMethod<void>('showMain');
+    } on MissingPluginException {
+      // Other Flutter targets do not provide the Win32 window channel.
+    }
   }
 
   @override
   void dispose() {
-    autoOpenTimer?.cancel();
     spbWallet?.close();
     vaultNameController.dispose();
     passwordController.dispose();
     confirmController.dispose();
     searchController.dispose();
+    passwordFocusNode.dispose();
     super.dispose();
   }
 
@@ -1541,7 +1589,8 @@ class _VaultShellState extends State<VaultShell> {
           await rememberRecentVault(spbWalletPath!);
         }
       } catch (error) {
-        setState(() => message = 'Не удалось открыть .swl базу: $error');
+        setState(() => message =
+            'Не удалось открыть базу. Проверьте правильность пароля.');
       }
       return;
     }
@@ -1570,30 +1619,6 @@ class _VaultShellState extends State<VaultShell> {
     }
   }
 
-  void scheduleAutoOpenVault(String password) {
-    autoOpenTimer?.cancel();
-    if (createMode ||
-        unlocked ||
-        spbWalletPath == null ||
-        spbWalletPath!.isEmpty) {
-      return;
-    }
-    final candidate = password;
-    if (candidate.isEmpty || candidate == lastAutoOpenPassword) return;
-    autoOpenTimer = Timer(const Duration(milliseconds: 450), () async {
-      if (!mounted || autoOpenInProgress || createMode || unlocked) return;
-      final currentPassword = passwordController.text;
-      if (currentPassword.isEmpty || currentPassword != candidate) return;
-      autoOpenInProgress = true;
-      lastAutoOpenPassword = currentPassword;
-      try {
-        await unlock();
-      } finally {
-        autoOpenInProgress = false;
-      }
-    });
-  }
-
   Future<void> pickSpbWalletFile() async {
     if (Platform.isAndroid) {
       try {
@@ -1610,7 +1635,6 @@ class _VaultShellState extends State<VaultShell> {
           syncSourcePath = null;
           syncSourceUrl = null;
           syncOriginProvider = null;
-          lastAutoOpenPassword = null;
           vaultNameController.text = picked['displayName']?.toString() ??
               File(path).uri.pathSegments.last;
           message = null;
@@ -1623,7 +1647,6 @@ class _VaultShellState extends State<VaultShell> {
             displayPath: spbWalletDisplayPath,
           ));
         }
-        scheduleAutoOpenVault(passwordController.text);
       } catch (error) {
         setState(() => message = 'Не удалось выбрать .swl файл: $error');
       }
@@ -1643,12 +1666,10 @@ class _VaultShellState extends State<VaultShell> {
       syncSourcePath = null;
       syncSourceUrl = null;
       syncOriginProvider = null;
-      lastAutoOpenPassword = null;
       vaultNameController.text = File(path).uri.pathSegments.last;
       message = null;
     });
     await rememberRecentVault(path);
-    scheduleAutoOpenVault(passwordController.text);
   }
 
   Future<void> loadRecentVaults() async {
@@ -1726,8 +1747,8 @@ class _VaultShellState extends State<VaultShell> {
     setState(() => recentVaults = entries);
   }
 
-  Future<void> createSwlVault(String password) async {
-    final file = await swlVaultFile();
+  Future<void> createSwlVault(String password, {File? targetFile}) async {
+    final file = targetFile ?? await swlVaultFile();
     if (file.existsSync()) {
       throw StateError(
           'База "${file.uri.pathSegments.last}" уже есть. Выберите другое название или откройте существующую базу.');
@@ -1810,6 +1831,143 @@ class _VaultShellState extends State<VaultShell> {
       message = null;
     });
     await rememberRecentVault(file.path);
+  }
+
+  Future<void> createNewVaultFromLogin() async {
+    final nameController = TextEditingController(text: 'Новая база');
+    final newPasswordController = TextEditingController();
+    final repeatPasswordController = TextEditingController();
+    var showNewPassword = false;
+    var showRepeatedPassword = false;
+    var isCreating = false;
+    String? dialogError;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Создание новой базы'),
+          content: SizedBox(
+            width: 390,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    key: const Key('newVaultName'),
+                    controller: nameController,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Название базы',
+                      suffixText: '.swl',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  PasswordField(
+                    key: const Key('newVaultPassword'),
+                    controller: newPasswordController,
+                    label: 'Новый пароль',
+                    visible: showNewPassword,
+                    onToggle: () => setDialogState(
+                      () => showNewPassword = !showNewPassword,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  PasswordField(
+                    key: const Key('newVaultPasswordRepeat'),
+                    controller: repeatPasswordController,
+                    label: 'Повторите новый пароль',
+                    visible: showRepeatedPassword,
+                    onToggle: () => setDialogState(
+                      () => showRepeatedPassword = !showRepeatedPassword,
+                    ),
+                  ),
+                  if (dialogError != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      dialogError!,
+                      key: const Key('newVaultError'),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed:
+                  isCreating ? null : () => Navigator.of(dialogContext).pop(),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              key: const Key('confirmCreateVault'),
+              onPressed: isCreating
+                  ? null
+                  : () async {
+                      final name = nameController.text.trim().replaceAll(
+                          RegExp(r'\.swl$', caseSensitive: false), '');
+                      final newPassword = newPasswordController.text;
+                      if (name.isEmpty) {
+                        setDialogState(
+                            () => dialogError = 'Введите название базы.');
+                        return;
+                      }
+                      if (newPassword.isEmpty) {
+                        setDialogState(
+                            () => dialogError = 'Введите новый пароль.');
+                        return;
+                      }
+                      if (newPassword != repeatPasswordController.text) {
+                        setDialogState(
+                            () => dialogError = 'Новые пароли не совпадают.');
+                        return;
+                      }
+
+                      final previousName = vaultNameController.text;
+                      setDialogState(() {
+                        isCreating = true;
+                        dialogError = null;
+                      });
+                      vaultNameController.text = name;
+                      try {
+                        await createSwlVault(newPassword);
+                        entryMode = EntryMode.openSwl;
+                        if (dialogContext.mounted) {
+                          Navigator.of(dialogContext).pop();
+                        }
+                      } catch (error) {
+                        vaultNameController.text = previousName;
+                        if (dialogContext.mounted) {
+                          setDialogState(() {
+                            isCreating = false;
+                            dialogError =
+                                'Не удалось создать .swl базу: $error';
+                          });
+                        }
+                      }
+                    },
+              child: isCreating
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Создать'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    nameController.dispose();
+    newPasswordController.dispose();
+    repeatPasswordController.dispose();
+    if (mounted && !unlocked) passwordFocusNode.requestFocus();
   }
 
   Map<String, String> demoCategoryIcons() => const {
@@ -2009,7 +2167,6 @@ class _VaultShellState extends State<VaultShell> {
           syncOriginProvider = null;
           vaultNameController.text =
               copied?['displayName']?.toString() ?? vault.title;
-          lastAutoOpenPassword = null;
         });
       } else {
         setState(() {
@@ -2022,7 +2179,6 @@ class _VaultShellState extends State<VaultShell> {
           syncSourceUrl = null;
           syncOriginProvider = null;
           vaultNameController.text = vault.title;
-          lastAutoOpenPassword = null;
         });
       }
       await rememberRecentVaultEntry(ExistingVault(
@@ -2031,7 +2187,6 @@ class _VaultShellState extends State<VaultShell> {
         uri: spbWalletUri,
         displayPath: spbWalletDisplayPath,
       ));
-      scheduleAutoOpenVault(passwordController.text);
     } catch (error) {
       setState(
           () => message = 'Не удалось открыть последнюю .swl базу: $error');
@@ -2536,6 +2691,7 @@ class _VaultShellState extends State<VaultShell> {
 
   @override
   Widget build(BuildContext context) {
+    synchronizeWindowMode();
     if (!unlocked) return buildLocked();
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -2581,7 +2737,6 @@ class _VaultShellState extends State<VaultShell> {
     syncSourceUrl = null;
     syncOriginProvider = null;
     passwordController.clear();
-    lastAutoOpenPassword = null;
     setState(() {
       unlocked = false;
       message = null;
@@ -2727,164 +2882,572 @@ class _VaultShellState extends State<VaultShell> {
     return '${two(local.day)}.${two(local.month)}.${local.year} ${two(local.hour)}:${two(local.minute)}';
   }
 
-  Widget buildLocked() {
-    return Scaffold(
-      body: Stack(
+  String get selectedVaultTitle {
+    final path = spbWalletDisplayPath ?? spbWalletPath;
+    String withoutSwlExtension(String name) =>
+        name.replaceFirst(RegExp(r'\.swl$', caseSensitive: false), '');
+    if (path != null && path.isNotEmpty) {
+      if (path.startsWith('content://')) {
+        final name = vaultNameController.text.trim();
+        return name.isEmpty ? 'база' : withoutSwlExtension(name);
+      }
+      return withoutSwlExtension(_vaultTitleFromPath(path));
+    }
+    if (recentVaults.isNotEmpty) {
+      return withoutSwlExtension(recentVaults.first.title);
+    }
+    return 'файл не выбран';
+  }
+
+  void insertPasswordText(String value) {
+    final nextText = '${passwordController.text}$value';
+    passwordController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+    );
+    passwordFocusNode.requestFocus();
+  }
+
+  void backspacePassword() {
+    final text = passwordController.text;
+    if (text.isNotEmpty) {
+      final nextText = text.substring(0, text.length - 1);
+      passwordController.value = TextEditingValue(
+        text: nextText,
+        selection: TextSelection.collapsed(offset: nextText.length),
+      );
+    }
+    passwordFocusNode.requestFocus();
+  }
+
+  void clearPassword() {
+    passwordController.clear();
+    passwordFocusNode.requestFocus();
+  }
+
+  Future<void> exitApplication() async {
+    passwordController.clear();
+    confirmController.clear();
+    spbWallet?.close();
+    spbWallet = null;
+    spbWalletPath = null;
+    spbWalletUri = null;
+    spbWalletDisplayPath = null;
+    recentVaults.clear();
+    try {
+      final historyFile = await recentVaultsFile();
+      if (historyFile.existsSync()) {
+        await historyFile.delete();
+      }
+    } catch (_) {
+      // Exit must still complete if the recent-file state cannot be removed.
+    }
+    if (Platform.isAndroid || Platform.isIOS) {
+      await SystemNavigator.pop();
+    } else {
+      exit(0);
+    }
+  }
+
+  Widget passwordKey({
+    required String label,
+    required VoidCallback onPressed,
+    Color top = const Color(0xff2483bc),
+    Color bottom = const Color(0xff07436c),
+    double fontSize = 34,
+    FontWeight fontWeight = FontWeight.w500,
+    double height = 62,
+    Key? key,
+  }) {
+    return Semantics(
+      button: true,
+      label: label,
+      child: SizedBox(
+        height: height,
+        child: Material(
+          key: key,
+          color: Colors.transparent,
+          child: Ink(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [top, bottom],
+              ),
+              border: Border.all(color: const Color(0xff5c6870)),
+              borderRadius: BorderRadius.circular(3),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  offset: Offset(0, 2),
+                  blurRadius: 2,
+                ),
+              ],
+            ),
+            child: InkWell(
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(3),
+              child: Center(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: fontSize,
+                    height: 1,
+                    fontWeight: fontWeight,
+                    shadows: const [
+                      Shadow(color: Colors.black45, offset: Offset(1, 1)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget keypadRow(List<Widget> children) => Row(
         children: [
-          AbsorbPointer(
-            absorbing: creatingVault,
-            child: SafeArea(
+          for (var index = 0; index < children.length; index++) ...[
+            if (index > 0) const SizedBox(width: 5),
+            Expanded(child: children[index]),
+          ],
+        ],
+      );
+
+  void selectVirtualKeyboardMode(VirtualKeyboardMode mode) {
+    setState(() => virtualKeyboardMode = mode);
+    passwordFocusNode.requestFocus();
+  }
+
+  Widget buildPasswordKeyboard({
+    required Color redTop,
+    required Color redBottom,
+  }) {
+    if (virtualKeyboardMode == VirtualKeyboardMode.symbols) {
+      Widget symbolKey(String symbol) => passwordKey(
+            key: Key('keypadSymbol$symbol'),
+            label: symbol,
+            height: 84,
+            fontSize: 25,
+            onPressed: () => insertPasswordText(symbol),
+          );
+
+      return Column(
+        children: [
+          keypadRow([
+            for (final symbol in [
+              '+',
+              '×',
+              '÷',
+              '=',
+              '/',
+              '_',
+              '<',
+              '>',
+              '[',
+              ']'
+            ])
+              symbolKey(symbol),
+          ]),
+          const SizedBox(height: 5),
+          keypadRow([
+            for (final symbol in [
+              '!',
+              '@',
+              '#',
+              r'$',
+              '%',
+              '^',
+              '&',
+              '*',
+              '(',
+              ')'
+            ])
+              symbolKey(symbol),
+          ]),
+          const SizedBox(height: 5),
+          keypadRow([
+            passwordKey(
+              key: const Key('keypadSymbolsPage'),
+              label: '1/2',
+              height: 84,
+              fontSize: 18,
+              onPressed: passwordFocusNode.requestFocus,
+            ),
+            for (final symbol in ['-', "'", '"', ':', ';', ',', '?'])
+              symbolKey(symbol),
+            passwordKey(
+              key: const Key('keypadBackspace'),
+              label: '<-',
+              height: 84,
+              fontSize: 22,
+              top: redTop,
+              bottom: redBottom,
+              onPressed: backspacePassword,
+            ),
+          ]),
+        ],
+      );
+    }
+
+    if (virtualKeyboardMode != VirtualKeyboardMode.numeric) {
+      final uppercase = virtualKeyboardMode == VirtualKeyboardMode.uppercase;
+      Widget letterKey(String baseLetter) {
+        final letter = uppercase ? baseLetter : baseLetter.toLowerCase();
+        return passwordKey(
+          key: Key('keypadLetter$letter'),
+          label: letter,
+          height: 84,
+          fontSize: 24,
+          onPressed: () => insertPasswordText(letter),
+        );
+      }
+
+      return Column(
+        children: [
+          keypadRow([
+            for (final letter in [
+              'Q',
+              'W',
+              'E',
+              'R',
+              'T',
+              'Y',
+              'U',
+              'I',
+              'O',
+              'P'
+            ])
+              letterKey(letter),
+          ]),
+          const SizedBox(height: 5),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: keypadRow([
+              for (final letter in [
+                'A',
+                'S',
+                'D',
+                'F',
+                'G',
+                'H',
+                'J',
+                'K',
+                'L'
+              ])
+                letterKey(letter),
+            ]),
+          ),
+          const SizedBox(height: 5),
+          keypadRow([
+            passwordKey(
+              key: const Key('keypadClear'),
+              label: 'CLR',
+              height: 84,
+              fontSize: 17,
+              top: redTop,
+              bottom: redBottom,
+              onPressed: clearPassword,
+            ),
+            for (final letter in ['Z', 'X', 'C', 'V', 'B', 'N', 'M'])
+              letterKey(letter),
+            passwordKey(
+              key: const Key('keypadBackspace'),
+              label: '<-',
+              height: 84,
+              fontSize: 22,
+              top: redTop,
+              bottom: redBottom,
+              onPressed: backspacePassword,
+            ),
+          ]),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        keypadRow([
+          for (final digit in ['1', '2', '3'])
+            passwordKey(
+              key: Key('keypad$digit'),
+              label: digit,
+              onPressed: () => insertPasswordText(digit),
+            ),
+        ]),
+        const SizedBox(height: 5),
+        keypadRow([
+          for (final digit in ['4', '5', '6'])
+            passwordKey(
+              key: Key('keypad$digit'),
+              label: digit,
+              onPressed: () => insertPasswordText(digit),
+            ),
+        ]),
+        const SizedBox(height: 5),
+        keypadRow([
+          for (final digit in ['7', '8', '9'])
+            passwordKey(
+              key: Key('keypad$digit'),
+              label: digit,
+              onPressed: () => insertPasswordText(digit),
+            ),
+        ]),
+        const SizedBox(height: 5),
+        keypadRow([
+          passwordKey(
+            key: const Key('keypadClear'),
+            label: 'CLR',
+            fontSize: 29,
+            top: redTop,
+            bottom: redBottom,
+            onPressed: clearPassword,
+          ),
+          passwordKey(
+            key: const Key('keypad0'),
+            label: '0',
+            onPressed: () => insertPasswordText('0'),
+          ),
+          passwordKey(
+            key: const Key('keypadBackspace'),
+            label: '<-',
+            fontSize: 31,
+            top: redTop,
+            bottom: redBottom,
+            onPressed: backspacePassword,
+          ),
+        ]),
+      ],
+    );
+  }
+
+  Widget buildLocked() {
+    const redTop = Color(0xffd32b31);
+    const redBottom = Color(0xff7f0609);
+    const modeTop = Color(0xffb96b25);
+    const modeBottom = Color(0xff6d3107);
+
+    return Scaffold(
+      backgroundColor: const Color(0xfff4f4f4),
+      body: SafeArea(
+        child: Center(
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: SizedBox(
+              width: 562,
+              height: message == null ? 590 : 650,
               child: LayoutBuilder(
                 builder: (context, constraints) => SingleChildScrollView(
-                  padding: const EdgeInsets.all(24),
+                  padding: EdgeInsets.zero,
                   child: ConstrainedBox(
                     constraints: BoxConstraints(
-                      minHeight: max(0, constraints.maxHeight - 48),
+                      minHeight: constraints.maxHeight,
                     ),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 960),
-                        child: Wrap(
-                          spacing: 24,
-                          runSpacing: 24,
-                          alignment: WrapAlignment.center,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: 360,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const CircleAvatar(
-                                      radius: 32,
-                                      child: Text('A',
-                                          style: TextStyle(fontSize: 28))),
-                                  const SizedBox(height: 18),
-                                  Text('ActitPassStorage',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .headlineMedium),
-                                  const SizedBox(height: 8),
-                                  const Text(
-                                      'Менеджер паролей, заметок и настраиваемых карточек. Локальная .swl база на устройстве.'),
-                                ],
-                              ),
+                    child: Container(
+                      width: constraints.maxWidth,
+                      decoration: BoxDecoration(
+                        color: const Color(0xfff4f4f4),
+                        border: Border.all(color: const Color(0xffc6c6c6)),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            height: 44,
+                            color: const Color(0xff777777),
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: const Text(
+                              'Пароль',
+                              style:
+                                  TextStyle(color: Colors.white, fontSize: 18),
                             ),
-                            Card(
-                              elevation: 0,
-                              clipBehavior: Clip.antiAlias,
-                              child: SizedBox(
-                                width: 380,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(20),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      SegmentedButton<EntryMode>(
-                                        segments: const [
-                                          ButtonSegment(
-                                              value: EntryMode.openSwl,
-                                              label: Text('Открыть .swl')),
-                                          ButtonSegment(
-                                              value: EntryMode.createSwl,
-                                              label: Text('Создать .swl')),
-                                        ],
-                                        selected: {entryMode},
-                                        onSelectionChanged: (value) =>
-                                            setState(() {
-                                          entryMode = value.first;
-                                          lastAutoOpenPassword = null;
-                                          message = null;
-                                          if (entryMode ==
-                                              EntryMode.createSwl) {
-                                            vaultNameController.text =
-                                                vaultNameController.text
-                                                    .trim()
-                                                    .replaceAll(
-                                                        RegExp(r'\.swl$',
-                                                            caseSensitive:
-                                                                false),
-                                                        '');
-                                          }
-                                        }),
-                                      ),
-                                      const SizedBox(height: 18),
-                                      if (!createMode &&
-                                          recentVaults.isNotEmpty)
-                                        buildRecentVaultsPicker(),
-                                      if (!createMode) ...[
-                                        OutlinedButton.icon(
-                                          onPressed: pickSpbWalletFile,
-                                          icon: const Icon(Icons.folder_open),
-                                          label:
-                                              const Text('Выбрать .swl файл'),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: Text(
-                                            spbWalletUserPath() == null
-                                                ? 'Файл .swl не выбран'
-                                                : spbWalletUserPath()!,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ] else
-                                        TextField(
-                                          controller: vaultNameController,
-                                          decoration: const InputDecoration(
-                                              labelText: 'Название базы',
-                                              border: OutlineInputBorder()),
-                                        ),
-                                      const SizedBox(height: 12),
-                                      PasswordField(
-                                        controller: passwordController,
-                                        label: 'Пароль .swl базы',
-                                        visible: showPassword,
-                                        onToggle: () => setState(
-                                            () => showPassword = !showPassword),
-                                        onChanged: scheduleAutoOpenVault,
-                                        onSubmitted: (_) => unlock(),
-                                      ),
-                                      if (createMode) ...[
-                                        const SizedBox(height: 12),
-                                        PasswordField(
-                                          controller: confirmController,
-                                          label: 'Повторите пароль',
-                                          visible: showConfirm,
-                                          onToggle: () => setState(
-                                              () => showConfirm = !showConfirm),
-                                        ),
-                                      ],
-                                      const SizedBox(height: 16),
-                                      SizedBox(
-                                        width: double.infinity,
-                                        child: FilledButton(
-                                          onPressed:
-                                              creatingVault ? null : unlock,
-                                          child: Text(
-                                              entryMode == EntryMode.createSwl
-                                                  ? 'Создать .swl базу'
-                                                  : 'Открыть .swl базу'),
-                                        ),
-                                      ),
-                                      if (message != null) ...[
-                                        const SizedBox(height: 12),
-                                        Text(message!,
-                                            style: TextStyle(
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .error)),
-                                      ],
-                                    ],
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Text(
+                                  'Введите пароль ($selectedVaultTitle)',
+                                  key: const Key('passwordPrompt'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    color: Color(0xff16212a),
                                   ),
                                 ),
-                              ),
+                                const SizedBox(height: 8),
+                                FractionallySizedBox(
+                                  widthFactor: 2 / 3,
+                                  alignment: Alignment.centerLeft,
+                                  child: TextField(
+                                    key: const Key('passwordInput'),
+                                    controller: passwordController,
+                                    focusNode: passwordFocusNode,
+                                    autofocus: true,
+                                    obscureText: true,
+                                    enableSuggestions: false,
+                                    autocorrect: false,
+                                    keyboardType: TextInputType.visiblePassword,
+                                    textInputAction: TextInputAction.done,
+                                    onSubmitted: (_) => unlock(),
+                                    decoration: const InputDecoration(
+                                      isDense: true,
+                                      filled: true,
+                                      fillColor: Colors.white,
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.zero,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 20),
+                                buildPasswordKeyboard(
+                                  redTop: redTop,
+                                  redBottom: redBottom,
+                                ),
+                                const SizedBox(height: 6),
+                                keypadRow([
+                                  passwordKey(
+                                    key: const Key('keypadModeUppercase'),
+                                    label: 'ABC',
+                                    fontSize: 23,
+                                    top: modeTop,
+                                    bottom: modeBottom,
+                                    onPressed: () => selectVirtualKeyboardMode(
+                                      VirtualKeyboardMode.uppercase,
+                                    ),
+                                  ),
+                                  passwordKey(
+                                    key: const Key('keypadModeLowercase'),
+                                    label: 'abc',
+                                    fontSize: 23,
+                                    top: modeTop,
+                                    bottom: modeBottom,
+                                    onPressed: () => selectVirtualKeyboardMode(
+                                      VirtualKeyboardMode.lowercase,
+                                    ),
+                                  ),
+                                  passwordKey(
+                                    key: const Key('keypadModeNumeric'),
+                                    label: '123',
+                                    fontSize: 23,
+                                    top: modeTop,
+                                    bottom: modeBottom,
+                                    onPressed: () => selectVirtualKeyboardMode(
+                                      VirtualKeyboardMode.numeric,
+                                    ),
+                                  ),
+                                  passwordKey(
+                                    key: const Key('keypadModeSymbols'),
+                                    label: '#!?',
+                                    fontSize: 23,
+                                    top: modeTop,
+                                    bottom: modeBottom,
+                                    onPressed: () => selectVirtualKeyboardMode(
+                                      VirtualKeyboardMode.symbols,
+                                    ),
+                                  ),
+                                ]),
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 18),
+                                  child: Divider(height: 1),
+                                ),
+                                Row(
+                                  children: [
+                                    PopupMenuButton<String>(
+                                      key: const Key('fileMenu'),
+                                      tooltip: 'Файл',
+                                      onSelected: (value) {
+                                        if (value == 'open') {
+                                          pickSpbWalletFile();
+                                        }
+                                      },
+                                      itemBuilder: (context) => const [
+                                        PopupMenuItem(
+                                          value: 'open',
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.folder_open_outlined),
+                                              SizedBox(width: 10),
+                                              Text('Открыть файл…'),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                      child: SizedBox(
+                                        width: 110,
+                                        height: 40,
+                                        child: IgnorePointer(
+                                          child: passwordKey(
+                                            label: 'X',
+                                            height: 40,
+                                            fontSize: 18,
+                                            onPressed: () {},
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    SizedBox(
+                                      width: 110,
+                                      child: passwordKey(
+                                        key: const Key('createVault'),
+                                        label: '+',
+                                        height: 40,
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                        onPressed: createNewVaultFromLogin,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    SizedBox(
+                                      width: 110,
+                                      child: passwordKey(
+                                        key: const Key('loginOk'),
+                                        label: 'OK',
+                                        height: 40,
+                                        fontSize: 18,
+                                        onPressed: unlock,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    SizedBox(
+                                      width: 124,
+                                      child: passwordKey(
+                                        key: const Key('loginCancel'),
+                                        label: 'Отмена',
+                                        height: 40,
+                                        fontSize: 17,
+                                        top: redTop,
+                                        bottom: redBottom,
+                                        onPressed: () {
+                                          exitApplication();
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (message != null) ...[
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    message!,
+                                    key: const Key('loginMessage'),
+                                    style: TextStyle(
+                                      color:
+                                          Theme.of(context).colorScheme.error,
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -2892,8 +3455,7 @@ class _VaultShellState extends State<VaultShell> {
               ),
             ),
           ),
-          if (creatingVault) buildCreatingVaultOverlay(),
-        ],
+        ),
       ),
     );
   }
@@ -2965,69 +3527,65 @@ class _VaultShellState extends State<VaultShell> {
               color: Theme.of(context).colorScheme.outlineVariant,
             ),
             Expanded(
-              child: Scrollbar(
-                child: ListView.separated(
-                  primary: false,
-                  padding: const EdgeInsets.all(6),
-                  itemCount: recentVaults.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 4),
-                  itemBuilder: (context, index) {
-                    final vault = recentVaults[index];
-                    return SizedBox(
-                      height: 54,
-                      child: Material(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(6),
-                        clipBehavior: Clip.antiAlias,
-                        child: InkWell(
-                          onTap: () {
-                            chooseExistingVault(vault);
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 7),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.history, size: 20),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Text(vault.title,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(fontSize: 13)),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        vault.displayPath ??
-                                            vault.path ??
-                                            vault.uri ??
-                                            '',
+              child: ListView.separated(
+                primary: false,
+                padding: const EdgeInsets.all(6),
+                itemCount: recentVaults.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                itemBuilder: (context, index) {
+                  final vault = recentVaults[index];
+                  return SizedBox(
+                    height: 54,
+                    child: Material(
+                      color:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(6),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () {
+                          chooseExistingVault(vault);
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 7),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.history, size: 20),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(vault.title,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurfaceVariant,
-                                        ),
+                                        style: const TextStyle(fontSize: 13)),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      vault.displayPath ??
+                                          vault.path ??
+                                          vault.uri ??
+                                          '',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
-                    );
-                  },
-                ),
+                    ),
+                  );
+                },
               ),
             ),
           ],
@@ -4000,34 +4558,32 @@ class _VaultShellState extends State<VaultShell> {
                 ),
                 const SizedBox(height: 12),
                 Expanded(
-                  child: Scrollbar(
-                    child: ListView(
-                      padding: EdgeInsets.zero,
-                      children: template.fields
-                          .where((field) =>
-                              (item.values[field.id] ?? '').isNotEmpty)
-                          .map((field) {
-                        final revealKey = '${item.id}:${field.id}';
-                        final isRevealed = revealed.contains(revealKey);
-                        final value = item.values[field.id]!;
-                        final secret = fieldDefinitionIsSecret(field);
-                        return FieldValueRow(
-                          label: field.label,
-                          value: secret && !isRevealed ? '••••••••' : value,
-                          copyValue: value,
-                          foreground: color.fg,
-                          secret: secret,
-                          revealed: isRevealed,
-                          onToggle: secret
-                              ? () => updateItemCardState(() {
-                                    isRevealed
-                                        ? revealed.remove(revealKey)
-                                        : revealed.add(revealKey);
-                                  }, onStateChange)
-                              : null,
-                        );
-                      }).toList(),
-                    ),
+                  child: ListView(
+                    padding: EdgeInsets.zero,
+                    children: template.fields
+                        .where(
+                            (field) => (item.values[field.id] ?? '').isNotEmpty)
+                        .map((field) {
+                      final revealKey = '${item.id}:${field.id}';
+                      final isRevealed = revealed.contains(revealKey);
+                      final value = item.values[field.id]!;
+                      final secret = fieldDefinitionIsSecret(field);
+                      return FieldValueRow(
+                        label: field.label,
+                        value: secret && !isRevealed ? '••••••••' : value,
+                        copyValue: value,
+                        foreground: color.fg,
+                        secret: secret,
+                        revealed: isRevealed,
+                        onToggle: secret
+                            ? () => updateItemCardState(() {
+                                  isRevealed
+                                      ? revealed.remove(revealKey)
+                                      : revealed.add(revealKey);
+                                }, onStateChange)
+                            : null,
+                      );
+                    }).toList(),
                   ),
                 ),
                 const SizedBox(height: 8),
