@@ -6,11 +6,11 @@
 
 Актуальные сборки публикуются в GitHub Releases:
 
-- [Windows setup.exe](https://github.com/Cheburek28/ActitPassStorage/releases/latest/download/ActitPassStorage-Setup.exe)
-- [Android APK](https://github.com/Cheburek28/ActitPassStorage/releases/latest/download/ActitPassStorage-android.apk)
-- [Linux deb amd64](https://github.com/Cheburek28/ActitPassStorage/releases/latest/download/ActitPassStorage-linux-amd64.deb)
+- [Windows setup.exe](https://github.com/lc200333-cmyk/ActitPassStorage/releases/latest/download/ActitPassStorage-Setup.exe)
+- [Android APK](https://github.com/lc200333-cmyk/ActitPassStorage/releases/latest/download/ActitPassStorage-android.apk)
+- [Linux deb amd64](https://github.com/lc200333-cmyk/ActitPassStorage/releases/latest/download/ActitPassStorage-linux-amd64.deb)
 
-Если ссылки не открываются, смотри страницу [последнего релиза](https://github.com/Cheburek28/ActitPassStorage/releases/latest).
+Если ссылки не открываются, смотри страницу [последнего релиза](https://github.com/lc200333-cmyk/ActitPassStorage/releases/latest).
 
 В текущем состоянии репозитория есть:
 
