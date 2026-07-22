@@ -165,6 +165,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Создание новой базы'), findsOneWidget);
+    expect(find.byKey(const Key('newVaultDialogDragHandle')), findsOneWidget);
+    expect(find.byKey(const Key('newVaultPath')), findsOneWidget);
+    expect(find.byKey(const Key('browseNewVaultPath')), findsOneWidget);
+    expect(find.byKey(const Key('newVaultName')), findsOneWidget);
+    final confirmButton = find.byKey(const Key('confirmCreateVault'));
+    final cancelButton = find.byKey(const Key('cancelCreateVault'));
+    expect(
+      find.descendant(of: confirmButton, matching: find.text('OK')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: cancelButton, matching: find.text('Отмена')),
+      findsOneWidget,
+    );
+    expect(tester.getSize(confirmButton), const Size(110, 40));
+    expect(tester.getSize(cancelButton), const Size(124, 40));
     final newPassword = tester.widget<TextField>(
       find.descendant(
         of: find.byKey(const Key('newVaultPassword')),

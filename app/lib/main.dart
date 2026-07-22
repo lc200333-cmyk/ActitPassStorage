@@ -1552,6 +1552,15 @@ class _VaultShellState extends State<VaultShell> {
     }
   }
 
+  Future<void> startLoginWindowDrag() async {
+    if (!Platform.isWindows) return;
+    try {
+      await windowChannel.invokeMethod<void>('startDrag');
+    } on MissingPluginException {
+      // Other Flutter targets do not provide the Win32 window channel.
+    }
+  }
+
   @override
   void dispose() {
     spbWallet?.close();
@@ -1834,6 +1843,7 @@ class _VaultShellState extends State<VaultShell> {
   }
 
   Future<void> createNewVaultFromLogin() async {
+    final pathController = TextEditingController();
     final nameController = TextEditingController(text: 'Новая база');
     final newPasswordController = TextEditingController();
     final repeatPasswordController = TextEditingController();
@@ -1842,76 +1852,147 @@ class _VaultShellState extends State<VaultShell> {
     var isCreating = false;
     String? dialogError;
 
+    Future<void> pickNewVaultDirectory(StateSetter setDialogState) async {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Назначить путь для новой базы',
+        lockParentWindow: true,
+      );
+      if (selectedDirectory == null || selectedDirectory.trim().isEmpty) {
+        return;
+      }
+      setDialogState(() {
+        pathController.text = selectedDirectory;
+        dialogError = null;
+      });
+    }
+
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Создание новой базы'),
-          content: SizedBox(
-            width: 390,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    key: const Key('newVaultName'),
-                    controller: nameController,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Название базы',
-                      suffixText: '.swl',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  PasswordField(
-                    key: const Key('newVaultPassword'),
-                    controller: newPasswordController,
-                    label: 'Новый пароль',
-                    visible: showNewPassword,
-                    onToggle: () => setDialogState(
-                      () => showNewPassword = !showNewPassword,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  PasswordField(
-                    key: const Key('newVaultPasswordRepeat'),
-                    controller: repeatPasswordController,
-                    label: 'Повторите новый пароль',
-                    visible: showRepeatedPassword,
-                    onToggle: () => setDialogState(
-                      () => showRepeatedPassword = !showRepeatedPassword,
-                    ),
-                  ),
-                  if (dialogError != null) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      dialogError!,
-                      key: const Key('newVaultError'),
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  ],
-                ],
+          backgroundColor: const Color(0xffececec),
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(4),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
+          title: GestureDetector(
+            key: const Key('newVaultDialogDragHandle'),
+            behavior: HitTestBehavior.opaque,
+            onPanStart: (_) {
+              unawaited(startLoginWindowDrag());
+            },
+            child: const SizedBox(
+              height: 38,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Создание новой базы'),
               ),
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed:
-                  isCreating ? null : () => Navigator.of(dialogContext).pop(),
-              child: const Text('Отмена'),
+          content: Theme(
+            data: Theme.of(context).copyWith(
+              inputDecorationTheme: const InputDecorationTheme(
+                filled: true,
+                fillColor: Colors.white,
+              ),
             ),
-            FilledButton(
-              key: const Key('confirmCreateVault'),
-              onPressed: isCreating
-                  ? null
-                  : () async {
+            child: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      key: const Key('newVaultPath'),
+                      controller: pathController,
+                      readOnly: true,
+                      autofocus: true,
+                      onTap: () => pickNewVaultDirectory(setDialogState),
+                      decoration: InputDecoration(
+                        labelText: 'Назначить путь',
+                        hintText: 'Выберите папку для новой базы',
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          key: const Key('browseNewVaultPath'),
+                          tooltip: 'Выбрать папку в проводнике',
+                          icon: const Icon(Icons.folder_open_outlined),
+                          onPressed: () =>
+                              pickNewVaultDirectory(setDialogState),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      key: const Key('newVaultName'),
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Название базы',
+                        suffixText: '.swl',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    PasswordField(
+                      key: const Key('newVaultPassword'),
+                      controller: newPasswordController,
+                      label: 'Новый пароль',
+                      visible: showNewPassword,
+                      onToggle: () => setDialogState(
+                        () => showNewPassword = !showNewPassword,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    PasswordField(
+                      key: const Key('newVaultPasswordRepeat'),
+                      controller: repeatPasswordController,
+                      label: 'Повторите новый пароль',
+                      visible: showRepeatedPassword,
+                      onToggle: () => setDialogState(
+                        () => showRepeatedPassword = !showRepeatedPassword,
+                      ),
+                    ),
+                    if (dialogError != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        dialogError!,
+                        key: const Key('newVaultError'),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+          actions: [
+            SizedBox(
+              width: 110,
+              child: IgnorePointer(
+                ignoring: isCreating,
+                child: Opacity(
+                  opacity: isCreating ? 0.6 : 1,
+                  child: passwordKey(
+                    key: const Key('confirmCreateVault'),
+                    label: 'OK',
+                    height: 40,
+                    fontSize: 18,
+                    onPressed: () async {
+                      final selectedDirectory = pathController.text.trim();
                       final name = nameController.text.trim().replaceAll(
                           RegExp(r'\.swl$', caseSensitive: false), '');
                       final newPassword = newPasswordController.text;
+                      if (selectedDirectory.isEmpty) {
+                        setDialogState(
+                          () => dialogError =
+                              'Назначьте путь для файла новой базы.',
+                        );
+                        return;
+                      }
                       if (name.isEmpty) {
                         setDialogState(
                             () => dialogError = 'Введите название базы.');
@@ -1935,7 +2016,15 @@ class _VaultShellState extends State<VaultShell> {
                       });
                       vaultNameController.text = name;
                       try {
-                        await createSwlVault(newPassword);
+                        final targetFile = File(
+                          '${Directory(selectedDirectory).path}'
+                          '${Platform.pathSeparator}'
+                          '$normalizedVaultBaseName.swl',
+                        );
+                        await createSwlVault(
+                          newPassword,
+                          targetFile: targetFile,
+                        );
                         entryMode = EntryMode.openSwl;
                         if (dialogContext.mounted) {
                           Navigator.of(dialogContext).pop();
@@ -1951,19 +2040,35 @@ class _VaultShellState extends State<VaultShell> {
                         }
                       }
                     },
-              child: isCreating
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Создать'),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 124,
+              child: IgnorePointer(
+                ignoring: isCreating,
+                child: Opacity(
+                  opacity: isCreating ? 0.6 : 1,
+                  child: passwordKey(
+                    key: const Key('cancelCreateVault'),
+                    label: 'Отмена',
+                    height: 40,
+                    fontSize: 17,
+                    top: const Color(0xffd32b31),
+                    bottom: const Color(0xff7f0609),
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                  ),
+                ),
+              ),
             ),
           ],
         ),
       ),
     );
 
+    pathController.dispose();
     nameController.dispose();
     newPasswordController.dispose();
     repeatPasswordController.dispose();
@@ -3255,15 +3360,24 @@ class _VaultShellState extends State<VaultShell> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Container(
-                            height: 44,
-                            color: const Color(0xff777777),
-                            alignment: Alignment.centerLeft,
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            child: const Text(
-                              'Пароль',
-                              style:
-                                  TextStyle(color: Colors.white, fontSize: 18),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onPanStart: (_) {
+                              unawaited(startLoginWindowDrag());
+                            },
+                            child: Container(
+                              height: 44,
+                              color: const Color(0xff777777),
+                              alignment: Alignment.centerLeft,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              child: const Text(
+                                'Пароль',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                ),
+                              ),
                             ),
                           ),
                           Padding(
@@ -3400,7 +3514,7 @@ class _VaultShellState extends State<VaultShell> {
                                         key: const Key('createVault'),
                                         label: '+',
                                         height: 40,
-                                        fontSize: 20,
+                                        fontSize: 24,
                                         fontWeight: FontWeight.bold,
                                         onPressed: createNewVaultFromLogin,
                                       ),

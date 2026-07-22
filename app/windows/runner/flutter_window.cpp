@@ -36,7 +36,14 @@ bool FlutterWindow::OnCreate() {
       [this](const flutter::MethodCall<flutter::EncodableValue>& call,
              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
                  result) {
-        if (call.method_name() == "showLogin") {
+        if (call.method_name() == "startDrag") {
+          HWND hwnd = GetHandle();
+          if (hwnd != nullptr) {
+            ReleaseCapture();
+            SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+          }
+          result->Success();
+        } else if (call.method_name() == "showLogin") {
           SetLoginWindowMode();
           result->Success();
         } else if (call.method_name() == "showLoginExpanded") {
@@ -86,6 +93,10 @@ void FlutterWindow::SetWindowMode(bool login, bool expanded) {
     return;
   }
 
+  RECT current_bounds{};
+  GetWindowRect(hwnd, &current_bounds);
+  const bool preserve_login_position = login && login_mode_;
+
   SetWindowLongPtr(hwnd, GWL_STYLE,
                    login ? WS_POPUP : WS_OVERLAPPEDWINDOW);
   // Use Unicode escapes so the taskbar title does not depend on the compiler's
@@ -108,11 +119,20 @@ void FlutterWindow::SetWindowMode(bool login, bool expanded) {
   const int work_height = work.bottom - work.top;
   width = std::min(width, work_width);
   height = std::min(height, work_height);
-  const int x = work.left + (work_width - width) / 2;
-  const int y = work.top + (work_height - height) / 2;
+  const int centered_x = work.left + (work_width - width) / 2;
+  const int centered_y = work.top + (work_height - height) / 2;
+  const int x = preserve_login_position
+                    ? std::clamp(current_bounds.left, work.left,
+                                 work.right - width)
+                    : centered_x;
+  const int y = preserve_login_position
+                    ? std::clamp(current_bounds.top, work.top,
+                                 work.bottom - height)
+                    : centered_y;
 
   SetWindowPos(hwnd, HWND_TOP, x, y, width, height,
                SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+  login_mode_ = login;
 }
 
 LRESULT
