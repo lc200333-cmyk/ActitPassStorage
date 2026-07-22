@@ -1,7 +1,7 @@
 name: actit_pass_storage
 description: "ActitPassStorage: локальный менеджер паролей, заметок и карточек."
 publish_to: "none"
-version: 0.1.11+12
+version: 0.1.12+13
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
