@@ -23,3 +23,15 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # Original SPB Wallet libraries. Keep every source filename unchanged:
+    # legacy databases refer to stable template/icon identities.
+    - assets/spb_wallet_libraries/templates/
+    - assets/spb_wallet_libraries/icons/
+    - assets/spb_wallet_libraries/icons/card_images_bmp/
+    - assets/spb_wallet_libraries/icons/card_images_png/
+    - assets/spb_wallet_libraries/icons/apk_icons/res/drawable-hdpi/
+    - assets/spb_wallet_libraries/icons/apk_icons/res/drawable-large-hdpi/
+    - assets/spb_wallet_libraries/icons/apk_icons/res/drawable-large-mdpi/
+    - assets/spb_wallet_libraries/icons/apk_icons/res/drawable-ldpi/
+    - assets/spb_wallet_libraries/icons/apk_icons/res/drawable-mdpi/

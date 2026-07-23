@@ -1087,6 +1087,24 @@ IconData templateIconGlyph(String id) =>
     templateIconGlyphs[id] ?? Icons.vpn_key_outlined;
 
 Widget templateIconWidget(String id, {double size = 20, Color? color}) {
+  final originalAsset = spbOriginalIconAsset(id);
+  if (originalAsset != null) {
+    // Original SPB Wallet icons are 64x64. Do not scale them down to the
+    // Material icon size requested by compact callers.
+    return SizedBox(
+      width: 64,
+      height: 64,
+      child: Image.asset(
+        originalAsset,
+        width: 64,
+        height: 64,
+        fit: BoxFit.none,
+        filterQuality: FilterQuality.none,
+        errorBuilder: (_, __, ___) =>
+            Icon(Icons.vpn_key_outlined, size: size, color: color),
+      ),
+    );
+  }
   return Icon(templateIconGlyph(id), size: size, color: color);
 }
 
@@ -1174,6 +1192,11 @@ String itemIconId(SecretItem item, CardTemplate template) {
 }
 
 String syntheticSpbIconIdForUi(String uiIconId) {
+  // A legacy icon selected from an existing .swl must retain its real ID.
+  // Hashing it would make the old database point at a different icon.
+  if (RegExp(r'^[0-9A-Fa-f]{16}$').hasMatch(uiIconId)) {
+    return uiIconId.toUpperCase();
+  }
   var first = 2166136261;
   var second = 2166136261 ^ 0x9e3779b9;
   for (final codeUnit in 'actitpass-icon:$uiIconId'.codeUnits) {
@@ -1192,6 +1215,84 @@ String? uiIconIdFromSyntheticSpbIcon(String spbIconId) {
     if (syntheticSpbIconIdForUi(icon.id) == normalized) return icon.id;
   }
   return null;
+}
+
+// IDs are in the original resource order from SpbWallet_RU_templates.swl.
+// The corresponding files remain named icons_001.png ... icons_065.png.
+const spbOriginalIconIds = [
+  'A74FE6691728757D',
+  'E4186A7B247E2B1D',
+  '4428DBE8E0FDBEF5',
+  'BD097D2EE2FA614A',
+  '6FCAF114B73422CF',
+  '490FA51A66910C69',
+  '556D5E8F02589023',
+  '7291F51A432B6530',
+  '40F61F0CE55A0757',
+  'D3AB05E94F9E4C18',
+  '52AB4DC040DF39EA',
+  'AD817751F169F5F9',
+  '289B3CF7980A951E',
+  '20678C366BED420F',
+  'E8950204C5B13337',
+  '9DEB9BC675EC569A',
+  'AC2FDDB9D988A96E',
+  'F7F133A9EDA8AD3E',
+  '364C9DE41B5927E4',
+  'C0F3D5137928104F',
+  'D8466DC42C598628',
+  'F1DF61C4072919F4',
+  '55B25AA977BBABA0',
+  '5DB82F9F9859FF2C',
+  '7650B2DDF2971084',
+  'D0A03FA49259E894',
+  '6ACC0F32AAB28ED8',
+  'CAACFBE92AAC7C7D',
+  'AB540457E8E62887',
+  'E610927897C0F039',
+  'EDE2A1A2E3B172D5',
+  '38A06822A088D80F',
+  'BC8395AF3885E099',
+  '28A67DABE33DA42B',
+  '14BD44DE9F2F4F99',
+  'B8058FF4BA946340',
+  'E5442EED85AD0572',
+  '62767D3E1BC8E2C8',
+  '867CA874B9508C95',
+  'A6E0F0CFDFAF6928',
+  '087CF65FC366A122',
+  'B7D8EDDF4E4F493E',
+  '27445EACFC5DD8D9',
+  '31785C316B046C3F',
+  '24760DEDF9C71546',
+  '508A24D5C6B90C54',
+  'BC51FC021F344286',
+  '243B78A1D8C7E32C',
+  '97973FA7389FFE1C',
+  '68E51FEE9B8D4E7C',
+  '06D4F7F69F1E42E5',
+  'DAECE1D88696E125',
+  '5DEF85654F9DC2CD',
+  'A06AD15403B46BAB',
+  '30E614ECB34BA668',
+  'CEBAB052995FF2BA',
+  '71076D75AD9AD080',
+  '26DAEC5D7E4E6715',
+  '54320B4412A08007',
+  'E864A803F91DA5C4',
+  '4863F2D4E9D399F6',
+  '96DAFC9A4C1F55F6',
+  '5D595FE47887E6C9',
+  '6E4AAD6B4F39E378',
+  '0C1E037B56E9E59B',
+];
+
+String? spbOriginalIconAsset(String iconId) {
+  final index = spbOriginalIconIds.indexOf(iconId.toUpperCase());
+  if (index < 0) return null;
+  final fileNumber = (index + 1).toString().padLeft(3, '0');
+  return 'assets/spb_wallet_libraries/icons/apk_icons/res/'
+      'drawable-hdpi/icons_$fileNumber.png';
 }
 
 String makeId(String prefix) {
@@ -2535,10 +2636,12 @@ class _VaultShellState extends State<VaultShell> {
             label: 'Заметки',
             type: 'multiline_note'));
       }
-      final iconId = defaultIconForTemplateName(
-        template.name,
-        template.fields.map((field) => field.name),
-      );
+      final iconId = spbOriginalIconAsset(template.iconId) == null
+          ? defaultIconForTemplateName(
+              template.name,
+              template.fields.map((field) => field.name),
+            )
+          : template.iconId.toUpperCase();
       rememberSpbIcon(iconId, template.iconId);
       return CardTemplate(
         id: template.id,
@@ -2635,6 +2738,9 @@ class _VaultShellState extends State<VaultShell> {
 
   String? uiIconForSpbIcon(String spbIconId) {
     if (spbIconId.isEmpty) return null;
+    if (spbOriginalIconAsset(spbIconId) != null) {
+      return spbIconId.toUpperCase();
+    }
     final synthetic = uiIconIdFromSyntheticSpbIcon(spbIconId);
     if (synthetic != null) return synthetic;
     for (final entry in spbIconIdByUiIcon.entries) {
@@ -2644,6 +2750,7 @@ class _VaultShellState extends State<VaultShell> {
   }
 
   String? spbIconIdForUi(String uiIconId, String fallbackUiIconId) {
+    if (isSpbHexId(uiIconId)) return uiIconId.toUpperCase();
     final direct = spbIconIdByUiIcon[uiIconId];
     if (direct != null && isSpbHexId(direct)) return direct;
     if (uiIconId == fallbackUiIconId) {
