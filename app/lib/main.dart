@@ -17,6 +17,22 @@ void main() {
 }
 
 final rootScaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+List<String> spb64PngIconAssets = [];
+Future<List<String>>? spb64PngIconAssetsFuture;
+
+Future<List<String>> loadSpb64PngIconAssets() {
+  return spb64PngIconAssetsFuture ??= () async {
+    final manifest = await rootBundle.loadString(
+      'assets/spb_icons_package/icons_64x64.txt',
+    );
+    spb64PngIconAssets = manifest
+        .split(RegExp(r'\r?\n'))
+        .map((path) => path.trim())
+        .where((path) => path.toLowerCase().endsWith('.png'))
+        .toList(growable: false);
+    return spb64PngIconAssets;
+  }();
+}
 
 Future<void> copyCardFieldValue(String value) async {
   await Clipboard.setData(ClipboardData(text: value));
@@ -36,18 +52,44 @@ class ActitPassApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final baseTheme = ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xff2d6f73),
+        brightness: Brightness.light,
+      ),
+      scaffoldBackgroundColor: const Color(0xfff5f7f8),
+      visualDensity: VisualDensity.standard,
+    );
+    TextStyle enlarged(TextStyle? style, double defaultSize) =>
+        (style ?? const TextStyle()).copyWith(
+          fontSize: (style?.fontSize ?? defaultSize) + 2,
+          fontWeight: FontWeight.normal,
+        );
+    final baseText = baseTheme.textTheme;
+    final enlargedText = TextTheme(
+      displayLarge: enlarged(baseText.displayLarge, 57),
+      displayMedium: enlarged(baseText.displayMedium, 45),
+      displaySmall: enlarged(baseText.displaySmall, 36),
+      headlineLarge: enlarged(baseText.headlineLarge, 32),
+      headlineMedium: enlarged(baseText.headlineMedium, 28),
+      headlineSmall: enlarged(baseText.headlineSmall, 24),
+      titleLarge: enlarged(baseText.titleLarge, 22),
+      titleMedium: enlarged(baseText.titleMedium, 16),
+      titleSmall: enlarged(baseText.titleSmall, 14),
+      bodyLarge: enlarged(baseText.bodyLarge, 16),
+      bodyMedium: enlarged(baseText.bodyMedium, 14),
+      bodySmall: enlarged(baseText.bodySmall, 12),
+      labelLarge: enlarged(baseText.labelLarge, 14),
+      labelMedium: enlarged(baseText.labelMedium, 12),
+      labelSmall: enlarged(baseText.labelSmall, 11),
+    );
     return MaterialApp(
       scaffoldMessengerKey: rootScaffoldMessengerKey,
       title: 'ActitPassStorage',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xff2d6f73),
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor: const Color(0xfff5f7f8),
-        visualDensity: VisualDensity.standard,
+      theme: baseTheme.copyWith(
+        textTheme: enlargedText,
       ),
       home: const VaultShell(),
     );
@@ -1087,7 +1129,7 @@ IconData templateIconGlyph(String id) =>
     templateIconGlyphs[id] ?? Icons.vpn_key_outlined;
 
 Widget templateIconWidget(String id, {double size = 20, Color? color}) {
-  final originalAsset = spbOriginalIconAsset(id);
+  final originalAsset = spbPngIconAsset(id);
   if (originalAsset != null) {
     // Original SPB Wallet icons are 64x64. Do not scale them down to the
     // Material icon size requested by compact callers.
@@ -1214,6 +1256,9 @@ String? uiIconIdFromSyntheticSpbIcon(String spbIconId) {
   for (final icon in templateIcons) {
     if (syntheticSpbIconIdForUi(icon.id) == normalized) return icon.id;
   }
+  for (final asset in spb64PngIconAssets) {
+    if (syntheticSpbIconIdForUi(asset) == normalized) return asset;
+  }
   return null;
 }
 
@@ -1293,6 +1338,14 @@ String? spbOriginalIconAsset(String iconId) {
   final fileNumber = (index + 1).toString().padLeft(3, '0');
   return 'assets/spb_wallet_libraries/icons/apk_icons/res/'
       'drawable-hdpi/icons_$fileNumber.png';
+}
+
+String? spbPngIconAsset(String iconId) {
+  if (iconId.startsWith('assets/spb_icons_package/') &&
+      iconId.toLowerCase().endsWith('.png')) {
+    return iconId;
+  }
+  return spbOriginalIconAsset(iconId);
 }
 
 String makeId(String prefix) {
@@ -1508,7 +1561,9 @@ class DateTextInputFormatter extends TextInputFormatter {
 }
 
 class VaultShell extends StatefulWidget {
-  const VaultShell({super.key});
+  const VaultShell({this.initiallyUnlocked = false, super.key});
+
+  final bool initiallyUnlocked;
 
   @override
   State<VaultShell> createState() => _VaultShellState();
@@ -1528,6 +1583,7 @@ class _VaultShellState extends State<VaultShell> {
   bool? menuOpenOverride;
   bool creatingVault = false;
   String? configuredWindowMode;
+  String? configuredMainWindowTitle;
   VirtualKeyboardMode virtualKeyboardMode = VirtualKeyboardMode.numeric;
   String activeView = 'cards';
   String? message;
@@ -1543,6 +1599,16 @@ class _VaultShellState extends State<VaultShell> {
   String templateSearchQuery = '';
   String sortMode = 'modified_desc';
   String? selectedItemId;
+  final List<String> recentlyOpenedItemIds = [];
+  String selectedCategoryPath = '';
+  bool mobileTemplatesOpen = false;
+  int mobilePane = 0;
+  bool rootTreeExpanded = true;
+  final Set<String> expandedCategoryPaths = {};
+  Timer? inactivityTimer;
+  Timer? passwordUnlockDebounce;
+  bool automaticUnlockInProgress = false;
+  bool closingForInactivity = false;
   DateTime? lastSyncAt;
 
   List<CardTemplate> templates = builtInTemplates();
@@ -1605,7 +1671,9 @@ class _VaultShellState extends State<VaultShell> {
   @override
   void initState() {
     super.initState();
+    unlocked = widget.initiallyUnlocked;
     searchController.addListener(() => setState(() {}));
+    passwordController.addListener(scheduleAutomaticUnlock);
     loadRecentVaults();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -1621,8 +1689,13 @@ class _VaultShellState extends State<VaultShell> {
         : message == null
             ? 'login'
             : 'loginExpanded';
-    if (configuredWindowMode == desiredMode) return;
+    final mainTitle = unlocked ? selectedVaultTitle : null;
+    if (configuredWindowMode == desiredMode &&
+        (!unlocked || configuredMainWindowTitle == mainTitle)) {
+      return;
+    }
     configuredWindowMode = desiredMode;
+    configuredMainWindowTitle = mainTitle;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (unlocked) {
@@ -1647,7 +1720,7 @@ class _VaultShellState extends State<VaultShell> {
   Future<void> configureMainWindow() async {
     if (!Platform.isWindows) return;
     try {
-      await windowChannel.invokeMethod<void>('showMain');
+      await windowChannel.invokeMethod<void>('showMain', selectedVaultTitle);
     } on MissingPluginException {
       // Other Flutter targets do not provide the Win32 window channel.
     }
@@ -1664,7 +1737,9 @@ class _VaultShellState extends State<VaultShell> {
 
   @override
   void dispose() {
+    inactivityTimer?.cancel();
     spbWallet?.close();
+    passwordUnlockDebounce?.cancel();
     vaultNameController.dispose();
     passwordController.dispose();
     confirmController.dispose();
@@ -1673,7 +1748,23 @@ class _VaultShellState extends State<VaultShell> {
     super.dispose();
   }
 
-  Future<void> unlock() async {
+  void scheduleAutomaticUnlock() {
+    passwordUnlockDebounce?.cancel();
+    if (unlocked ||
+        entryMode != EntryMode.openSwl ||
+        spbWalletPath == null ||
+        spbWalletPath!.isEmpty ||
+        passwordController.text.isEmpty) {
+      return;
+    }
+    passwordUnlockDebounce = Timer(
+      const Duration(milliseconds: 180),
+      () => unlock(automatic: true),
+    );
+  }
+
+  Future<void> unlock({bool automatic = false}) async {
+    if (automatic && automaticUnlockInProgress) return;
     final password = passwordController.text;
     if (entryMode == EntryMode.openSwl) {
       if (spbWalletPath == null || spbWalletPath!.isEmpty) {
@@ -1681,6 +1772,8 @@ class _VaultShellState extends State<VaultShell> {
         return;
       }
       try {
+        if (automatic) automaticUnlockInProgress = true;
+        await loadSpb64PngIconAssets();
         spbWallet?.close();
         final wallet = SpbWalletDatabase.open(spbWalletPath!, password);
         final snapshot = wallet.loadSnapshot();
@@ -1695,12 +1788,19 @@ class _VaultShellState extends State<VaultShell> {
           activeView = 'cards';
           message = null;
         });
+        passwordUnlockDebounce?.cancel();
         if (!Platform.isAndroid || spbWalletUri == null) {
           await rememberRecentVault(spbWalletPath!);
         }
       } catch (error) {
-        setState(() => message =
-            'Не удалось открыть базу. Проверьте правильность пароля.');
+        if (!automatic) {
+          passwordController.clear();
+          setState(() => message =
+              'Не удалось открыть базу. Проверьте правильность пароля.');
+          passwordFocusNode.requestFocus();
+        }
+      } finally {
+        if (automatic) automaticUnlockInProgress = false;
       }
       return;
     }
@@ -1921,6 +2021,7 @@ class _VaultShellState extends State<VaultShell> {
     );
 
     spbIconIdByUiIcon.clear();
+    await loadSpb64PngIconAssets();
     final wallet = SpbWalletDatabase.open(file.path, password);
     final snapshot = wallet.loadSnapshot();
     spbWallet?.close();
@@ -2233,6 +2334,7 @@ class _VaultShellState extends State<VaultShell> {
     required String? sourceUrl,
   }) async {
     spbWallet?.close();
+    await loadSpb64PngIconAssets();
     final wallet = SpbWalletDatabase.open(localPath, password);
     final snapshot = wallet.loadSnapshot();
     spbWallet = wallet;
@@ -2429,6 +2531,48 @@ class _VaultShellState extends State<VaultShell> {
           'Изменения сохранены во временный файл, но не записаны обратно в исходную .swl базу: $error');
     }
     return ok;
+  }
+
+  Future<void> createDatedArchiveCopy() async {
+    if (spbWallet == null || spbWalletPath == null) {
+      setState(() => message = 'Сначала откройте .swl базу.');
+      return;
+    }
+    if (Platform.isAndroid && spbWalletUri != null) {
+      setState(() => message =
+          'Для базы из Android-хранилища выберите локальную папку экспорта.');
+      return;
+    }
+    final saved = await writeBackSpbWallet();
+    if (!saved || !mounted) return;
+    final sourcePath = syncSourcePath ?? spbWalletPath!;
+    final source = File(sourcePath);
+    if (!source.existsSync()) {
+      setState(() => message = 'Исходный файл базы не найден: $sourcePath');
+      return;
+    }
+    final now = DateTime.now();
+    String two(int value) => value.toString().padLeft(2, '0');
+    final suffix = '${now.year}${two(now.month)}${two(now.day)}';
+    final sourceName = source.uri.pathSegments.last;
+    final baseName =
+        sourceName.replaceFirst(RegExp(r'\.swl$', caseSensitive: false), '');
+    final archiveName = '${suffix}_arc_$baseName.swl';
+    final archivePath =
+        '${source.parent.path}${Platform.pathSeparator}$archiveName';
+    try {
+      await source.copy(archivePath);
+      if (!mounted) return;
+      setState(() => message = 'Архивная копия создана: $archivePath');
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text('Архивная копия создана: $archiveName')),
+        );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => message = 'Не удалось создать архивную копию: $error');
+    }
   }
 
   List<SecretItem> demoItems() {
@@ -2904,34 +3048,895 @@ class _VaultShellState extends State<VaultShell> {
   @override
   Widget build(BuildContext context) {
     synchronizeWindowMode();
-    if (!unlocked) return buildLocked();
-    return LayoutBuilder(
+    if (!unlocked) {
+      inactivityTimer?.cancel();
+      inactivityTimer = null;
+      return buildLocked();
+    }
+    ensureInactivityTimer();
+    final shell = LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxWidth < 820;
-        final menuOpen = isMenuOpen(compact);
-        return Scaffold(
-          body: SafeArea(
-            child: compact
-                ? Column(
-                    children: [
-                      buildMenuHeader(compact: true),
-                      if (menuOpen) buildTopRail(compact: true),
-                      Expanded(child: buildContent()),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      SizedBox(width: 56, child: buildCollapsedRail()),
-                      if (menuOpen)
-                        SizedBox(width: 260, child: buildSideRail()),
-                      Expanded(child: buildContent()),
-                    ],
-                  ),
+        final mobile = defaultTargetPlatform == TargetPlatform.android ||
+            constraints.maxWidth < 700;
+        return mobile ? buildSpbMobileShell() : buildSpbDesktopShell();
+      },
+    );
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => recordUserActivity(),
+      onPointerMove: (_) => recordUserActivity(),
+      onPointerHover: (_) => recordUserActivity(),
+      onPointerSignal: (_) => recordUserActivity(),
+      child: Focus(
+        canRequestFocus: false,
+        onKeyEvent: (_, __) {
+          recordUserActivity();
+          return KeyEventResult.ignored;
+        },
+        child: shell,
+      ),
+    );
+  }
+
+  static const _spbHeader = Color(0xff9b9b9b);
+  static const _spbRightPanel = Color(0xffc7d9ea);
+  static const _spbBorder = Color(0xffb7b7b7);
+
+  Widget spbResourceIcon(String fileName, double size) => Image.asset(
+        'assets/spb_wallet_libraries/icons/apk_icons/res/'
+        'drawable-hdpi/$fileName',
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.medium,
+      );
+
+  Widget spbSizedDataIcon(String iconId, double size, {Color? fallbackColor}) {
+    final asset = spbPngIconAsset(iconId);
+    if (asset != null) {
+      return Image.asset(
+        asset,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.medium,
+      );
+    }
+    return Icon(templateIconGlyph(iconId),
+        size: size, color: fallbackColor ?? const Color(0xffd79a00));
+  }
+
+  Widget spbSectionHeader(String title,
+      {Widget? trailing, double height = 32}) {
+    return Container(
+      height: height,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: const BoxDecoration(
+        color: _spbHeader,
+        border: Border(bottom: BorderSide(color: _spbBorder)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 19,
+              ),
+            ),
           ),
-          bottomNavigationBar: databaseStatusBar(),
+          if (trailing != null) trailing,
+        ],
+      ),
+    );
+  }
+
+  Widget buildSpbSearchBar({bool mobile = false}) {
+    return Container(
+      height: mobile ? 48 : 42,
+      color: const Color(0xfff4f4f4),
+      padding: EdgeInsets.fromLTRB(mobile ? 112 : 24, 6, 8, 6),
+      child: TextField(
+        controller: searchController,
+        onChanged: (_) => setState(() {}),
+        style: const TextStyle(fontSize: 17),
+        decoration: InputDecoration(
+          isDense: true,
+          filled: true,
+          fillColor: Colors.white,
+          border: const OutlineInputBorder(
+            borderRadius: BorderRadius.zero,
+            borderSide: BorderSide(color: Colors.black87),
+          ),
+          enabledBorder: const OutlineInputBorder(
+            borderRadius: BorderRadius.zero,
+            borderSide: BorderSide(color: Colors.black87),
+          ),
+          prefixIcon: mobile ? null : const Icon(Icons.search, size: 18),
+          labelText: mobile ? null : 'Поиск',
+          floatingLabelBehavior: FloatingLabelBehavior.never,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
+        ),
+      ),
+    );
+  }
+
+  Widget buildSpbDesktopShell() {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            buildSpbSearchBar(),
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(width: 300, child: buildSpbNavigator()),
+                  const VerticalDivider(width: 1, thickness: 1),
+                  Expanded(child: buildSpbFolderGrid()),
+                  const VerticalDivider(width: 1, thickness: 1),
+                  SizedBox(width: 220, child: buildSpbActionsPanel()),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildSpbMobileShell() {
+    final paneTitle = switch (mobilePane) {
+      1 => selectedCategoryPath.isEmpty
+          ? selectedVaultTitle
+          : categoryParts(selectedCategoryPath).last,
+      2 => 'Задачи',
+      _ => mobileTemplatesOpen ? 'Шаблоны' : 'Мои карточки',
+    };
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Container(
+              height: 54,
+              color: const Color(0xff7d7d7d),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Row(
+                children: [
+                  spbResourceIcon('icon_wallets_small.png', 40),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      selectedVaultTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 22),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            buildSpbSearchBar(mobile: true),
+            if (mobilePane == 0) spbSectionHeader(paneTitle, height: 42),
+            Expanded(
+              child: switch (mobilePane) {
+                1 => buildSpbFolderGrid(),
+                2 => buildSpbActionsPanel(),
+                _ => mobileTemplatesOpen
+                    ? buildSpbTemplateTree()
+                    : buildSpbTreeBody(),
+              },
+            ),
+            if (mobilePane == 0) ...[
+              buildSpbModeButton(
+                label: 'Мои карточки',
+                iconFile: 'icon_wallets.png',
+                selected: !mobileTemplatesOpen,
+                onTap: () => setState(() => mobileTemplatesOpen = false),
+              ),
+              buildSpbModeButton(
+                label: 'Шаблоны',
+                iconFile: 'icon_templates.png',
+                selected: mobileTemplatesOpen,
+                onTap: () => setState(() => mobileTemplatesOpen = true),
+              ),
+            ] else
+              buildSpbMobileArrows(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildSpbMobileArrows() {
+    return Container(
+      height: 52,
+      decoration: const BoxDecoration(
+        color: Color(0xffe8f1f8),
+        border: Border(top: BorderSide(color: _spbBorder)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: IconButton(
+              key: const Key('mobilePaneBack'),
+              tooltip: mobilePane == 1 ? 'К папкам' : 'К карточкам',
+              icon: const Icon(Icons.arrow_back, size: 32),
+              onPressed: () => setState(() => mobilePane--),
+            ),
+          ),
+          if (mobilePane == 1) ...[
+            const VerticalDivider(width: 1),
+            Expanded(
+              child: IconButton(
+                key: const Key('mobilePaneForward'),
+                tooltip: 'К задачам',
+                icon: const Icon(Icons.arrow_forward, size: 32),
+                onPressed: () => setState(() => mobilePane = 2),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void openSpbFolder(String path) {
+    final mobile = defaultTargetPlatform == TargetPlatform.android ||
+        MediaQuery.sizeOf(context).width < 700;
+    setState(() {
+      selectedCategoryPath = path;
+      if (mobile) mobilePane = 1;
+    });
+  }
+
+  Widget buildSpbNavigator() {
+    return Material(
+      color: Colors.white,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          spbSectionHeader(mobileTemplatesOpen ? 'Шаблоны' : 'Мои карточки'),
+          Expanded(
+            child: mobileTemplatesOpen
+                ? buildSpbTemplateTree()
+                : buildSpbTreeBody(),
+          ),
+          buildSpbModeButton(
+            label: 'Мои карточки',
+            iconFile: 'icon_wallets.png',
+            selected: !mobileTemplatesOpen,
+            onTap: () => setState(() => mobileTemplatesOpen = false),
+          ),
+          buildSpbModeButton(
+            label: 'Шаблоны',
+            iconFile: 'icon_templates.png',
+            selected: mobileTemplatesOpen,
+            onTap: () => setState(() => mobileTemplatesOpen = true),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget buildSpbModeButton({
+    required String label,
+    required String iconFile,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: selected ? const Color(0xffdbeaf5) : const Color(0xfff5f5f5),
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 9),
+          decoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: _spbBorder)),
+          ),
+          child: Row(
+            children: [
+              spbResourceIcon(iconFile, 40),
+              const SizedBox(width: 8),
+              Text(label, style: const TextStyle(fontSize: 18)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget spbExpansionMark(bool expanded) {
+    return Container(
+      width: 15,
+      height: 15,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xfff5f5f5),
+        border: Border.all(color: const Color(0xff8d9aa3)),
+      ),
+      child: Text(
+        expanded ? '−' : '+',
+        style: const TextStyle(
+          color: Color(0xff526b7d),
+          fontSize: 15,
+          height: 0.9,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget buildSpbTreeBody() {
+    final root = buildCategoryTree(filteredItems());
+    return Scrollbar(
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(5, 10, 5, 12),
+        children: [
+          Theme(
+            data: Theme.of(context).copyWith(
+                dividerColor: Colors.transparent,
+                splashColor: Colors.transparent),
+            child: ExpansionTile(
+              initiallyExpanded: true,
+              onExpansionChanged: (expanded) => setState(() {
+                rootTreeExpanded = expanded;
+                if (expanded) selectedCategoryPath = '';
+              }),
+              tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+              childrenPadding: EdgeInsets.zero,
+              trailing: const SizedBox.shrink(),
+              leading: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  spbResourceIcon('icon_wallets_small.png', 40),
+                ],
+              ),
+              title: GestureDetector(
+                key: const Key('spbWalletRoot'),
+                onTap: () => openSpbFolder(''),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+                  decoration: selectedCategoryPath.isEmpty
+                      ? const BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Color(0xffc9e5f8), Color(0xffeef8ff)],
+                          ),
+                        )
+                      : null,
+                  child: Text(
+                    selectedVaultTitle,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                      fontStyle: FontStyle.italic,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ),
+              children: buildSpbTreeChildren(root, 0),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> buildSpbTreeChildren(CategoryTreeNode node, int depth) {
+    final result = <Widget>[];
+    final folders = node.children.values.toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    for (final folder in folders) {
+      result.add(
+        Padding(
+          padding: EdgeInsets.only(left: depth * 20.0),
+          child: GestureDetector(
+            onSecondaryTapDown: (details) =>
+                showSpbFolderMenu(folder, details.globalPosition),
+            onLongPressStart: (details) =>
+                showSpbFolderMenu(folder, details.globalPosition),
+            child: Theme(
+              data:
+                  Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                dense: true,
+                initiallyExpanded: expandedCategoryPaths.contains(folder.path),
+                onExpansionChanged: (expanded) {
+                  setState(() {
+                    if (expanded) {
+                      expandedCategoryPaths.add(folder.path);
+                      selectedCategoryPath = folder.path;
+                    } else {
+                      expandedCategoryPaths.remove(folder.path);
+                    }
+                  });
+                },
+                visualDensity: const VisualDensity(vertical: -3),
+                tilePadding: const EdgeInsets.only(left: 6, right: 2),
+                childrenPadding: EdgeInsets.zero,
+                trailing: const SizedBox.shrink(),
+                leading: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    spbExpansionMark(
+                        expandedCategoryPaths.contains(folder.path)),
+                    const SizedBox(width: 5),
+                    spbSizedDataIcon(
+                      folder.iconId ?? defaultIconForCategoryPath(folder.path),
+                      40,
+                    ),
+                  ],
+                ),
+                title: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => openSpbFolder(folder.path),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+                    decoration: selectedCategoryPath == folder.path
+                        ? const BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Color(0xffb9dcf5), Color(0xffedf7fe)],
+                            ),
+                          )
+                        : null,
+                    child: Text(folder.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+                children: buildSpbTreeChildren(folder, depth + 1),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    final cards = [...node.cards]
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    for (final item in cards) {
+      final template = templateFor(item.templateId);
+      result.add(
+        Padding(
+          padding: EdgeInsets.only(left: 34 + depth * 20.0),
+          child: GestureDetector(
+            onSecondaryTapDown: (details) =>
+                showSpbCardMenu(item, details.globalPosition),
+            onLongPressStart: (details) =>
+                showSpbCardMenu(item, details.globalPosition),
+            child: ListTile(
+              dense: true,
+              visualDensity: const VisualDensity(vertical: -3),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 5),
+              leading: spbSizedDataIcon(itemIconId(item, template), 40),
+              title: Text(item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 18)),
+              onTap: () => openCardPreviewDialog(item),
+            ),
+          ),
+        ),
+      );
+    }
+    return result;
+  }
+
+  Widget buildSpbTemplateTree() {
+    final query = searchController.text.trim().toLowerCase();
+    final visible = templates
+        .where((entry) =>
+            query.isEmpty || entry.name.toLowerCase().contains(query))
+        .toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: visible.length,
+      itemBuilder: (context, index) {
+        final template = visible[index];
+        return ListTile(
+          dense: true,
+          leading: spbSizedDataIcon(template.iconId, 40),
+          title: Text(template.name,
+              style: const TextStyle(fontSize: 16),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+          onTap: () => openItemDialog(),
         );
       },
     );
+  }
+
+  CategoryTreeNode categoryNodeAt(CategoryTreeNode root, String path) {
+    var current = root;
+    for (final part in categoryParts(path)) {
+      final next = current.children[part];
+      if (next == null) return root;
+      current = next;
+    }
+    return current;
+  }
+
+  Widget buildSpbFolderGrid() {
+    final root = buildCategoryTree(filteredItems());
+    final node = categoryNodeAt(root, selectedCategoryPath);
+    final folders = node.children.values.toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final cards = [...node.cards]
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        selectedCategoryPath.isEmpty
+            ? spbSectionHeader(
+                selectedVaultTitle,
+                trailing: spbResourceIcon('icon_wallets_small.png', 23),
+              )
+            : Container(
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xffb9dcf5), Color(0xfff2f9fe)],
+                  ),
+                  border: Border(bottom: BorderSide(color: _spbBorder)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        categoryParts(selectedCategoryPath).last,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Color(0xff18364d),
+                            fontSize: 19,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    spbResourceIcon('icon_wallets_small.png', 23),
+                  ],
+                ),
+              ),
+        Expanded(
+          child: GestureDetector(
+            key: const Key('spbCentralWorkspace'),
+            behavior: HitTestBehavior.translucent,
+            onSecondaryTapDown: (details) =>
+                showSpbCreationMenu(details.globalPosition),
+            onLongPressStart: (details) =>
+                showSpbCreationMenu(details.globalPosition),
+            child: GridView.builder(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 112,
+                mainAxisExtent: 105,
+                crossAxisSpacing: 5,
+                mainAxisSpacing: 8,
+              ),
+              itemCount: folders.length + cards.length,
+              itemBuilder: (context, index) {
+                if (index < folders.length) {
+                  final folder = folders[index];
+                  return buildSpbGridEntry(
+                    label: folder.name,
+                    icon: spbSizedDataIcon(
+                      folder.iconId ?? defaultIconForCategoryPath(folder.path),
+                      60,
+                    ),
+                    onTap: () => openSpbFolder(folder.path),
+                    onContextMenu: (position) =>
+                        showSpbFolderMenu(folder, position),
+                  );
+                }
+                final item = cards[index - folders.length];
+                final template = templateFor(item.templateId);
+                return buildSpbGridEntry(
+                  label: item.title,
+                  icon: spbSizedDataIcon(itemIconId(item, template), 60),
+                  onTap: () => openCardPreviewDialog(item),
+                  onContextMenu: (position) => showSpbCardMenu(item, position),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> showSpbCreationMenu(Offset globalPosition) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'card',
+          child: Row(
+            children: [
+              spbResourceIcon('icon_add_card.png', 24),
+              const SizedBox(width: 9),
+              const Flexible(child: Text('Создать карточку')),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'folder',
+          child: Row(
+            children: [
+              spbResourceIcon('icon_add_folder.png', 24),
+              const SizedBox(width: 9),
+              const Flexible(child: Text('Создать папку')),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (!mounted) return;
+    if (selected == 'card') {
+      await openItemDialog(initialCategory: selectedCategoryPath);
+    } else if (selected == 'folder') {
+      await openCategoryEditorDialog(
+        folder: null,
+        parentPath: selectedCategoryPath,
+      );
+    }
+  }
+
+  Future<String?> showSpbObjectMenu(Offset globalPosition) {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    return showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(
+          value: 'open',
+          child: Row(
+            children: [
+              Icon(Icons.open_in_new, size: 22),
+              SizedBox(width: 9),
+              Text('Открыть'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'edit',
+          child: Row(
+            children: [
+              Icon(Icons.edit_outlined, size: 22),
+              SizedBox(width: 9),
+              Text('Редактировать'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 22),
+              SizedBox(width: 9),
+              Text('Удалить'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> showSpbFolderMenu(
+      CategoryTreeNode folder, Offset globalPosition) async {
+    final selected = await showSpbObjectMenu(globalPosition);
+    if (!mounted || selected == null) return;
+    switch (selected) {
+      case 'open':
+        openSpbFolder(folder.path);
+        break;
+      case 'edit':
+        await openCategoryEditorDialog(folder: folder);
+        break;
+      case 'delete':
+        await deleteCategoryWithConfirmation(folder);
+        break;
+    }
+  }
+
+  Future<void> showSpbCardMenu(SecretItem item, Offset globalPosition) async {
+    final selected = await showSpbObjectMenu(globalPosition);
+    if (!mounted || selected == null) return;
+    switch (selected) {
+      case 'open':
+        await openCardPreviewDialog(item);
+        break;
+      case 'edit':
+        await openItemDialog(item: item);
+        break;
+      case 'delete':
+        await deleteItemWithConfirmation(item);
+        break;
+    }
+  }
+
+  Widget buildSpbGridEntry({
+    required String label,
+    required Widget icon,
+    required VoidCallback onTap,
+    required ValueChanged<Offset> onContextMenu,
+  }) {
+    return GestureDetector(
+      onSecondaryTapDown: (details) => onContextMenu(details.globalPosition),
+      onLongPressStart: (details) => onContextMenu(details.globalPosition),
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          children: [
+            SizedBox(width: 68, height: 68, child: Center(child: icon)),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 17,
+                height: 1.05,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<SecretItem> frequentItems() {
+    final byId = {for (final item in items) item.id: item};
+    final result = <SecretItem>[
+      for (final id in recentlyOpenedItemIds)
+        if (byId[id] != null) byId[id]!,
+    ];
+    final recentIds = result.map((item) => item.id).toSet();
+    final previous = items
+        .where((item) => item.hitCount > 0 && !recentIds.contains(item.id))
+        .toList()
+      ..sort((a, b) {
+        final byHits = b.hitCount.compareTo(a.hitCount);
+        return byHits == 0 ? a.title.compareTo(b.title) : byHits;
+      });
+    result.addAll(previous);
+    return result;
+  }
+
+  Widget buildSpbActionsPanel() {
+    final frequent = frequentItems();
+    return Container(
+      color: _spbRightPanel,
+      padding: const EdgeInsets.all(10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          buildSpbActionGroup(
+            'Задачи',
+            [
+              (
+                spbResourceIcon('icon_new_wallet.png', 40),
+                'Создать кошелёк',
+                createNewVaultFromLogin
+              ),
+              (
+                spbResourceIcon('icon_import.png', 40),
+                'Открыть кошелёк',
+                pickSpbWalletFile
+              ),
+              (
+                spbResourceIcon('icon_add_card.png', 40),
+                'Создать новую карточку',
+                () => openItemDialog(initialCategory: selectedCategoryPath)
+              ),
+              (
+                spbResourceIcon('icon_add_folder.png', 40),
+                'Создать новую папку',
+                () => openCategoryEditorDialog(
+                    folder: null, parentPath: selectedCategoryPath)
+              ),
+              (
+                spbResourceIcon('icon_backup.png', 40),
+                'Сделать архивную копию',
+                createDatedArchiveCopy
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: buildSpbActionGroup(
+              'Часто используемые',
+              [
+                for (final item in frequent.take(10))
+                  (
+                    spbSizedDataIcon(
+                      itemIconId(item, templateFor(item.templateId)),
+                      40,
+                    ),
+                    item.title,
+                    () => openCardPreviewDialog(item)
+                  ),
+              ],
+              expand: true,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget buildSpbActionGroup(
+      String title, List<(Widget, String, VoidCallback)> actions,
+      {bool expand = false}) {
+    final content = Container(
+      color: Colors.white,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            height: 34,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            alignment: Alignment.centerLeft,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+              ),
+            ),
+            child: Text(title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 18)),
+          ),
+          for (final action in actions)
+            InkWell(
+              onTap: action.$3,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(10, 7, 6, 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: Center(child: action.$1),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(action.$2,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            height: 1.12,
+                          )),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (expand) const Spacer(),
+        ],
+      ),
+    );
+    return expand ? content : IntrinsicHeight(child: content);
   }
 
   bool isMenuOpen(bool compact) => menuOpenOverride ?? false;
@@ -3154,6 +4159,37 @@ class _VaultShellState extends State<VaultShell> {
     } catch (_) {
       // Exit must still complete if the recent-file state cannot be removed.
     }
+    if (Platform.isAndroid || Platform.isIOS) {
+      await SystemNavigator.pop();
+    } else {
+      exit(0);
+    }
+  }
+
+  void ensureInactivityTimer() {
+    inactivityTimer ??= Timer(
+      const Duration(minutes: 5),
+      closeAfterInactivity,
+    );
+  }
+
+  void recordUserActivity() {
+    if (!unlocked || closingForInactivity) return;
+    inactivityTimer?.cancel();
+    inactivityTimer = Timer(
+      const Duration(minutes: 5),
+      closeAfterInactivity,
+    );
+  }
+
+  Future<void> closeAfterInactivity() async {
+    if (closingForInactivity) return;
+    closingForInactivity = true;
+    inactivityTimer?.cancel();
+    inactivityTimer = null;
+    await writeBackSpbWallet();
+    spbWallet?.close();
+    spbWallet = null;
     if (Platform.isAndroid || Platform.isIOS) {
       await SystemNavigator.pop();
     } else {
@@ -4328,6 +5364,30 @@ class _VaultShellState extends State<VaultShell> {
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
+                    key: const Key('spbFolderIconPicker'),
+                    icon: Image.asset(
+                      spbPngIconAsset(iconId) ??
+                          spbOriginalIconAsset(spbOriginalIconIds.first)!,
+                      width: 30,
+                      height: 30,
+                      fit: BoxFit.contain,
+                    ),
+                    label: const Text('Иконка папки (SPB Wallet)'),
+                    onPressed: () async {
+                      final picked = await showSpbOriginalIconPickerDialog(
+                        context,
+                        iconId,
+                      );
+                      if (picked != null) {
+                        setDialogState(() => iconId = picked);
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
                     icon: templateIconWidget(iconId),
                     label: const Text('Пиктограмма папки'),
                     onPressed: () async {
@@ -4439,6 +5499,35 @@ class _VaultShellState extends State<VaultShell> {
     );
   }
 
+  Future<void> deleteCategoryWithConfirmation(CategoryTreeNode folder) async {
+    final wallet = spbWallet;
+    if (wallet == null) return;
+    final confirmed = await confirmDeleteCategory(folder);
+    if (confirmed != true || !mounted) return;
+    final parentParts = categoryParts(folder.path);
+    if (parentParts.isNotEmpty) parentParts.removeLast();
+    final parentPath = parentParts.join(' / ');
+    try {
+      wallet.deleteCategory(folder.path);
+      await writeBackSpbWallet();
+      final snapshot = wallet.loadSnapshot();
+      setState(() {
+        applySpbSnapshot(snapshot);
+        if (selectedCategoryPath == folder.path ||
+            selectedCategoryPath.startsWith('${folder.path} / ')) {
+          selectedCategoryPath = parentPath;
+        }
+        if (selectedItemId != null &&
+            !items.any((entry) => entry.id == selectedItemId)) {
+          selectedItemId = null;
+        }
+        message = null;
+      });
+    } catch (error) {
+      setState(() => message = 'Не удалось удалить папку: $error');
+    }
+  }
+
   Widget emptyCardDetail() {
     return const Card(
       elevation: 0,
@@ -4451,10 +5540,7 @@ class _VaultShellState extends State<VaultShell> {
   }
 
   Widget spbRightPanel(List<SecretItem> visibleItems) {
-    final frequent = [...items]..sort((a, b) {
-        final byHits = b.hitCount.compareTo(a.hitCount);
-        return byHits == 0 ? a.title.compareTo(b.title) : byHits;
-      });
+    final frequent = frequentItems();
     final top = frequent.take(10).toList();
     final selected = selectedItem(visibleItems);
     return ListView(
@@ -4522,6 +5608,12 @@ class _VaultShellState extends State<VaultShell> {
   Future<void> selectItem(SecretItem item) async {
     setState(() {
       selectedItemId = item.id;
+      recentlyOpenedItemIds
+        ..remove(item.id)
+        ..insert(0, item.id);
+      if (recentlyOpenedItemIds.length > 10) {
+        recentlyOpenedItemIds.removeRange(10, recentlyOpenedItemIds.length);
+      }
       items = [
         for (final entry in items)
           entry.id == item.id
@@ -4677,11 +5769,7 @@ class _VaultShellState extends State<VaultShell> {
   }
 
   Widget buildFrequentView() {
-    final frequent = [...items]..sort((a, b) {
-        final byHits = b.hitCount.compareTo(a.hitCount);
-        return byHits == 0 ? a.title.compareTo(b.title) : byHits;
-      });
-    final top = frequent.where((item) => item.hitCount > 0).take(10).toList();
+    final top = frequentItems().take(10).toList();
     if (top.isEmpty) {
       return const Center(
           child: Text(
@@ -4919,6 +6007,7 @@ class _VaultShellState extends State<VaultShell> {
       setState(() {
         applySpbSnapshot(snapshot);
         if (selectedItemId == item.id) selectedItemId = null;
+        recentlyOpenedItemIds.remove(item.id);
         message = null;
       });
       return true;
@@ -5278,13 +6367,15 @@ class _VaultShellState extends State<VaultShell> {
     return null;
   }
 
-  Future<SecretItem?> openItemDialog({SecretItem? item}) async {
+  Future<SecretItem?> openItemDialog(
+      {SecretItem? item, String? initialCategory}) async {
     final saved = await showDialog<SecretItem>(
       context: context,
       builder: (context) => ItemEditorDialog(
         templates: templates,
         categories: existingCategories(),
         initial: item,
+        initialCategory: initialCategory,
         supportsAttachments: spbWallet != null,
         loadAttachmentBytes: spbWallet == null
             ? null
@@ -5848,11 +6939,80 @@ Future<String?> showIconPickerDialog(
   );
 }
 
+Future<String?> showSpbOriginalIconPickerDialog(
+  BuildContext context,
+  String selectedIconId,
+) async {
+  final iconAssets = await loadSpb64PngIconAssets();
+  if (!context.mounted) return null;
+  return showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Иконки SPB Wallet'),
+      content: SizedBox(
+        width: min(MediaQuery.of(context).size.width - 48, 620),
+        height: min(MediaQuery.of(context).size.height - 180, 460),
+        child: GridView.builder(
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 82,
+            mainAxisExtent: 82,
+            mainAxisSpacing: 7,
+            crossAxisSpacing: 7,
+          ),
+          itemCount: iconAssets.length,
+          itemBuilder: (context, index) {
+            final iconId = iconAssets[index];
+            final asset = iconId;
+            final selected = iconId == selectedIconId;
+            final fileName =
+                iconId.substring('assets/spb_icons_package/'.length);
+            return Tooltip(
+              message: fileName,
+              child: InkWell(
+                onTap: () => Navigator.pop(context, iconId),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? Theme.of(context).colorScheme.primaryContainer
+                        : Theme.of(context).colorScheme.surface,
+                    border: Border.all(
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).dividerColor,
+                    ),
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Image.asset(
+                      asset,
+                      width: 56,
+                      height: 56,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Отмена'),
+        ),
+      ],
+    ),
+  );
+}
+
 class ItemEditorDialog extends StatefulWidget {
   const ItemEditorDialog({
     required this.templates,
     required this.categories,
     this.initial,
+    this.initialCategory,
     this.supportsAttachments = false,
     this.loadAttachmentBytes,
     super.key,
@@ -5861,6 +7021,7 @@ class ItemEditorDialog extends StatefulWidget {
   final List<CardTemplate> templates;
   final List<String> categories;
   final SecretItem? initial;
+  final String? initialCategory;
   final bool supportsAttachments;
   final Future<List<int>> Function(String attachmentId)? loadAttachmentBytes;
 
@@ -5894,7 +7055,8 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
     colorId = widget.initial?.colorId ?? template.colorId;
     iconId = widget.initial?.iconId ?? template.iconId;
     title = TextEditingController(text: widget.initial?.title ?? '');
-    final initialCategory = widget.initial?.category.trim() ?? '';
+    final initialCategory =
+        widget.initial?.category.trim() ?? widget.initialCategory?.trim() ?? '';
     category = TextEditingController(text: initialCategory);
     categorySelection = initialCategory.isEmpty
         ? emptyCategoryValue
@@ -5919,6 +7081,64 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
       controller.dispose();
     }
     super.dispose();
+  }
+
+  Widget cardIconPickers() {
+    final originalAsset = spbPngIconAsset(iconId) ??
+        spbOriginalIconAsset(spbOriginalIconIds.first)!;
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            key: const Key('spbCardIconPicker'),
+            onPressed: () async {
+              final picked =
+                  await showSpbOriginalIconPickerDialog(context, iconId);
+              if (picked != null) setState(() => iconId = picked);
+            },
+            icon: Image.asset(
+              originalAsset,
+              width: 30,
+              height: 30,
+              fit: BoxFit.contain,
+            ),
+            label: const Text(
+              'Иконка карточки',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12),
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 54),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: OutlinedButton.icon(
+            key: const Key('cardPictogramPicker'),
+            onPressed: () async {
+              final picked = await showIconPickerDialog(context, iconId);
+              if (picked != null) setState(() => iconId = picked);
+            },
+            icon: Icon(templateIconGlyph(iconId), size: 24),
+            label: const Text(
+              'Пиктограмма карточки',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12),
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 54),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -5967,11 +7187,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
               const SizedBox(height: 10),
               categoryEditor(),
               const SizedBox(height: 10),
-              IconPickerField(
-                label: 'Пиктограмма карточки',
-                iconId: iconId,
-                onChanged: (value) => setState(() => iconId = value),
-              ),
+              cardIconPickers(),
               const SizedBox(height: 10),
               ColorPicker(
                   value: colorId,

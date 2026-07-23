@@ -5,6 +5,24 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
+namespace {
+std::wstring Utf16FromUtf8(const std::string& value) {
+  if (value.empty()) {
+    return L"Pass Storage";
+  }
+  const int length = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+      static_cast<int>(value.size()), nullptr, 0);
+  if (length <= 0) {
+    return L"Pass Storage";
+  }
+  std::wstring result(length, L'\0');
+  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+                      static_cast<int>(value.size()), result.data(), length);
+  return result;
+}
+}  // namespace
+
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
 
@@ -50,7 +68,10 @@ bool FlutterWindow::OnCreate() {
           SetLoginWindowMode(true);
           result->Success();
         } else if (call.method_name() == "showMain") {
-          SetMainWindowMode();
+          const auto* title =
+              std::get_if<std::string>(call.arguments());
+          SetMainWindowMode(
+              Utf16FromUtf8(title == nullptr ? std::string() : *title));
           result->Success();
         } else {
           result->NotImplemented();
@@ -83,11 +104,12 @@ void FlutterWindow::SetLoginWindowMode(bool expanded) {
   SetWindowMode(true, expanded);
 }
 
-void FlutterWindow::SetMainWindowMode() {
-  SetWindowMode(false, false);
+void FlutterWindow::SetMainWindowMode(const std::wstring& title) {
+  SetWindowMode(false, false, title);
 }
 
-void FlutterWindow::SetWindowMode(bool login, bool expanded) {
+void FlutterWindow::SetWindowMode(bool login, bool expanded,
+                                  const std::wstring& title) {
   HWND hwnd = GetHandle();
   if (hwnd == nullptr) {
     return;
@@ -103,12 +125,14 @@ void FlutterWindow::SetWindowMode(bool login, bool expanded) {
   // source-file code page.
   SetWindowText(hwnd,
                 login ? L"\u041F\u0430\u0440\u043E\u043B\u044C"
-                      : L"Pass Storage");
+                      : title.c_str());
 
   const double scale = GetDpiForWindow(hwnd) / 96.0;
   int width = static_cast<int>((login ? 562 : 1280) * scale);
   const int login_height = expanded ? 650 : 590;
-  int height = static_cast<int>((login ? login_height : 720) * scale);
+  // The classic SPB Wallet layout is intentionally taller than a 16:9
+  // dashboard. Keep the initial desktop proportions of the W1 reference.
+  int height = static_cast<int>((login ? login_height : 1010) * scale);
 
   HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
   MONITORINFO monitor_info{};

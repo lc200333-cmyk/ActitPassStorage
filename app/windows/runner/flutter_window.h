@@ -26,8 +26,9 @@ class FlutterWindow : public Win32Window {
 
  private:
   void SetLoginWindowMode(bool expanded = false);
-  void SetMainWindowMode();
-  void SetWindowMode(bool login, bool expanded);
+  void SetMainWindowMode(const std::wstring& title);
+  void SetWindowMode(bool login, bool expanded,
+                     const std::wstring& title = L"Pass Storage");
 
   // The project to run.
   flutter::DartProject project_;
