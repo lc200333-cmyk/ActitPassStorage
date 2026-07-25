@@ -1,5 +1,5 @@
 #define MyAppName "Pass Storage"
-#define MyAppVersion "0.1.13"
+#define MyAppVersion "0.1.14"
 #define MyAppPublisher "Actit"
 #define MyAppExeName "actit_pass_storage.exe"
 
