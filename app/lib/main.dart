@@ -1569,7 +1569,7 @@ class VaultShell extends StatefulWidget {
   State<VaultShell> createState() => _VaultShellState();
 }
 
-class _VaultShellState extends State<VaultShell> {
+class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   final vaultNameController = TextEditingController(text: 'личная');
   final passwordController = TextEditingController();
   final confirmController = TextEditingController();
@@ -1605,7 +1605,18 @@ class _VaultShellState extends State<VaultShell> {
   int mobilePane = 0;
   bool rootTreeExpanded = true;
   final Set<String> expandedCategoryPaths = {};
+  double? spbNavigatorWidth;
+  double? spbActionsPanelWidth;
+  String spbSubmittedSearchQuery = '';
+  bool spbTasksExpanded = true;
+  bool spbFoundExpanded = true;
+  bool spbFrequentExpanded = true;
+  final ScrollController spbFoundScrollController = ScrollController();
+  final ScrollController spbFrequentScrollController = ScrollController();
   Timer? inactivityTimer;
+  Timer? inactivityCountdownTimer;
+  int inactivitySecondsRemaining = 30;
+  bool inactivityWarningVisible = false;
   Timer? passwordUnlockDebounce;
   bool automaticUnlockInProgress = false;
   bool closingForInactivity = false;
@@ -1671,6 +1682,7 @@ class _VaultShellState extends State<VaultShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unlocked = widget.initiallyUnlocked;
     searchController.addListener(() => setState(() {}));
     passwordController.addListener(scheduleAutomaticUnlock);
@@ -1737,15 +1749,38 @@ class _VaultShellState extends State<VaultShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     inactivityTimer?.cancel();
+    inactivityCountdownTimer?.cancel();
+    persistVaultState();
     spbWallet?.close();
     passwordUnlockDebounce?.cancel();
     vaultNameController.dispose();
     passwordController.dispose();
     confirmController.dispose();
     searchController.dispose();
+    spbFoundScrollController.dispose();
+    spbFrequentScrollController.dispose();
     passwordFocusNode.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      persistVaultState();
+      unawaited(writeBackSpbWallet());
+    }
+  }
+
+  void persistVaultState() {
+    final wallet = spbWallet;
+    if (wallet == null) return;
+    wallet.saveRecentlyOpenedCardIds(recentlyOpenedItemIds);
+    wallet.flushToDisk();
   }
 
   void scheduleAutomaticUnlock() {
@@ -2527,8 +2562,10 @@ class _VaultShellState extends State<VaultShell> {
       }
     } catch (error) {
       ok = false;
-      setState(() => message =
-          'Изменения сохранены во временный файл, но не записаны обратно в исходную .swl базу: $error');
+      if (mounted) {
+        setState(() => message =
+            'Изменения сохранены во временный файл, но не записаны обратно в исходную .swl базу: $error');
+      }
     }
     return ok;
   }
@@ -2802,6 +2839,14 @@ class _VaultShellState extends State<VaultShell> {
     items = spbCardsToUi(snapshot.cards);
     categoryIconsByPath = spbCategoryIconsToUi(snapshot.categories);
     categoryPaths = spbCategoryPathsToUi(snapshot.categories);
+    final validIds = items.map((item) => item.id).toSet();
+    recentlyOpenedItemIds
+      ..clear()
+      ..addAll(
+        (spbWallet?.loadRecentlyOpenedCardIds() ?? const <String>[])
+            .where(validIds.contains)
+            .take(10),
+      );
   }
 
   String spbFieldTypeToUi(int fieldTypeId, [String fieldName = '']) {
@@ -3056,8 +3101,12 @@ class _VaultShellState extends State<VaultShell> {
     ensureInactivityTimer();
     final shell = LayoutBuilder(
       builder: (context, constraints) {
-        final mobile = defaultTargetPlatform == TargetPlatform.android ||
-            constraints.maxWidth < 700;
+        final androidPortrait =
+            defaultTargetPlatform == TargetPlatform.android &&
+                constraints.maxHeight >= constraints.maxWidth;
+        final mobile = androidPortrait ||
+            (defaultTargetPlatform != TargetPlatform.android &&
+                constraints.maxWidth < 700);
         return mobile ? buildSpbMobileShell() : buildSpbDesktopShell();
       },
     );
@@ -3078,7 +3127,6 @@ class _VaultShellState extends State<VaultShell> {
     );
   }
 
-  static const _spbHeader = Color(0xff9b9b9b);
   static const _spbRightPanel = Color(0xffc7d9ea);
   static const _spbBorder = Color(0xffb7b7b7);
 
@@ -3107,12 +3155,14 @@ class _VaultShellState extends State<VaultShell> {
   }
 
   Widget spbSectionHeader(String title,
-      {Widget? trailing, double height = 32}) {
+      {Widget? trailing, double height = 34}) {
     return Container(
       height: height,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: const BoxDecoration(
-        color: _spbHeader,
+        gradient: LinearGradient(
+          colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+        ),
         border: Border(bottom: BorderSide(color: _spbBorder)),
       ),
       child: Row(
@@ -3123,8 +3173,7 @@ class _VaultShellState extends State<VaultShell> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: Colors.white,
-                fontSize: 19,
+                fontSize: 18,
               ),
             ),
           ),
@@ -3134,57 +3183,325 @@ class _VaultShellState extends State<VaultShell> {
     );
   }
 
-  Widget buildSpbSearchBar({bool mobile = false}) {
-    return Container(
-      height: mobile ? 48 : 42,
-      color: const Color(0xfff4f4f4),
-      padding: EdgeInsets.fromLTRB(mobile ? 112 : 24, 6, 8, 6),
-      child: TextField(
-        controller: searchController,
-        onChanged: (_) => setState(() {}),
-        style: const TextStyle(fontSize: 17),
-        decoration: InputDecoration(
-          isDense: true,
-          filled: true,
-          fillColor: Colors.white,
-          border: const OutlineInputBorder(
-            borderRadius: BorderRadius.zero,
-            borderSide: BorderSide(color: Colors.black87),
+  Widget buildSpbSearchBar({
+    bool mobile = false,
+    double? desktopNavigatorWidth,
+  }) {
+    final searchField = OverflowBox(
+      maxHeight: 68,
+      alignment: Alignment.centerLeft,
+      child: Transform.translate(
+        offset: const Offset(0, 21),
+        child: SizedBox(
+          width: mobile ? double.infinity : 178.889,
+          height: 68,
+          child: TextField(
+            key: const Key('spbSearchInput'),
+            controller: searchController,
+            onChanged: (_) => setState(() {}),
+            onSubmitted: submitSpbSearch,
+            textInputAction: TextInputAction.search,
+            textAlignVertical: TextAlignVertical.bottom,
+            style: const TextStyle(
+              fontSize: 19,
+              height: 1,
+              fontWeight: FontWeight.normal,
+            ),
+            decoration: const InputDecoration(
+              isDense: true,
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.zero,
+                borderSide: BorderSide(color: Colors.black87, width: 1.2),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.zero,
+                borderSide: BorderSide(color: Colors.black87, width: 1.2),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.zero,
+                borderSide: BorderSide(color: Colors.black, width: 1.5),
+              ),
+              contentPadding: EdgeInsets.fromLTRB(12, 0, 12, 12),
+            ),
           ),
-          enabledBorder: const OutlineInputBorder(
-            borderRadius: BorderRadius.zero,
-            borderSide: BorderSide(color: Colors.black87),
-          ),
-          prefixIcon: mobile ? null : const Icon(Icons.search, size: 18),
-          labelText: mobile ? null : 'Поиск',
-          floatingLabelBehavior: FloatingLabelBehavior.never,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
         ),
       ),
     );
+    return Container(
+      height: 48,
+      color: const Color(0xfff4f4f4),
+      padding: EdgeInsets.fromLTRB(mobile ? 22 : 11, 7, 12, 7),
+      child: mobile
+          ? Row(
+              children: [
+                Transform.translate(
+                  offset: const Offset(0, 3),
+                  child: const Text(
+                    'Поиск',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xff202020),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: FractionallySizedBox(
+                      widthFactor: 0.92,
+                      alignment: Alignment.centerLeft,
+                      child: searchField,
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : Stack(
+              children: [
+                Row(
+                  children: [
+                    Transform.translate(
+                      offset: const Offset(0, 3),
+                      child: const Text(
+                        'Поиск',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xff202020),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(width: 178.889, child: searchField),
+                  ],
+                ),
+                Positioned(
+                  left: max(
+                    0,
+                    (desktopNavigatorWidth ?? 345) - 11 - 72.4,
+                  ),
+                  top: 0,
+                  child: Row(
+                    children: [
+                      buildSpbSearchButton(
+                        key: const Key('spbClearSearchButton'),
+                        icon: Icons.close,
+                        tooltip: 'Очистить поиск',
+                        gradient: const [Color(0xffff6b63), Color(0xffc90000)],
+                        onTap: () {
+                          searchController.clear();
+                          setState(() => spbSubmittedSearchQuery = '');
+                        },
+                      ),
+                      const SizedBox(width: 4),
+                      buildSpbSearchButton(
+                        key: const Key('spbSubmitSearchButton'),
+                        icon: Icons.search,
+                        tooltip: 'Начать поиск',
+                        gradient: const [Color(0xff42bff5), Color(0xff006fc4)],
+                        onTap: () => submitSpbSearch(searchController.text),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+
+  Widget buildSpbSearchButton({
+    required Key key,
+    required IconData icon,
+    required String tooltip,
+    required List<Color> gradient,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      width: 34.2,
+      height: 34,
+      child: OverflowBox(
+        minHeight: 34.2,
+        maxHeight: 34.2,
+        child: SizedBox.square(
+          dimension: 34.2,
+          child: Tooltip(
+            message: tooltip,
+            child: Material(
+              color: Colors.transparent,
+              child: Ink(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: gradient,
+                  ),
+                  borderRadius: BorderRadius.circular(2.7),
+                  border: Border.all(color: const Color(0x99000000)),
+                ),
+                child: InkWell(
+                  key: key,
+                  borderRadius: BorderRadius.circular(2.7),
+                  onTap: onTap,
+                  child: Icon(icon, color: Colors.white, size: 22.5),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void submitSpbSearch(String value) {
+    setState(() => spbSubmittedSearchQuery = value.trim());
+  }
+
+  List<String> spbMatchingFolderPaths(String query) {
+    if (query.isEmpty) return const [];
+    final allPaths = <String>{};
+    for (final category in existingCategories()) {
+      final parts = categoryParts(category);
+      for (var index = 1; index <= parts.length; index++) {
+        allPaths.add(parts.take(index).join(' / '));
+      }
+    }
+    final normalizedQuery = query.toLowerCase();
+    return allPaths
+        .where((path) => path.toLowerCase().contains(normalizedQuery))
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  }
+
+  List<SecretItem> spbMatchingCards(String query) {
+    if (query.isEmpty) return const [];
+    final normalizedQuery = query.toLowerCase();
+    return items.where((item) {
+      final template = templateFor(item.templateId);
+      final searchableText = '${item.title} ${item.category} ${template.name} '
+              '${item.values.values.join(' ')}'
+          .toLowerCase();
+      return searchableText.contains(normalizedQuery);
+    }).toList()
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
   }
 
   Widget buildSpbDesktopShell() {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Column(
-          children: [
-            buildSpbSearchBar(),
-            Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(width: 300, child: buildSpbNavigator()),
-                  const VerticalDivider(width: 1, thickness: 1),
-                  Expanded(child: buildSpbFolderGrid()),
-                  const VerticalDivider(width: 1, thickness: 1),
-                  SizedBox(width: 220, child: buildSpbActionsPanel()),
-                ],
-              ),
-            ),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const rightDividerWidth = 1.0;
+            const minimumNavigatorWidth = 180.0;
+            const minimumCenterWidth = 160.0;
+            const minimumRightPanelWidth = 180.0;
+            const splitterHitWidth = 9.0;
+            final defaultRightPanelWidth = constraints.maxWidth * 0.20;
+            final maximumRightPanelWidth = max(
+              minimumRightPanelWidth,
+              constraints.maxWidth -
+                  rightDividerWidth * 2 -
+                  minimumNavigatorWidth -
+                  minimumCenterWidth,
+            );
+            final rightPanelWidth =
+                (spbActionsPanelWidth ?? defaultRightPanelWidth)
+                    .clamp(minimumRightPanelWidth, maximumRightPanelWidth)
+                    .toDouble();
+            final maximumNavigatorWidth = max(
+              minimumNavigatorWidth,
+              constraints.maxWidth -
+                  rightDividerWidth * 2 -
+                  rightPanelWidth -
+                  minimumCenterWidth,
+            );
+            final defaultNavigatorWidth = constraints.maxWidth * 0.30;
+            final navigatorWidth = (spbNavigatorWidth ?? defaultNavigatorWidth)
+                .clamp(minimumNavigatorWidth, maximumNavigatorWidth)
+                .toDouble();
+            return Column(
+              children: [
+                buildSpbSearchBar(desktopNavigatorWidth: navigatorWidth),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(
+                            width: navigatorWidth,
+                            child: buildSpbNavigator(),
+                          ),
+                          const VerticalDivider(width: 1, thickness: 1),
+                          Expanded(child: buildSpbFolderGrid()),
+                          const VerticalDivider(width: 1, thickness: 1),
+                          SizedBox(
+                            width: rightPanelWidth,
+                            child: buildSpbActionsPanel(desktop: true),
+                          ),
+                        ],
+                      ),
+                      Positioned(
+                        left: navigatorWidth - (splitterHitWidth - 1) / 2,
+                        top: 0,
+                        bottom: 0,
+                        width: splitterHitWidth,
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.resizeColumn,
+                          child: GestureDetector(
+                            key: const Key('spbNavigatorSplitter'),
+                            behavior: HitTestBehavior.opaque,
+                            onHorizontalDragUpdate: (details) {
+                              setState(() {
+                                spbNavigatorWidth =
+                                    (navigatorWidth + details.delta.dx)
+                                        .clamp(
+                                          minimumNavigatorWidth,
+                                          maximumNavigatorWidth,
+                                        )
+                                        .toDouble();
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: constraints.maxWidth -
+                            rightPanelWidth -
+                            rightDividerWidth -
+                            (splitterHitWidth - 1) / 2,
+                        top: 0,
+                        bottom: 0,
+                        width: splitterHitWidth,
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.resizeColumn,
+                          child: GestureDetector(
+                            key: const Key('spbActionsPanelSplitter'),
+                            behavior: HitTestBehavior.opaque,
+                            onHorizontalDragUpdate: (details) {
+                              setState(() {
+                                spbActionsPanelWidth =
+                                    (rightPanelWidth - details.delta.dx)
+                                        .clamp(
+                                          minimumRightPanelWidth,
+                                          maximumRightPanelWidth,
+                                        )
+                                        .toDouble();
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -3264,20 +3581,18 @@ class _VaultShellState extends State<VaultShell> {
       child: Row(
         children: [
           Expanded(
-            child: IconButton(
+            child: _Spb3dArrowButton(
               key: const Key('mobilePaneBack'),
-              tooltip: mobilePane == 1 ? 'К папкам' : 'К карточкам',
-              icon: const Icon(Icons.arrow_back, size: 32),
+              icon: Icons.arrow_back,
               onPressed: () => setState(() => mobilePane--),
             ),
           ),
           if (mobilePane == 1) ...[
             const VerticalDivider(width: 1),
             Expanded(
-              child: IconButton(
+              child: _Spb3dArrowButton(
                 key: const Key('mobilePaneForward'),
-                tooltip: 'К задачам',
-                icon: const Icon(Icons.arrow_forward, size: 32),
+                icon: Icons.arrow_forward,
                 onPressed: () => setState(() => mobilePane = 2),
               ),
             ),
@@ -3288,8 +3603,10 @@ class _VaultShellState extends State<VaultShell> {
   }
 
   void openSpbFolder(String path) {
-    final mobile = defaultTargetPlatform == TargetPlatform.android ||
-        MediaQuery.sizeOf(context).width < 700;
+    final size = MediaQuery.sizeOf(context);
+    final mobile = defaultTargetPlatform == TargetPlatform.android
+        ? size.height >= size.width
+        : size.width < 700;
     setState(() {
       selectedCategoryPath = path;
       if (mobile) mobilePane = 1;
@@ -3302,11 +3619,14 @@ class _VaultShellState extends State<VaultShell> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          spbSectionHeader(mobileTemplatesOpen ? 'Шаблоны' : 'Мои карточки'),
+          spbSectionHeader(selectedVaultTitle),
           Expanded(
             child: mobileTemplatesOpen
-                ? buildSpbTemplateTree()
-                : buildSpbTreeBody(),
+                ? buildSpbTemplateTree(compactRows: true)
+                : buildSpbTreeBody(
+                    compactRows: true,
+                    showWalletRoot: false,
+                  ),
           ),
           buildSpbModeButton(
             label: 'Мои карточки',
@@ -3362,24 +3682,34 @@ class _VaultShellState extends State<VaultShell> {
         color: const Color(0xfff5f5f5),
         border: Border.all(color: const Color(0xff8d9aa3)),
       ),
-      child: Text(
-        expanded ? '−' : '+',
-        style: const TextStyle(
-          color: Color(0xff526b7d),
-          fontSize: 15,
-          height: 0.9,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
+      child: expanded
+          ? const Text(
+              '−',
+              style: TextStyle(
+                color: Color(0xff526b7d),
+                fontSize: 15,
+                height: 0.9,
+                fontWeight: FontWeight.w700,
+              ),
+            )
+          : const Icon(
+              Icons.add,
+              color: Color(0xff526b7d),
+              size: 13,
+              weight: 700,
+            ),
     );
   }
 
-  Widget buildSpbTreeBody() {
+  Widget buildSpbTreeBody({
+    bool compactRows = false,
+    bool showWalletRoot = true,
+  }) {
     final root = buildCategoryTree(filteredItems());
-    return Scrollbar(
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(5, 10, 5, 12),
-        children: [
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(5, 10, 5, 12),
+      children: [
+        if (showWalletRoot)
           Theme(
             data: Theme.of(context).copyWith(
                 dividerColor: Colors.transparent,
@@ -3426,12 +3756,17 @@ class _VaultShellState extends State<VaultShell> {
               children: buildSpbTreeChildren(root, 0),
             ),
           ),
-        ],
-      ),
+        if (!showWalletRoot)
+          ...buildSpbTreeChildren(root, 0, compactRows: compactRows),
+      ],
     );
   }
 
-  List<Widget> buildSpbTreeChildren(CategoryTreeNode node, int depth) {
+  List<Widget> buildSpbTreeChildren(
+    CategoryTreeNode node,
+    int depth, {
+    bool compactRows = false,
+  }) {
     final result = <Widget>[];
     final folders = node.children.values.toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
@@ -3461,27 +3796,41 @@ class _VaultShellState extends State<VaultShell> {
                   });
                 },
                 visualDensity: const VisualDensity(vertical: -3),
+                minTileHeight: compactRows ? 21.6 : null,
                 tilePadding: const EdgeInsets.only(left: 6, right: 2),
                 childrenPadding: EdgeInsets.zero,
                 trailing: const SizedBox.shrink(),
-                leading: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    spbExpansionMark(
-                        expandedCategoryPaths.contains(folder.path)),
-                    const SizedBox(width: 5),
-                    spbSizedDataIcon(
-                      folder.iconId ?? defaultIconForCategoryPath(folder.path),
-                      40,
+                leading: SizedBox(
+                  width: 60,
+                  height: compactRows ? 24 : 40,
+                  child: OverflowBox(
+                    minWidth: 60,
+                    maxWidth: 60,
+                    minHeight: 40,
+                    maxHeight: 40,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        spbExpansionMark(
+                            expandedCategoryPaths.contains(folder.path)),
+                        const SizedBox(width: 5),
+                        spbSizedDataIcon(
+                          folder.iconId ??
+                              defaultIconForCategoryPath(folder.path),
+                          40,
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
                 title: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () => openSpbFolder(folder.path),
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: compactRows ? 0 : 3,
+                    ),
                     decoration: selectedCategoryPath == folder.path
                         ? const BoxDecoration(
                             gradient: LinearGradient(
@@ -3493,10 +3842,14 @@ class _VaultShellState extends State<VaultShell> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.w700)),
+                            fontSize: 19.8, fontWeight: FontWeight.normal)),
                   ),
                 ),
-                children: buildSpbTreeChildren(folder, depth + 1),
+                children: buildSpbTreeChildren(
+                  folder,
+                  depth + 1,
+                  compactRows: compactRows,
+                ),
               ),
             ),
           ),
@@ -3518,6 +3871,7 @@ class _VaultShellState extends State<VaultShell> {
             child: ListTile(
               dense: true,
               visualDensity: const VisualDensity(vertical: -3),
+              minTileHeight: compactRows ? 27 : null,
               contentPadding: const EdgeInsets.symmetric(horizontal: 5),
               leading: spbSizedDataIcon(itemIconId(item, template), 40),
               title: Text(item.title,
@@ -3533,7 +3887,7 @@ class _VaultShellState extends State<VaultShell> {
     return result;
   }
 
-  Widget buildSpbTemplateTree() {
+  Widget buildSpbTemplateTree({bool compactRows = false}) {
     final query = searchController.text.trim().toLowerCase();
     final visible = templates
         .where((entry) =>
@@ -3547,6 +3901,7 @@ class _VaultShellState extends State<VaultShell> {
         final template = visible[index];
         return ListTile(
           dense: true,
+          minTileHeight: compactRows ? 36 : null,
           leading: spbSizedDataIcon(template.iconId, 40),
           title: Text(template.name,
               style: const TextStyle(fontSize: 16),
@@ -3580,11 +3935,11 @@ class _VaultShellState extends State<VaultShell> {
       children: [
         selectedCategoryPath.isEmpty
             ? spbSectionHeader(
-                selectedVaultTitle,
+                'Мои карточки',
                 trailing: spbResourceIcon('icon_wallets_small.png', 23),
               )
             : Container(
-                height: 32,
+                height: 34,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
@@ -3602,7 +3957,7 @@ class _VaultShellState extends State<VaultShell> {
                         style: const TextStyle(
                             color: Color(0xff18364d),
                             fontSize: 19,
-                            fontWeight: FontWeight.w700),
+                            fontWeight: FontWeight.normal),
                       ),
                     ),
                     spbResourceIcon('icon_wallets_small.png', 23),
@@ -3633,7 +3988,7 @@ class _VaultShellState extends State<VaultShell> {
                     label: folder.name,
                     icon: spbSizedDataIcon(
                       folder.iconId ?? defaultIconForCategoryPath(folder.path),
-                      60,
+                      50.25,
                     ),
                     onTap: () => openSpbFolder(folder.path),
                     onContextMenu: (position) =>
@@ -3644,7 +3999,7 @@ class _VaultShellState extends State<VaultShell> {
                 final template = templateFor(item.templateId);
                 return buildSpbGridEntry(
                   label: item.title,
-                  icon: spbSizedDataIcon(itemIconId(item, template), 60),
+                  icon: spbSizedDataIcon(itemIconId(item, template), 50.25),
                   onTap: () => openCardPreviewDialog(item),
                   onContextMenu: (position) => showSpbCardMenu(item, position),
                 );
@@ -3787,7 +4142,7 @@ class _VaultShellState extends State<VaultShell> {
         onTap: onTap,
         child: Column(
           children: [
-            SizedBox(width: 68, height: 68, child: Center(child: icon)),
+            SizedBox(width: 68, height: 67, child: Center(child: icon)),
             const SizedBox(height: 2),
             Text(
               label,
@@ -3795,7 +4150,7 @@ class _VaultShellState extends State<VaultShell> {
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 17,
+                fontSize: 15.3,
                 height: 1.05,
               ),
             ),
@@ -3823,8 +4178,110 @@ class _VaultShellState extends State<VaultShell> {
     return result;
   }
 
-  Widget buildSpbActionsPanel() {
+  Widget buildSpbActionsPanel({bool desktop = false}) {
     final frequent = frequentItems();
+    final query = spbSubmittedSearchQuery;
+    final matchingFolders = spbMatchingFolderPaths(query);
+    final matchingCards = spbMatchingCards(query);
+    final foundCount = matchingFolders.length + matchingCards.length;
+    if (desktop) {
+      return Material(
+        color: Colors.white,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            buildSpbActionGroup(
+              'Задачи',
+              [
+                (
+                  spbResourceIcon('icon_new_wallet.png', 40),
+                  'Создать кошелёк',
+                  createNewVaultFromLogin
+                ),
+                (
+                  spbResourceIcon('icon_import.png', 40),
+                  'Открыть кошелёк',
+                  pickSpbWalletFile
+                ),
+                (
+                  spbResourceIcon('icon_add_card.png', 40),
+                  'Создать новую карточку',
+                  () => openItemDialog(initialCategory: selectedCategoryPath)
+                ),
+                (
+                  spbResourceIcon('icon_add_folder.png', 40),
+                  'Создать новую папку',
+                  () => openCategoryEditorDialog(
+                      folder: null, parentPath: selectedCategoryPath)
+                ),
+                (
+                  spbResourceIcon('icon_backup.png', 40),
+                  'Сделать архивную копию',
+                  createDatedArchiveCopy
+                ),
+              ],
+              shellStyle: true,
+              sectionExpanded: spbTasksExpanded,
+              onExpand: () => setState(() => spbTasksExpanded = true),
+              onCollapse: () => setState(() => spbTasksExpanded = false),
+            ),
+            buildSpbCollapsibleHeader(
+              'Найдено',
+              expanded: spbFoundExpanded,
+              onExpand: () => setState(() => spbFoundExpanded = true),
+              onCollapse: () => setState(() => spbFoundExpanded = false),
+              shellStyle: true,
+              trailing: Text(
+                '$foundCount',
+                key: const Key('spbFoundCount'),
+                style: const TextStyle(fontSize: 18),
+              ),
+            ),
+            if (spbFoundExpanded && query.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 240),
+                child: buildSpbSearchResults(
+                  matchingFolders,
+                  matchingCards,
+                  controller: spbFoundScrollController,
+                ),
+              ),
+            if (spbFrequentExpanded)
+              Expanded(
+                child: buildSpbActionGroup(
+                  'Часто используемые',
+                  [
+                    for (final item in frequent.take(10))
+                      (
+                        spbSizedDataIcon(
+                          itemIconId(item, templateFor(item.templateId)),
+                          40,
+                        ),
+                        item.title,
+                        () => openCardPreviewDialog(item)
+                      ),
+                  ],
+                  expand: true,
+                  shellStyle: true,
+                  sectionExpanded: true,
+                  onExpand: () => setState(() => spbFrequentExpanded = true),
+                  onCollapse: () => setState(() => spbFrequentExpanded = false),
+                  scrollController: spbFrequentScrollController,
+                ),
+              )
+            else
+              buildSpbActionGroup(
+                'Часто используемые',
+                const [],
+                shellStyle: true,
+                sectionExpanded: false,
+                onExpand: () => setState(() => spbFrequentExpanded = true),
+                onCollapse: () => setState(() => spbFrequentExpanded = false),
+              ),
+          ],
+        ),
+      );
+    }
     return Container(
       color: _spbRightPanel,
       padding: const EdgeInsets.all(10),
@@ -3885,58 +4342,268 @@ class _VaultShellState extends State<VaultShell> {
     );
   }
 
+  Widget buildSpbSearchResults(
+    List<String> matchingFolders,
+    List<SecretItem> matchingCards, {
+    ScrollController? controller,
+  }) {
+    if (matchingFolders.isEmpty && matchingCards.isEmpty) {
+      return const SizedBox(
+        height: 48,
+        child: Center(
+          child: Text(
+            'Совпадений нет',
+            key: Key('spbNoSearchResults'),
+            style: TextStyle(fontSize: 16),
+          ),
+        ),
+      );
+    }
+    final results = ListView(
+      key: const Key('spbSearchResults'),
+      controller: controller,
+      shrinkWrap: true,
+      padding: EdgeInsets.zero,
+      children: [
+        for (final path in matchingFolders)
+          buildSpbSearchResultRow(
+            icon: spbSizedDataIcon(
+              categoryIconsByPath[path] ?? defaultIconForCategoryPath(path),
+              36,
+            ),
+            title: categoryParts(path).last,
+            subtitle: 'Папка',
+            onTap: () => openSpbFolder(path),
+          ),
+        for (final item in matchingCards)
+          buildSpbSearchResultRow(
+            icon: spbSizedDataIcon(
+              itemIconId(item, templateFor(item.templateId)),
+              36,
+            ),
+            title: item.title,
+            subtitle: item.category.trim().isEmpty
+                ? 'Карточка'
+                : 'Карточка • ${item.category}',
+            onTap: () => openCardPreviewDialog(item),
+          ),
+      ],
+    );
+    if (controller == null) return results;
+    return Scrollbar(
+      controller: controller,
+      thumbVisibility: true,
+      child: results,
+    );
+  }
+
+  Widget buildSpbSearchResultRow({
+    required Widget icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 6, 6, 5),
+        child: Row(
+          children: [
+            SizedBox(width: 36, height: 36, child: Center(child: icon)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 17),
+                  ),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xff5f5f5f),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildSpbCollapsibleHeader(
+    String title, {
+    required bool expanded,
+    required VoidCallback onExpand,
+    required VoidCallback onCollapse,
+    bool shellStyle = false,
+    Widget? trailing,
+  }) {
+    return Container(
+      height: 34,
+      padding: const EdgeInsets.only(left: 4, right: 10),
+      alignment: Alignment.centerLeft,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+        ),
+        border: shellStyle
+            ? const Border(bottom: BorderSide(color: _spbBorder))
+            : null,
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 22,
+            height: 32,
+            child: Tooltip(
+              message: expanded ? 'Свернуть' : 'Развернуть',
+              child: InkWell(
+                key: ValueKey(
+                    expanded ? 'spbCollapse$title' : 'spbExpand$title'),
+                onTap: expanded ? onCollapse : onExpand,
+                child: Center(
+                  child: Icon(
+                    expanded ? Icons.arrow_drop_up : Icons.arrow_drop_down,
+                    size: 29,
+                    color: const Color(0xff168bd2),
+                    shadows: const [
+                      Shadow(
+                        color: Color(0xb3ffffff),
+                        offset: Offset(0, -1),
+                        blurRadius: 0.5,
+                      ),
+                      Shadow(
+                        color: Color(0xff075582),
+                        offset: Offset(0, 1.5),
+                        blurRadius: 1,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 18),
+            ),
+          ),
+          if (trailing != null) trailing,
+        ],
+      ),
+    );
+  }
+
   Widget buildSpbActionGroup(
       String title, List<(Widget, String, VoidCallback)> actions,
-      {bool expand = false}) {
-    final content = Container(
-      color: Colors.white,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
+      {bool expand = false,
+      bool shellStyle = false,
+      bool? sectionExpanded,
+      VoidCallback? onExpand,
+      VoidCallback? onCollapse,
+      ScrollController? scrollController}) {
+    final header = sectionExpanded == null
+        ? Container(
             height: 34,
             padding: const EdgeInsets.symmetric(horizontal: 10),
             alignment: Alignment.centerLeft,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
                 colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
               ),
+              border: shellStyle
+                  ? const Border(bottom: BorderSide(color: _spbBorder))
+                  : null,
             ),
             child: Text(title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 18)),
-          ),
-          for (final action in actions)
-            InkWell(
-              onTap: action.$3,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(10, 7, 6, 4),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: Center(child: action.$1),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(action.$2,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            height: 1.12,
-                          )),
-                    ),
-                  ],
+          )
+        : buildSpbCollapsibleHeader(
+            title,
+            expanded: sectionExpanded,
+            onExpand: onExpand!,
+            onCollapse: onCollapse!,
+            shellStyle: shellStyle,
+          );
+    if (sectionExpanded == false) return header;
+    final actionTiles = [
+      for (final action in actions)
+        InkWell(
+          onTap: action.$3,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 7, 6, 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: Center(child: action.$1),
                 ),
-              ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(action.$2,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        height: 1.12,
+                      )),
+                ),
+              ],
             ),
-          if (expand) const Spacer(),
+          ),
+        ),
+    ];
+    if (expand) {
+      final scrollable = SingleChildScrollView(
+        key: const Key('frequentCardsScroll'),
+        controller: scrollController,
+        child: Container(
+          color: Colors.white,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: actionTiles,
+          ),
+        ),
+      );
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          header,
+          Expanded(
+            child: scrollController == null
+                ? scrollable
+                : Scrollbar(
+                    controller: scrollController,
+                    thumbVisibility: true,
+                    child: scrollable,
+                  ),
+          ),
         ],
+      );
+    }
+    final content = Container(
+      color: Colors.white,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [header, ...actionTiles],
       ),
     );
-    return expand ? content : IntrinsicHeight(child: content);
+    return IntrinsicHeight(child: content);
   }
 
   bool isMenuOpen(bool compact) => menuOpenOverride ?? false;
@@ -4143,6 +4810,8 @@ class _VaultShellState extends State<VaultShell> {
   }
 
   Future<void> exitApplication() async {
+    persistVaultState();
+    await writeBackSpbWallet();
     passwordController.clear();
     confirmController.clear();
     spbWallet?.close();
@@ -4150,15 +4819,6 @@ class _VaultShellState extends State<VaultShell> {
     spbWalletPath = null;
     spbWalletUri = null;
     spbWalletDisplayPath = null;
-    recentVaults.clear();
-    try {
-      final historyFile = await recentVaultsFile();
-      if (historyFile.existsSync()) {
-        await historyFile.delete();
-      }
-    } catch (_) {
-      // Exit must still complete if the recent-file state cannot be removed.
-    }
     if (Platform.isAndroid || Platform.isIOS) {
       await SystemNavigator.pop();
     } else {
@@ -4168,18 +4828,73 @@ class _VaultShellState extends State<VaultShell> {
 
   void ensureInactivityTimer() {
     inactivityTimer ??= Timer(
-      const Duration(minutes: 5),
-      closeAfterInactivity,
+      const Duration(minutes: 2, seconds: 30),
+      showInactivityWarning,
     );
   }
 
   void recordUserActivity() {
-    if (!unlocked || closingForInactivity) return;
+    if (!unlocked || closingForInactivity || inactivityWarningVisible) return;
     inactivityTimer?.cancel();
     inactivityTimer = Timer(
-      const Duration(minutes: 5),
-      closeAfterInactivity,
+      const Duration(minutes: 2, seconds: 30),
+      showInactivityWarning,
     );
+  }
+
+  Future<void> showInactivityWarning() async {
+    if (!mounted || inactivityWarningVisible || closingForInactivity) return;
+    inactivityWarningVisible = true;
+    inactivitySecondsRemaining = 30;
+    inactivityTimer = null;
+    StateSetter? updateDialog;
+    inactivityCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      inactivitySecondsRemaining--;
+      updateDialog?.call(() {});
+      if (inactivitySecondsRemaining <= 0) {
+        inactivityCountdownTimer?.cancel();
+        if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
+          Navigator.of(context, rootNavigator: true).pop(false);
+        }
+      }
+    });
+    final continued = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          updateDialog = setDialogState;
+          return AlertDialog(
+            title: const Text('Предупреждение'),
+            content: Text(
+              'Программа выключится через '
+              '$inactivitySecondsRemaining секунд',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 20),
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Продолжить'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    inactivityCountdownTimer?.cancel();
+    inactivityCountdownTimer = null;
+    inactivityWarningVisible = false;
+    if (continued == true && mounted) {
+      setState(() {
+        activeView = 'cards';
+        mobilePane = 0;
+      });
+      recordUserActivity();
+    } else {
+      await closeAfterInactivity();
+    }
   }
 
   Future<void> closeAfterInactivity() async {
@@ -4187,6 +4902,7 @@ class _VaultShellState extends State<VaultShell> {
     closingForInactivity = true;
     inactivityTimer?.cancel();
     inactivityTimer = null;
+    persistVaultState();
     await writeBackSpbWallet();
     spbWallet?.close();
     spbWallet = null;
@@ -5614,6 +6330,7 @@ class _VaultShellState extends State<VaultShell> {
       if (recentlyOpenedItemIds.length > 10) {
         recentlyOpenedItemIds.removeRange(10, recentlyOpenedItemIds.length);
       }
+      spbWallet?.saveRecentlyOpenedCardIds(recentlyOpenedItemIds);
       items = [
         for (final entry in items)
           entry.id == item.id
@@ -6543,6 +7260,70 @@ class _VaultShellState extends State<VaultShell> {
             : 'База записана в исходное хранилище.';
       }
     });
+  }
+}
+
+class _Spb3dArrowButton extends StatelessWidget {
+  const _Spb3dArrowButton({
+    required this.icon,
+    required this.onPressed,
+    super.key,
+  });
+
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(3),
+          child: Ink(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(3),
+              border: Border.all(color: const Color(0xff087bc7)),
+              gradient: const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xff20b8fa),
+                  Color(0xff078ce7),
+                  Color(0xff0062ce),
+                ],
+                stops: [0, .52, 1],
+              ),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x66003887),
+                  offset: Offset(0, 3),
+                  blurRadius: 1,
+                ),
+                BoxShadow(
+                  color: Color(0x99ffffff),
+                  offset: Offset(0, 1),
+                  blurRadius: 1,
+                ),
+              ],
+            ),
+            child: Center(
+              child: Icon(
+                icon,
+                size: 34,
+                color: Colors.white,
+                shadows: const [
+                  Shadow(color: Color(0x99004488), offset: Offset(0, 2)),
+                  Shadow(color: Colors.white70, offset: Offset(0, -1)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

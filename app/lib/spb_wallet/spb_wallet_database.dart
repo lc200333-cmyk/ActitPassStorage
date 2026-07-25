@@ -489,6 +489,39 @@ class SpbWalletDatabase {
     _db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
   }
 
+  List<String> loadRecentlyOpenedCardIds() {
+    _ensureActitPassStateTable();
+    final rows = _db.select(
+      'SELECT StateValue FROM actitpass_State WHERE StateKey = ?',
+      ['recently_opened_cards'],
+    );
+    if (rows.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(_string(rows.first['StateValue']));
+      return decoded is List
+          ? decoded.whereType<String>().take(10).toList()
+          : const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  void saveRecentlyOpenedCardIds(Iterable<String> cardIds) {
+    _ensureActitPassStateTable();
+    _db.execute(
+      'INSERT OR REPLACE INTO actitpass_State (StateKey, StateValue) VALUES (?, ?)',
+      ['recently_opened_cards', jsonEncode(cardIds.take(10).toList())],
+    );
+  }
+
+  void _ensureActitPassStateTable() {
+    _db.execute('''
+CREATE TABLE IF NOT EXISTS actitpass_State (
+  StateKey TEXT NOT NULL PRIMARY KEY,
+  StateValue TEXT NOT NULL
+)''');
+  }
+
   void close() {
     flushToDisk();
     _db.dispose();
