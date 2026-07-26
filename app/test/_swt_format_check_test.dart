@@ -1,12 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:actit_pass_storage/main.dart';
+import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import '../lib/main.dart';
-import '../lib/spb_wallet/spb_wallet_database.dart';
 
 void main() {
   test('imports the supplied legacy SPB Wallet SWT template', () {
@@ -22,7 +21,52 @@ void main() {
     expect(template.fields.last.type, 'password');
   });
 
-  testWidgets('template right click opens edit and export menu',
+  test('permanently deleting a template removes its dependent cards', () {
+    final directory =
+        Directory.systemTemp.createTempSync('actitpass_template_delete_');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final database = SpbWalletDatabase.create(
+      '${directory.path}${Platform.pathSeparator}template-delete.swl',
+      '',
+    );
+    addTearDown(database.close);
+    final templateId = SpbWalletDatabase.makeId();
+    final fieldId = SpbWalletDatabase.makeId();
+    database.saveTemplate(
+      SpbWalletTemplateDraft(
+        id: templateId,
+        name: 'Удаляемый шаблон',
+        fields: [
+          SpbWalletTemplateFieldRecord(
+            id: fieldId,
+            name: 'Поле',
+            templateId: templateId,
+            fieldTypeId: 1,
+          ),
+        ],
+      ),
+    );
+    database.saveCard(
+      SpbWalletCardDraft(
+        id: SpbWalletDatabase.makeId(),
+        title: 'Связанная карточка',
+        description: '',
+        categoryPath: '',
+        templateId: templateId,
+        fieldValues: {fieldId: 'Значение'},
+      ),
+    );
+
+    database.deleteTemplate(templateId);
+
+    final snapshot = database.loadSnapshot();
+    expect(
+        snapshot.templates.where((entry) => entry.id == templateId), isEmpty);
+    expect(snapshot.cards.where((entry) => entry.templateId == templateId),
+        isEmpty);
+  });
+
+  testWidgets('template workspace opens edit, export and delete menu',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1280, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -33,8 +77,14 @@ void main() {
 
     await tester.tap(find.text('Шаблоны'));
     await tester.pumpAndSettle();
+    expect(find.text('Удалить'), findsOneWidget);
+    expect(find.byKey(const Key('spbTemplateWorkspace')), findsOneWidget);
+    expect(
+      find.byKey(const Key('spbCentralTemplate-tpl_password')),
+      findsOneWidget,
+    );
     await tester.tap(
-      find.byKey(const Key('spbTemplate-tpl_password')),
+      find.byKey(const Key('spbCentralTemplate-tpl_password')),
       buttons: kSecondaryMouseButton,
     );
     await tester.pumpAndSettle();
@@ -44,6 +94,29 @@ void main() {
       find.byKey(const Key('exportTemplateContextAction')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const Key('deleteTemplateContextAction')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('template empty workspace opens import menu', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Шаблоны'));
+    await tester.pumpAndSettle();
+    final workspace = find.byKey(const Key('spbTemplateWorkspace'));
+    final emptyPoint = tester.getBottomRight(workspace) - const Offset(20, 20);
+    await tester.tapAt(emptyPoint, buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+
+    expect(
+        find.byKey(const Key('importTemplateContextAction')), findsOneWidget);
   });
 
   testWidgets('card export creates password protected and passwordless SWL',

@@ -444,6 +444,22 @@ class CategoryTreeNode {
   bool get isEmpty => children.isEmpty && cards.isEmpty;
 }
 
+enum SessionTrashKind { card, folder, template }
+
+class SessionTrashEntry {
+  const SessionTrashEntry({
+    required this.kind,
+    required this.id,
+    required this.title,
+    required this.iconId,
+  });
+
+  final SessionTrashKind kind;
+  final String id;
+  final String title;
+  final String iconId;
+}
+
 class ExistingVault {
   const ExistingVault({
     required this.title,
@@ -1931,6 +1947,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   bool spbFoundExpanded = true;
   bool spbFrequentExpanded = true;
   bool spbObjectMenuPointerActive = false;
+  final GlobalKey spbSessionTrashButtonKey = GlobalKey();
   final ScrollController spbFoundScrollController = ScrollController();
   final ScrollController spbFrequentScrollController = ScrollController();
   Timer? inactivityTimer;
@@ -1951,6 +1968,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   Set<String> categoryPaths = {};
   final Set<String> revealed = {};
   final Map<String, String> syncConfig = {};
+  final List<SessionTrashEntry> sessionTrash = [];
+  final Set<String> sessionTrashCardIds = {};
+  final Set<String> sessionTrashFolderPaths = {};
+  final Set<String> sessionTrashTemplateIds = {};
 
   bool get createMode => entryMode == EntryMode.createSwl;
 
@@ -2072,6 +2093,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     inactivityTimer?.cancel();
     inactivityCountdownTimer?.cancel();
+    purgeSessionTrashFromDatabase();
     persistVaultState();
     spbWallet?.close();
     passwordUnlockDebounce?.cancel();
@@ -2087,6 +2109,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached) {
+      purgeSessionTrashFromDatabase();
+    }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
@@ -2101,6 +2126,49 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (wallet == null) return;
     wallet.saveRecentlyOpenedCardIds(recentlyOpenedItemIds);
     wallet.flushToDisk();
+  }
+
+  bool isPathInSessionTrash(String path) {
+    final normalized = path.trim();
+    return sessionTrashFolderPaths.any(
+      (folderPath) =>
+          normalized == folderPath || normalized.startsWith('$folderPath / '),
+    );
+  }
+
+  void purgeSessionTrashFromDatabase() {
+    final wallet = spbWallet;
+    if (wallet == null || sessionTrash.isEmpty) {
+      sessionTrash.clear();
+      sessionTrashCardIds.clear();
+      sessionTrashFolderPaths.clear();
+      sessionTrashTemplateIds.clear();
+      return;
+    }
+    final rootFolders = sessionTrashFolderPaths.where(
+      (path) => !sessionTrashFolderPaths.any(
+        (other) => other != path && path.startsWith('$other / '),
+      ),
+    );
+    for (final path in rootFolders) {
+      wallet.deleteCategory(path);
+    }
+    for (final cardId in sessionTrashCardIds) {
+      wallet.deleteCard(cardId);
+    }
+    for (final templateId in sessionTrashTemplateIds) {
+      wallet.deleteTemplate(templateId);
+    }
+    sessionTrash.clear();
+    sessionTrashCardIds.clear();
+    sessionTrashFolderPaths.clear();
+    sessionTrashTemplateIds.clear();
+    wallet.flushToDisk();
+  }
+
+  Future<void> finalizeSessionTrash() async {
+    purgeSessionTrashFromDatabase();
+    await writeBackSpbWallet();
   }
 
   void scheduleAutomaticUnlock() {
@@ -2129,6 +2197,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       try {
         if (automatic) automaticUnlockInProgress = true;
         await loadSpb64PngIconAssets();
+        if (spbWallet != null) {
+          await finalizeSessionTrash();
+        }
         spbWallet?.close();
         final wallet = SpbWalletDatabase.open(spbWalletPath!, password);
         final snapshot = wallet.loadSnapshot();
@@ -2379,6 +2450,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     await loadSpb64PngIconAssets();
     final wallet = SpbWalletDatabase.open(file.path, password);
     final snapshot = wallet.loadSnapshot();
+    if (spbWallet != null) {
+      await finalizeSessionTrash();
+    }
     spbWallet?.close();
     spbWallet = wallet;
     setState(() {
@@ -2688,6 +2762,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     required String? sourcePath,
     required String? sourceUrl,
   }) async {
+    if (spbWallet != null) {
+      await finalizeSessionTrash();
+    }
     spbWallet?.close();
     await loadSpb64PngIconAssets();
     final wallet = SpbWalletDatabase.open(localPath, password);
@@ -3152,10 +3229,23 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   void applySpbSnapshot(SpbWalletSnapshot snapshot) {
     spbEmbeddedIconPngs =
         Map<String, Uint8List>.from(snapshot.embeddedIconPngs);
-    templates = spbTemplatesToUi(snapshot.templates);
-    items = spbCardsToUi(snapshot.cards);
-    categoryIconsByPath = spbCategoryIconsToUi(snapshot.categories);
-    categoryPaths = spbCategoryPathsToUi(snapshot.categories);
+    final loadedTemplates = spbTemplatesToUi(snapshot.templates);
+    templates = loadedTemplates;
+    items = spbCardsToUi(snapshot.cards)
+        .where(
+          (item) =>
+              !sessionTrashCardIds.contains(item.id) &&
+              !sessionTrashTemplateIds.contains(item.templateId) &&
+              !isPathInSessionTrash(item.category),
+        )
+        .toList();
+    templates = loadedTemplates
+        .where((template) => !sessionTrashTemplateIds.contains(template.id))
+        .toList();
+    categoryIconsByPath = spbCategoryIconsToUi(snapshot.categories)
+      ..removeWhere((path, _) => isPathInSessionTrash(path));
+    categoryPaths = spbCategoryPathsToUi(snapshot.categories)
+      ..removeWhere(isPathInSessionTrash);
     final validIds = items.map((item) => item.id).toSet();
     recentlyOpenedItemIds
       ..clear()
@@ -3462,6 +3552,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   Widget buildSpbSearchBar({
     bool mobile = false,
     double? desktopNavigatorWidth,
+    double? desktopActionsPanelWidth,
   }) {
     final searchField = OverflowBox(
       maxHeight: 68,
@@ -3534,6 +3625,36 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
+                const SizedBox(width: 4),
+                buildSpbSearchButton(
+                  key: const Key('spbClearSearchButton'),
+                  icon: Icons.close,
+                  tooltip: 'Очистить поиск',
+                  gradient: const [Color(0xffff6b63), Color(0xffc90000)],
+                  onTap: () {
+                    searchController.clear();
+                    setState(() => spbSubmittedSearchQuery = '');
+                  },
+                ),
+                const SizedBox(width: 4),
+                buildSpbSearchButton(
+                  key: const Key('spbSubmitSearchButton'),
+                  icon: Icons.search,
+                  tooltip: 'Начать поиск',
+                  gradient: const [Color(0xff42bff5), Color(0xff006fc4)],
+                  onTap: () => submitSpbSearch(searchController.text),
+                ),
+                const SizedBox(width: 4),
+                buildSpbSearchButton(
+                  key: spbSessionTrashButtonKey,
+                  icon: Icons.delete_forever_outlined,
+                  tooltip: 'Восстановить удалённые',
+                  gradient: const [
+                    Color(0xff5bc96d),
+                    Color(0xff08772f),
+                  ],
+                  onTap: showSessionTrashMenu,
+                ),
               ],
             )
           : Stack(
@@ -3584,9 +3705,93 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
+                Positioned(
+                  right: (desktopActionsPanelWidth ?? 300) + 13,
+                  top: 0,
+                  child: buildSpbSearchButton(
+                    key: spbSessionTrashButtonKey,
+                    icon: Icons.delete_forever_outlined,
+                    tooltip: 'Восстановить удалённые',
+                    gradient: const [
+                      Color(0xff5bc96d),
+                      Color(0xff08772f),
+                    ],
+                    onTap: showSessionTrashMenu,
+                  ),
+                ),
               ],
             ),
     );
+  }
+
+  Future<void> showSessionTrashMenu() async {
+    final buttonContext = spbSessionTrashButtonKey.currentContext;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final button = buttonContext?.findRenderObject() as RenderBox?;
+    if (button == null || overlay == null) return;
+    final offset = button.localToGlobal(Offset.zero, ancestor: overlay);
+    final entries = sessionTrash.reversed.toList();
+    final selected = await showMenu<SessionTrashEntry>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        offset.dx,
+        offset.dy + button.size.height,
+        overlay.size.width - offset.dx - button.size.width,
+        0,
+      ),
+      items: entries.isEmpty
+          ? const [
+              PopupMenuItem<SessionTrashEntry>(
+                enabled: false,
+                child: Text('Корзина пуста'),
+              ),
+            ]
+          : [
+              for (final entry in entries)
+                PopupMenuItem<SessionTrashEntry>(
+                  value: entry,
+                  child: Row(
+                    children: [
+                      templateIconWidget(entry.iconId, size: 28),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          entry.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+    );
+    if (selected != null && mounted) {
+      restoreSessionTrashEntry(selected);
+    }
+  }
+
+  void restoreSessionTrashEntry(SessionTrashEntry entry) {
+    switch (entry.kind) {
+      case SessionTrashKind.card:
+        sessionTrashCardIds.remove(entry.id);
+        break;
+      case SessionTrashKind.folder:
+        sessionTrashFolderPaths.remove(entry.id);
+        break;
+      case SessionTrashKind.template:
+        sessionTrashTemplateIds.remove(entry.id);
+        break;
+    }
+    sessionTrash.remove(entry);
+    final wallet = spbWallet;
+    if (wallet == null) return;
+    final snapshot = wallet.loadSnapshot();
+    setState(() {
+      applySpbSnapshot(snapshot);
+      message = null;
+    });
   }
 
   Widget buildSpbSearchButton({
@@ -3701,7 +3906,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 .toDouble();
             return Column(
               children: [
-                buildSpbSearchBar(desktopNavigatorWidth: navigatorWidth),
+                buildSpbSearchBar(
+                  desktopNavigatorWidth: navigatorWidth,
+                  desktopActionsPanelWidth: rightPanelWidth,
+                ),
                 Expanded(
                   child: Stack(
                     children: [
@@ -3713,7 +3921,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                             child: buildSpbNavigator(),
                           ),
                           const VerticalDivider(width: 1, thickness: 1),
-                          Expanded(child: buildSpbFolderGrid()),
+                          Expanded(
+                            child: mobileTemplatesOpen
+                                ? buildSpbTemplateWorkspace()
+                                : buildSpbFolderGrid(),
+                          ),
                           const VerticalDivider(width: 1, thickness: 1),
                           SizedBox(
                             width: rightPanelWidth,
@@ -3816,14 +4028,25 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               ),
             ),
             buildSpbSearchBar(mobile: true),
-            if (mobilePane == 0) spbSectionHeader(paneTitle, height: 42),
+            if (mobilePane == 0)
+              GestureDetector(
+                key: const Key('spbMobilePaneHeader'),
+                behavior: HitTestBehavior.opaque,
+                onTap: mobileTemplatesOpen
+                    ? null
+                    : () => setState(() {
+                          selectedCategoryPath = '';
+                          mobilePane = 1;
+                        }),
+                child: spbSectionHeader(paneTitle, height: 42),
+              ),
             Expanded(
               child: switch (mobilePane) {
                 1 => buildSpbFolderGrid(),
                 2 => buildSpbActionsPanel(),
                 _ => mobileTemplatesOpen
-                    ? buildSpbTemplateTree()
-                    : buildSpbTreeBody(),
+                    ? buildSpbTemplateWorkspace()
+                    : buildSpbTreeBody(showWalletRoot: false),
               },
             ),
             if (mobilePane == 0) ...[
@@ -3894,8 +4117,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   void showSpbTemplatesMode() {
+    searchController.clear();
     setState(() {
       mobileTemplatesOpen = true;
+      spbSubmittedSearchQuery = '';
       if (templates.isNotEmpty &&
           !templates.any((template) => template.id == selectedTemplateId)) {
         selectedTemplateId = templates.first.id;
@@ -4245,6 +4470,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           value: 'export',
           child: Text('Экспортировать'),
         ),
+        PopupMenuItem(
+          key: Key('deleteTemplateContextAction'),
+          value: 'delete',
+          child: Text('Удалить'),
+        ),
       ],
     );
     if (!mounted || selected == null) return;
@@ -4252,6 +4482,149 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       await openTemplateDialog(template: template);
     } else if (selected == 'export') {
       await exportSelectedSpbTemplate();
+    } else if (selected == 'delete') {
+      await deleteTemplateWithConfirmation(template);
+    }
+  }
+
+  Widget buildSpbTemplateWorkspace() {
+    final query = searchController.text.trim().toLowerCase();
+    final visible = templates
+        .where((template) =>
+            query.isEmpty || template.name.toLowerCase().contains(query))
+        .toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        spbSectionHeader(
+          'Шаблоны',
+          trailing: spbResourceIcon('icon_templates.png', 23),
+        ),
+        Expanded(
+          child: GestureDetector(
+            key: const Key('spbTemplateWorkspace'),
+            behavior: HitTestBehavior.translucent,
+            onSecondaryTapDown: (details) =>
+                showSpbTemplateImportMenu(details.globalPosition),
+            onLongPressStart: (details) =>
+                showSpbTemplateImportMenu(details.globalPosition),
+            child: GridView.builder(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 112,
+                mainAxisExtent: 105,
+                crossAxisSpacing: 5,
+                mainAxisSpacing: 8,
+              ),
+              itemCount: visible.length,
+              itemBuilder: (context, index) {
+                final template = visible[index];
+                return KeyedSubtree(
+                  key: ValueKey('spbCentralTemplate-${template.id}'),
+                  child: buildSpbGridEntry(
+                    label: template.name,
+                    icon: spbSizedDataIcon(template.iconId, 50.25),
+                    onTap: () =>
+                        setState(() => selectedTemplateId = template.id),
+                    onContextMenu: (position) =>
+                        showSpbTemplateMenu(template, position),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> showSpbTemplateImportMenu(Offset globalPosition) async {
+    if (spbObjectMenuPointerActive) return;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(
+          key: Key('importTemplateContextAction'),
+          value: 'import',
+          child: Text('Импортировать'),
+        ),
+      ],
+    );
+    if (selected == 'import' && mounted) {
+      await importSpbTemplate();
+    }
+  }
+
+  Future<bool> deleteTemplateWithConfirmation(CardTemplate template) async {
+    final linkedCards =
+        items.where((item) => item.templateId == template.id).length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Удалить шаблон?'),
+        content: Text(
+          linkedCards == 0
+              ? 'Шаблон "${template.name}" будет перемещён во внутреннюю корзину.'
+              : 'Шаблон "${template.name}" и связанные с ним карточки '
+                  '($linkedCards) будут перемещены во внутреннюю корзину.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return false;
+    final wallet = spbWallet;
+    if (wallet == null) {
+      showTemplateActionMessage(
+        'Откройте или создайте .swl базу перед удалением шаблонов.',
+      );
+      return false;
+    }
+    try {
+      sessionTrashTemplateIds.add(template.id);
+      sessionTrash.add(
+        SessionTrashEntry(
+          kind: SessionTrashKind.template,
+          id: template.id,
+          title: template.name,
+          iconId: template.iconId,
+        ),
+      );
+      final snapshot = wallet.loadSnapshot();
+      setState(() {
+        applySpbSnapshot(snapshot);
+        if (selectedTemplateId == template.id) {
+          selectedTemplateId = templates.isEmpty ? null : templates.first.id;
+        }
+        if (selectedItemId != null &&
+            !items.any((item) => item.id == selectedItemId)) {
+          selectedItemId = null;
+        }
+        message = null;
+      });
+      return true;
+    } catch (error) {
+      sessionTrashTemplateIds.remove(template.id);
+      sessionTrash.removeWhere(
+        (entry) =>
+            entry.kind == SessionTrashKind.template && entry.id == template.id,
+      );
+      showTemplateActionMessage('Не удалось удалить шаблон: $error');
+      return false;
     }
   }
 
@@ -4875,8 +5248,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         sourcePath = selected.path!;
       } else {
         final bytes = selected.bytes;
-        if (bytes == null)
+        if (bytes == null) {
           throw const FormatException('Не удалось прочитать SWL.');
+        }
         final directory = await getTemporaryDirectory();
         temporary = File(
           '${directory.path}${Platform.pathSeparator}'
@@ -5022,6 +5396,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           spbResourceIcon('icon_share.png', 40),
           'Экспорт',
           exportSelectedSpbTemplate
+        ),
+        (
+          const Icon(
+            Icons.delete_outline,
+            size: 36,
+            color: Color(0xff33434f),
+          ),
+          'Удалить',
+          deleteSelectedSpbTemplate
         ),
       ];
     }
@@ -5450,7 +5833,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   Future<void> lockVault() async {
-    await writeBackSpbWallet();
+    await finalizeSessionTrash();
     spbWallet?.close();
     spbWallet = null;
     syncSourcePath = null;
@@ -5646,6 +6029,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   Future<void> exitApplication() async {
+    purgeSessionTrashFromDatabase();
     persistVaultState();
     await writeBackSpbWallet();
     passwordController.clear();
@@ -5738,6 +6122,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     closingForInactivity = true;
     inactivityTimer?.cancel();
     inactivityTimer = null;
+    purgeSessionTrashFromDatabase();
     persistVaultState();
     await writeBackSpbWallet();
     spbWallet?.close();
@@ -5752,6 +6137,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   Widget passwordKey({
     required String label,
     required VoidCallback onPressed,
+    Widget? child,
     Color top = const Color(0xff2483bc),
     Color bottom = const Color(0xff07436c),
     double fontSize = 34,
@@ -5788,18 +6174,19 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               onTap: onPressed,
               borderRadius: BorderRadius.circular(3),
               child: Center(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: fontSize,
-                    height: 1,
-                    fontWeight: fontWeight,
-                    shadows: const [
-                      Shadow(color: Colors.black45, offset: Offset(1, 1)),
-                    ],
-                  ),
-                ),
+                child: child ??
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: fontSize,
+                        height: 1,
+                        fontWeight: fontWeight,
+                        shadows: const [
+                          Shadow(color: Colors.black45, offset: Offset(1, 1)),
+                        ],
+                      ),
+                    ),
               ),
             ),
           ),
@@ -6202,7 +6589,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                         height: 40,
                                         child: IgnorePointer(
                                           child: passwordKey(
-                                            label: 'X',
+                                            label: 'Открыть файл',
+                                            child: const Icon(
+                                              Icons.folder_outlined,
+                                              color: Colors.white,
+                                              size: 25,
+                                            ),
                                             height: 40,
                                             fontSize: 18,
                                             onPressed: () {},
@@ -6997,8 +7389,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted) return;
       try {
-        wallet.deleteCategory(folder.path);
-        await writeBackSpbWallet();
+        sessionTrashFolderPaths.add(folder.path);
+        sessionTrash.add(
+          SessionTrashEntry(
+            kind: SessionTrashKind.folder,
+            id: folder.path,
+            title: folder.name,
+            iconId: folder.iconId ?? defaultIconForCategoryPath(folder.path),
+          ),
+        );
         final snapshot = wallet.loadSnapshot();
         setState(() {
           applySpbSnapshot(snapshot);
@@ -7067,8 +7466,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (parentParts.isNotEmpty) parentParts.removeLast();
     final parentPath = parentParts.join(' / ');
     try {
-      wallet.deleteCategory(folder.path);
-      await writeBackSpbWallet();
+      sessionTrashFolderPaths.add(folder.path);
+      sessionTrash.add(
+        SessionTrashEntry(
+          kind: SessionTrashKind.folder,
+          id: folder.path,
+          title: folder.name,
+          iconId: folder.iconId ?? defaultIconForCategoryPath(folder.path),
+        ),
+      );
       final snapshot = wallet.loadSnapshot();
       setState(() {
         applySpbSnapshot(snapshot);
@@ -7548,8 +7954,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       return false;
     }
     try {
-      wallet.deleteCard(item.id);
-      await writeBackSpbWallet();
+      sessionTrashCardIds.add(item.id);
+      sessionTrash.add(
+        SessionTrashEntry(
+          kind: SessionTrashKind.card,
+          id: item.id,
+          title: item.title,
+          iconId: itemIconId(item, templateFor(item.templateId)),
+        ),
+      );
       final snapshot = wallet.loadSnapshot();
       setState(() {
         applySpbSnapshot(snapshot);
@@ -8003,6 +8416,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       return;
     }
     await openTemplateDialog(template: template);
+  }
+
+  Future<void> deleteSelectedSpbTemplate() async {
+    final template = selectedSpbTemplate();
+    if (template == null) {
+      showTemplateActionMessage('Выберите шаблон для удаления.');
+      return;
+    }
+    await deleteTemplateWithConfirmation(template);
   }
 
   Future<void> importSpbTemplate() async {

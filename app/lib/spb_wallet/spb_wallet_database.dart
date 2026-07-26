@@ -381,6 +381,47 @@ class SpbWalletDatabase {
     });
   }
 
+  void deleteTemplate(String templateId) {
+    _transaction(() {
+      final cardRows = _db.select(
+        'SELECT hex(ID) AS ID FROM spbwlt_Card WHERE hex(TemplateID) = ?',
+        [templateId],
+      );
+      for (final row in cardRows) {
+        _deleteCardById(_string(row['ID']));
+      }
+      final templateRows = _db.select(
+        'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?',
+        [templateId],
+      );
+      final cardViewId =
+          templateRows.isEmpty ? '' : _string(templateRows.first['CardViewID']);
+      _db.execute(
+        'DELETE FROM spbwlt_CardViewField WHERE hex(TemplateFieldID) IN '
+        '(SELECT hex(ID) FROM spbwlt_TemplateField WHERE hex(TemplateID) = ?)',
+        [templateId],
+      );
+      _db.execute(
+        'DELETE FROM spbwlt_TemplateField WHERE hex(TemplateID) = ?',
+        [templateId],
+      );
+      _db.execute(
+        'DELETE FROM spbwlt_Template WHERE hex(ID) = ?',
+        [templateId],
+      );
+      if (cardViewId.isNotEmpty) {
+        _db.execute(
+          'DELETE FROM spbwlt_CardViewField WHERE hex(CardViewID) = ?',
+          [cardViewId],
+        );
+        _db.execute(
+          'DELETE FROM spbwlt_CardView WHERE hex(ID) = ?',
+          [cardViewId],
+        );
+      }
+    });
+  }
+
   void ensureCategoryPath(String path) {
     if (path.trim().isEmpty) return;
     _transaction(() => _ensureCategoryPath(path));

@@ -81,7 +81,10 @@ void main() {
     expect(find.text('Шаблоны'), findsOneWidget);
     expect(find.text('Задачи'), findsNothing);
     expect(find.text('−'), findsNothing);
-    await tester.tap(find.byKey(const Key('spbWalletRoot')));
+    expect(find.byKey(const Key('spbWalletRoot')), findsNothing);
+    expect(find.byKey(const Key('spbClearSearchButton')), findsOneWidget);
+    expect(find.byKey(const Key('spbSubmitSearchButton')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('spbMobilePaneHeader')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('mobilePaneBack')), findsOneWidget);
     expect(find.byKey(const Key('mobilePaneForward')), findsOneWidget);
