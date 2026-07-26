@@ -1924,6 +1924,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   String? spbWalletPath;
   String? spbWalletUri;
   String? spbWalletDisplayPath;
+  bool spbWalletWritable = true;
+  bool spbWritePending = false;
   String? syncSourcePath;
   String? syncSourceUrl;
   String? syncOriginProvider;
@@ -2266,6 +2268,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         setState(() {
           spbWalletPath = path;
           spbWalletUri = picked['uri']?.toString();
+          spbWalletWritable = picked['writable'] != false;
           spbWalletDisplayPath =
               picked['displayPath']?.toString() ?? spbWalletUri;
           syncSourcePath = null;
@@ -2276,12 +2279,17 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           message = null;
         });
         final uri = spbWalletUri;
-        if (uri != null && uri.isNotEmpty) {
+        if (uri != null && uri.isNotEmpty && picked['persisted'] != false) {
           await rememberRecentVaultEntry(ExistingVault(
             title: vaultNameController.text,
             uri: uri,
             displayPath: spbWalletDisplayPath,
           ));
+        } else if (picked['persisted'] == false) {
+          showSpbOperationMessage(
+            'Поставщик файла не разрешил постоянный доступ. После '
+            'перезапуска файл потребуется выбрать снова.',
+          );
         }
       } catch (error) {
         setState(() => message = 'Не удалось выбрать .swl файл: $error');
@@ -2383,7 +2391,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     setState(() => recentVaults = entries);
   }
 
-  Future<void> createSwlVault(String password, {File? targetFile}) async {
+  Future<void> createSwlVault(
+    String password, {
+    File? targetFile,
+    bool rememberLocalFile = true,
+  }) async {
     final file = targetFile ?? await swlVaultFile();
     if (file.existsSync()) {
       throw StateError(
@@ -2470,11 +2482,16 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       activeView = 'cards';
       message = null;
     });
-    await rememberRecentVault(file.path);
+    if (rememberLocalFile) {
+      await rememberRecentVault(file.path);
+    }
   }
 
   Future<void> createNewVaultFromLogin() async {
     final pathController = TextEditingController();
+    if (Platform.isAndroid) {
+      pathController.text = 'Android-хранилище';
+    }
     final nameController = TextEditingController(text: 'Новая база');
     final newPasswordController = TextEditingController();
     final repeatPasswordController = TextEditingController();
@@ -2540,18 +2557,24 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                       controller: pathController,
                       readOnly: true,
                       autofocus: true,
-                      onTap: () => pickNewVaultDirectory(setDialogState),
+                      onTap: Platform.isAndroid
+                          ? null
+                          : () => pickNewVaultDirectory(setDialogState),
                       decoration: InputDecoration(
                         labelText: 'Назначить путь',
-                        hintText: 'Выберите папку для новой базы',
+                        hintText: Platform.isAndroid
+                            ? 'Файл будет выбран системным диалогом'
+                            : 'Выберите папку для новой базы',
                         border: const OutlineInputBorder(),
-                        suffixIcon: IconButton(
-                          key: const Key('browseNewVaultPath'),
-                          tooltip: 'Выбрать папку в проводнике',
-                          icon: const Icon(Icons.folder_open_outlined),
-                          onPressed: () =>
-                              pickNewVaultDirectory(setDialogState),
-                        ),
+                        suffixIcon: Platform.isAndroid
+                            ? const Icon(Icons.phone_android)
+                            : IconButton(
+                                key: const Key('browseNewVaultPath'),
+                                tooltip: 'Выбрать папку в проводнике',
+                                icon: const Icon(Icons.folder_open_outlined),
+                                onPressed: () =>
+                                    pickNewVaultDirectory(setDialogState),
+                              ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -2617,7 +2640,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                       final name = nameController.text.trim().replaceAll(
                           RegExp(r'\.swl$', caseSensitive: false), '');
                       final newPassword = newPasswordController.text;
-                      if (selectedDirectory.isEmpty) {
+                      if (!Platform.isAndroid && selectedDirectory.isEmpty) {
                         setDialogState(
                           () => dialogError =
                               'Назначьте путь для файла новой базы.',
@@ -2647,15 +2670,59 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                       });
                       vaultNameController.text = name;
                       try {
-                        final targetFile = File(
-                          '${Directory(selectedDirectory).path}'
-                          '${Platform.pathSeparator}'
-                          '$normalizedVaultBaseName.swl',
-                        );
-                        await createSwlVault(
-                          newPassword,
-                          targetFile: targetFile,
-                        );
+                        if (Platform.isAndroid) {
+                          final document = await spbWalletChannel
+                              .invokeMapMethod<String, Object?>(
+                            'createSpbWalletDocument',
+                            {'displayName': '$normalizedVaultBaseName.swl'},
+                          );
+                          if (document == null) {
+                            if (dialogContext.mounted) {
+                              setDialogState(() => isCreating = false);
+                            }
+                            return;
+                          }
+                          final directory = await appVaultDirectory();
+                          final targetFile = File(
+                            '${directory.path}${Platform.pathSeparator}'
+                            '${DateTime.now().microsecondsSinceEpoch}_'
+                            '$normalizedVaultBaseName.swl',
+                          );
+                          await createSwlVault(
+                            newPassword,
+                            targetFile: targetFile,
+                            rememberLocalFile: false,
+                          );
+                          spbWalletUri = document['uri']?.toString();
+                          spbWalletDisplayPath =
+                              document['displayPath']?.toString() ??
+                                  document['displayName']?.toString();
+                          spbWalletWritable = document['writable'] != false;
+                          final written = await writeBackSpbWallet();
+                          if (!written) {
+                            throw StateError(
+                              'Не удалось записать новую базу в выбранный файл.',
+                            );
+                          }
+                          await rememberRecentVaultEntry(
+                            ExistingVault(
+                              title: document['displayName']?.toString() ??
+                                  '$normalizedVaultBaseName.swl',
+                              uri: spbWalletUri,
+                              displayPath: spbWalletDisplayPath,
+                            ),
+                          );
+                        } else {
+                          final targetFile = File(
+                            '${Directory(selectedDirectory).path}'
+                            '${Platform.pathSeparator}'
+                            '$normalizedVaultBaseName.swl',
+                          );
+                          await createSwlVault(
+                            newPassword,
+                            targetFile: targetFile,
+                          );
+                        }
                         entryMode = EntryMode.openSwl;
                         if (dialogContext.mounted) {
                           Navigator.of(dialogContext).pop();
@@ -2900,6 +2967,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           message = null;
           spbWalletPath = localPath;
           spbWalletUri = vault.uri;
+          spbWalletWritable = copied?['writable'] != false;
           spbWalletDisplayPath =
               copied?['displayPath']?.toString() ?? vault.displayPath;
           syncSourcePath = null;
@@ -2914,6 +2982,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           message = null;
           spbWalletPath = vault.path;
           spbWalletUri = null;
+          spbWalletWritable = true;
           spbWalletDisplayPath = vault.displayPath ?? vault.path;
           syncSourcePath = null;
           syncSourceUrl = null;
@@ -2938,10 +3007,19 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     try {
       spbWallet?.flushToDisk();
       if (Platform.isAndroid && spbWalletUri != null && spbWalletPath != null) {
-        await spbWalletChannel.invokeMethod<bool>('writeSpbWallet', {
+        if (!spbWalletWritable) {
+          throw StateError(
+            'Файл открыт только для чтения. Выберите доступный для записи файл.',
+          );
+        }
+        final written =
+            await spbWalletChannel.invokeMethod<bool>('writeSpbWallet', {
           'uri': spbWalletUri,
           'localPath': spbWalletPath,
         });
+        if (written != true) {
+          throw StateError('Android не подтвердил запись файла.');
+        }
       }
       if (syncSourcePath != null &&
           spbWalletPath != null &&
@@ -2957,14 +3035,29 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           syncSourceUrl != null) {
         lastSyncAt = DateTime.now();
       }
+      spbWritePending = false;
     } catch (error) {
       ok = false;
+      spbWritePending = true;
       if (mounted) {
-        setState(() => message =
-            'Изменения сохранены во временный файл, но не записаны обратно в исходную .swl базу: $error');
+        final failure =
+            'Изменения сохранены в рабочей копии, но не записаны в исходную '
+            '.swl базу: $error';
+        setState(() => message = failure);
+        showSpbOperationMessage(failure);
       }
     }
     return ok;
+  }
+
+  bool ensureSpbWalletWritable() {
+    if (!Platform.isAndroid || spbWalletUri == null || spbWalletWritable) {
+      return true;
+    }
+    showSpbOperationMessage(
+      'Эта база открыта только для чтения. Изменения не выполнялись.',
+    );
+    return false;
   }
 
   Future<void> createDatedArchiveCopy() async {
@@ -2972,13 +3065,35 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       setState(() => message = 'Сначала откройте .swl базу.');
       return;
     }
-    if (Platform.isAndroid && spbWalletUri != null) {
-      setState(() => message =
-          'Для базы из Android-хранилища выберите локальную папку экспорта.');
-      return;
-    }
     final saved = await writeBackSpbWallet();
     if (!saved || !mounted) return;
+    if (Platform.isAndroid) {
+      try {
+        final now = DateTime.now();
+        String two(int value) => value.toString().padLeft(2, '0');
+        final baseName = selectedVaultTitle.replaceAll(
+          RegExp(r'[\\/:*?"<>|]'),
+          '_',
+        );
+        final bytes = await File(spbWalletPath!).readAsBytes();
+        final path = await FilePicker.platform.saveFile(
+          dialogTitle: 'Сохранить архивную копию',
+          fileName: '${baseName}_${now.year}${two(now.month)}'
+              '${two(now.day)}_${two(now.hour)}${two(now.minute)}.swl',
+          type: FileType.custom,
+          allowedExtensions: const ['swl'],
+          bytes: bytes,
+        );
+        if (path != null) {
+          showSpbOperationMessage('Архивная копия сохранена.');
+        }
+      } catch (error) {
+        showSpbOperationMessage(
+          'Не удалось сохранить архивную копию: $error',
+        );
+      }
+      return;
+    }
     final sourcePath = syncSourcePath ?? spbWalletPath!;
     final source = File(sourcePath);
     if (!source.existsSync()) {
@@ -3230,6 +3345,41 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     spbEmbeddedIconPngs =
         Map<String, Uint8List>.from(snapshot.embeddedIconPngs);
     final loadedTemplates = spbTemplatesToUi(snapshot.templates);
+    final knownTemplateIds =
+        loadedTemplates.map((template) => template.id).toSet();
+    final missingTemplateIds = snapshot.cards
+        .map((card) => card.templateId)
+        .where((id) => !knownTemplateIds.contains(id))
+        .toSet();
+    for (final templateId in missingTemplateIds) {
+      final fieldIds = snapshot.cards
+          .where((card) => card.templateId == templateId)
+          .expand((card) => card.fieldValues.keys)
+          .toSet()
+          .toList()
+        ..sort();
+      loadedTemplates.add(
+        CardTemplate(
+          id: templateId,
+          name: 'Неизвестный шаблон',
+          iconId: 'key',
+          colorId: 'neutral',
+          fields: [
+            for (var index = 0; index < fieldIds.length; index++)
+              FieldDefinition(
+                id: fieldIds[index],
+                label: 'Сохранённое поле ${index + 1}',
+                type: 'text',
+              ),
+            const FieldDefinition(
+              id: spbDescriptionFieldId,
+              label: 'Заметки',
+              type: 'multiline_note',
+            ),
+          ],
+        ),
+      );
+    }
     templates = loadedTemplates;
     items = spbCardsToUi(snapshot.cards)
         .where(
@@ -3452,12 +3602,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     ensureInactivityTimer();
     final shell = LayoutBuilder(
       builder: (context, constraints) {
-        final androidPortrait =
-            defaultTargetPlatform == TargetPlatform.android &&
-                constraints.maxHeight >= constraints.maxWidth;
-        final mobile = androidPortrait ||
-            (defaultTargetPlatform != TargetPlatform.android &&
-                constraints.maxWidth < 700);
+        final mobile =
+            constraints.maxWidth < 700 || constraints.maxHeight < 500;
         return mobile ? buildSpbMobileShell() : buildSpbDesktopShell();
       },
     );
@@ -3997,9 +4143,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   Widget buildSpbMobileShell() {
     final paneTitle = switch (mobilePane) {
-      1 => selectedCategoryPath.isEmpty
-          ? selectedVaultTitle
-          : categoryParts(selectedCategoryPath).last,
+      1 => mobileTemplatesOpen
+          ? 'Задачи'
+          : selectedCategoryPath.isEmpty
+              ? selectedVaultTitle
+              : categoryParts(selectedCategoryPath).last,
       2 => 'Задачи',
       _ => mobileTemplatesOpen ? 'Шаблоны' : 'Мои карточки',
     };
@@ -4015,15 +4163,19 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               child: Row(
                 children: [
                   spbResourceIcon('icon_wallets_small.png', 40),
-                  const SizedBox(width: 7),
-                  Expanded(
-                    child: Text(
-                      selectedVaultTitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontSize: 22),
+                  if (mobileTemplatesOpen || mobilePane != 0) ...[
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        selectedVaultTitle,
+                        key: const Key('spbMobileWalletTitle'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 22),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -4041,13 +4193,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 child: spbSectionHeader(paneTitle, height: 42),
               ),
             Expanded(
-              child: switch (mobilePane) {
-                1 => buildSpbFolderGrid(),
-                2 => buildSpbActionsPanel(),
-                _ => mobileTemplatesOpen
-                    ? buildSpbTemplateWorkspace()
-                    : buildSpbTreeBody(showWalletRoot: false),
-              },
+              child: mobileTemplatesOpen
+                  ? mobilePane == 0
+                      ? buildSpbTemplateWorkspace(showHeader: false)
+                      : buildSpbActionsPanel()
+                  : switch (mobilePane) {
+                      1 => buildSpbFolderGrid(),
+                      2 => buildSpbActionsPanel(),
+                      _ => buildSpbTreeBody(showWalletRoot: false),
+                    },
             ),
             if (mobilePane == 0) ...[
               buildSpbModeButton(
@@ -4062,15 +4216,21 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 selected: mobileTemplatesOpen,
                 onTap: showSpbTemplatesMode,
               ),
+              if (mobileTemplatesOpen)
+                _Spb3dArrowButton(
+                  key: const Key('mobileTemplateTasksForward'),
+                  icon: Icons.arrow_forward,
+                  onPressed: () => setState(() => mobilePane = 1),
+                ),
             ] else
-              buildSpbMobileArrows(),
+              buildSpbMobileArrows(allowForward: !mobileTemplatesOpen),
           ],
         ),
       ),
     );
   }
 
-  Widget buildSpbMobileArrows() {
+  Widget buildSpbMobileArrows({bool allowForward = true}) {
     return Container(
       height: 52,
       decoration: const BoxDecoration(
@@ -4086,7 +4246,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               onPressed: () => setState(() => mobilePane--),
             ),
           ),
-          if (mobilePane == 1) ...[
+          if (allowForward && mobilePane == 1) ...[
             const VerticalDivider(width: 1),
             Expanded(
               child: _Spb3dArrowButton(
@@ -4113,13 +4273,17 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   void showSpbCardsMode() {
-    setState(() => mobileTemplatesOpen = false);
+    setState(() {
+      mobileTemplatesOpen = false;
+      mobilePane = 0;
+    });
   }
 
   void showSpbTemplatesMode() {
     searchController.clear();
     setState(() {
       mobileTemplatesOpen = true;
+      mobilePane = 0;
       spbSubmittedSearchQuery = '';
       if (templates.isNotEmpty &&
           !templates.any((template) => template.id == selectedTemplateId)) {
@@ -4190,7 +4354,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             children: [
               spbResourceIcon(iconFile, 40),
               const SizedBox(width: 8),
-              Text(label, style: const TextStyle(fontSize: 18)),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 18),
+                ),
+              ),
             ],
           ),
         ),
@@ -4230,7 +4401,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     bool compactRows = false,
     bool showWalletRoot = true,
   }) {
-    final root = buildCategoryTree(filteredItems());
+    final query = searchController.text.trim();
+    final root = buildCategoryTree(
+      filteredItems(),
+      includeAllCategories: query.isEmpty,
+      additionalPaths: query.isEmpty ? const [] : spbMatchingFolderPaths(query),
+    );
     return ListView(
       padding: const EdgeInsets.fromLTRB(5, 10, 5, 12),
       children: [
@@ -4487,7 +4663,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
   }
 
-  Widget buildSpbTemplateWorkspace() {
+  Widget buildSpbTemplateWorkspace({bool showHeader = true}) {
     final query = searchController.text.trim().toLowerCase();
     final visible = templates
         .where((template) =>
@@ -4497,10 +4673,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        spbSectionHeader(
-          'Шаблоны',
-          trailing: spbResourceIcon('icon_templates.png', 23),
-        ),
+        if (showHeader)
+          spbSectionHeader(
+            'Шаблоны',
+            trailing: spbResourceIcon('icon_templates.png', 23),
+          ),
         Expanded(
           child: GestureDetector(
             key: const Key('spbTemplateWorkspace'),
@@ -4529,6 +4706,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                         setState(() => selectedTemplateId = template.id),
                     onContextMenu: (position) =>
                         showSpbTemplateMenu(template, position),
+                    selected: selectedTemplateId == template.id,
                   ),
                 );
               },
@@ -4562,6 +4740,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   Future<bool> deleteTemplateWithConfirmation(CardTemplate template) async {
+    if (!ensureSpbWalletWritable()) return false;
     final linkedCards =
         items.where((item) => item.templateId == template.id).length;
     final confirmed = await showDialog<bool>(
@@ -4639,12 +4818,18 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   Widget buildSpbFolderGrid() {
-    final root = buildCategoryTree(filteredItems());
-    final node = categoryNodeAt(root, selectedCategoryPath);
     final searchQuery = spbSubmittedSearchQuery;
     final showingSearchResults = searchQuery.isNotEmpty;
+    final root = buildCategoryTree(
+      showingSearchResults ? items : filteredItems(),
+    );
+    final node = categoryNodeAt(root, selectedCategoryPath);
     final folders = showingSearchResults
-        ? <CategoryTreeNode>[]
+        ? [
+            for (final path in spbMatchingFolderPaths(searchQuery))
+              if (categoryNodeAt(root, path).path == path)
+                categoryNodeAt(root, path),
+          ]
         : (node.children.values.toList()
           ..sort(
               (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())));
@@ -4655,37 +4840,42 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        selectedCategoryPath.isEmpty
+        showingSearchResults
             ? spbSectionHeader(
-                'Мои карточки',
-                trailing: spbResourceIcon('icon_wallets_small.png', 23),
+                'Результаты поиска',
+                trailing: const Icon(Icons.search, size: 23),
               )
-            : Container(
-                height: 34,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xffb9dcf5), Color(0xfff2f9fe)],
-                  ),
-                  border: Border(bottom: BorderSide(color: _spbBorder)),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        categoryParts(selectedCategoryPath).last,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Color(0xff18364d),
-                            fontSize: 19,
-                            fontWeight: FontWeight.normal),
+            : selectedCategoryPath.isEmpty
+                ? spbSectionHeader(
+                    'Мои карточки',
+                    trailing: spbResourceIcon('icon_wallets_small.png', 23),
+                  )
+                : Container(
+                    height: 34,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xffb9dcf5), Color(0xfff2f9fe)],
                       ),
+                      border: Border(bottom: BorderSide(color: _spbBorder)),
                     ),
-                    spbResourceIcon('icon_wallets_small.png', 23),
-                  ],
-                ),
-              ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            categoryParts(selectedCategoryPath).last,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Color(0xff18364d),
+                                fontSize: 19,
+                                fontWeight: FontWeight.normal),
+                          ),
+                        ),
+                        spbResourceIcon('icon_wallets_small.png', 23),
+                      ],
+                    ),
+                  ),
         Expanded(
           child: GestureDetector(
             key: const Key('spbCentralWorkspace'),
@@ -4938,6 +5128,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     required Widget icon,
     required VoidCallback onTap,
     required ValueChanged<Offset> onContextMenu,
+    bool selected = false,
   }) {
     return GestureDetector(
       onSecondaryTapDown: (details) =>
@@ -4946,21 +5137,30 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           openSpbObjectContextMenu(onContextMenu, details.globalPosition),
       child: InkWell(
         onTap: onTap,
-        child: Column(
-          children: [
-            SizedBox(width: 68, height: 67, child: Center(child: icon)),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 15.3,
-                height: 1.05,
+        child: Container(
+          decoration: selected
+              ? const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xffb9dcf5), Color(0xffedf7fe)],
+                  ),
+                )
+              : null,
+          child: Column(
+            children: [
+              SizedBox(width: 68, height: 67, child: Center(child: icon)),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 15.3,
+                  height: 1.05,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -5233,6 +5433,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       showSpbOperationMessage('Сначала откройте базу, в которую нужен импорт.');
       return;
     }
+    if (!ensureSpbWalletWritable()) return;
     File? temporary;
     SpbWalletDatabase? source;
     try {
@@ -5324,11 +5525,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           );
         }
       }
-      await writeBackSpbWallet();
+      final written = await writeBackSpbWallet();
       final updated = destination.loadSnapshot();
       setState(() => applySpbSnapshot(updated));
       showSpbOperationMessage(
-        'Импортировано карточек: ${snapshot.cards.length}',
+        written
+            ? 'Импортировано карточек: ${snapshot.cards.length}'
+            : 'Карточки импортированы в рабочую копию, но исходный файл '
+                'записать не удалось.',
       );
     } catch (error) {
       showSpbOperationMessage('Не удалось импортировать SWL: $error');
@@ -5406,6 +5610,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           'Удалить',
           deleteSelectedSpbTemplate
         ),
+        (
+          spbResourceIcon('icon_save_enable.png', 40),
+          spbWritePending ? 'Повторить сохранение' : 'Сохранить базу',
+          runSync
+        ),
       ];
     }
     return [
@@ -5436,6 +5645,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         spbResourceIcon('icon_backup.png', 40),
         'Сделать архивную копию',
         createDatedArchiveCopy
+      ),
+      (
+        spbResourceIcon('icon_save_enable.png', 40),
+        spbWritePending ? 'Повторить сохранение' : 'Сохранить базу',
+        runSync
       ),
     ];
   }
@@ -6421,10 +6635,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       backgroundColor: const Color(0xfff4f4f4),
       body: SafeArea(
         child: Center(
-          child: FittedBox(
-            fit: BoxFit.contain,
+          child: SingleChildScrollView(
             child: SizedBox(
-              width: 562,
+              width: min(MediaQuery.sizeOf(context).width, 562),
               height: message == null ? 590 : 650,
               child: LayoutBuilder(
                 builder: (context, constraints) => SingleChildScrollView(
@@ -6562,7 +6775,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                   padding: EdgeInsets.symmetric(vertical: 18),
                                   child: Divider(height: 1),
                                 ),
-                                Row(
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  alignment: WrapAlignment.spaceBetween,
                                   children: [
                                     PopupMenuButton<String>(
                                       key: const Key('fileMenu'),
@@ -6602,7 +6818,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                         ),
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
                                     SizedBox(
                                       width: 110,
                                       child: passwordKey(
@@ -6614,7 +6829,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                         onPressed: createNewVaultFromLogin,
                                       ),
                                     ),
-                                    const Spacer(),
                                     SizedBox(
                                       width: 110,
                                       child: passwordKey(
@@ -6625,7 +6839,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                         onPressed: unlock,
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
                                     SizedBox(
                                       width: 124,
                                       child: passwordKey(
@@ -7145,9 +7358,18 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     );
   }
 
-  CategoryTreeNode buildCategoryTree(List<SecretItem> source) {
+  CategoryTreeNode buildCategoryTree(
+    List<SecretItem> source, {
+    bool includeAllCategories = true,
+    Iterable<String> additionalPaths = const [],
+  }) {
     final root = CategoryTreeNode('Мой кошелёк');
-    for (final path in {...categoryPaths, ...categoryIconsByPath.keys}) {
+    final paths = <String>{...additionalPaths};
+    if (includeAllCategories) {
+      paths.addAll(categoryPaths);
+      paths.addAll(categoryIconsByPath.keys);
+    }
+    for (final path in paths) {
       ensureCategoryTreeNode(root, path);
     }
     for (final item in source) {
@@ -7285,6 +7507,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           message = 'Откройте или создайте .swl базу перед изменением папок.');
       return;
     }
+    if (!ensureSpbWalletWritable()) return;
     final editing = folder != null;
     final nameController = TextEditingController(text: folder?.name ?? '');
     var iconId = folder?.iconId ?? defaultIconForCategoryPath(parentPath);
@@ -7424,11 +7647,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       } else {
         wallet.createCategory(fullPath, spbIconId);
       }
-      await writeBackSpbWallet();
+      final written = await writeBackSpbWallet();
       final snapshot = wallet.loadSnapshot();
       setState(() {
         applySpbSnapshot(snapshot);
-        message = null;
+        if (written) message = null;
       });
     } catch (error) {
       setState(() => message = 'Не удалось сохранить папку: $error');
@@ -7460,6 +7683,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   Future<void> deleteCategoryWithConfirmation(CategoryTreeNode folder) async {
     final wallet = spbWallet;
     if (wallet == null) return;
+    if (!ensureSpbWalletWritable()) return;
     final confirmed = await confirmDeleteCategory(folder);
     if (confirmed != true || !mounted) return;
     final parentParts = categoryParts(folder.path);
@@ -7929,6 +8153,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   Future<bool> deleteItemWithConfirmation(SecretItem item) async {
+    if (!ensureSpbWalletWritable()) return false;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -8361,6 +8586,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   Future<String?> saveSpbItem(SecretItem saved) async {
     final wallet = spbWallet;
     if (wallet == null) return null;
+    if (!ensureSpbWalletWritable()) return null;
     final cardId = isSpbHexId(saved.id) ? saved.id : SpbWalletDatabase.makeId();
     final template = templateFor(saved.templateId);
     try {
@@ -8395,12 +8621,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           );
         }
       }
-      await writeBackSpbWallet();
+      final written = await writeBackSpbWallet();
       final snapshot = wallet.loadSnapshot();
       setState(() {
         applySpbSnapshot(snapshot);
         selectedItemId = cardId;
-        message = null;
+        if (written) message = null;
       });
       return cardId;
     } catch (error) {
@@ -8515,6 +8741,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     required bool isNew,
   }) async {
     if (spbWallet != null) {
+      if (!ensureSpbWalletWritable()) return false;
       final prepared = prepareSpbTemplate(saved, isNew);
       try {
         spbWallet!.saveTemplate(
@@ -8532,12 +8759,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 .toList(),
           ),
         );
-        await writeBackSpbWallet();
+        final written = await writeBackSpbWallet();
         final snapshot = spbWallet!.loadSnapshot();
         setState(() {
           applySpbSnapshot(snapshot);
           selectedTemplateId = prepared.id;
-          message = null;
+          if (written) message = null;
         });
         return true;
       } catch (error) {
@@ -8588,6 +8815,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
     final ok = await writeBackSpbWallet();
     if (!mounted) return;
+    showSpbOperationMessage(
+      ok
+          ? 'База успешно сохранена.'
+          : 'Исходный файл не записан. Можно повторить сохранение.',
+    );
     setState(() {
       if (ok) {
         lastSyncAt = DateTime.now();

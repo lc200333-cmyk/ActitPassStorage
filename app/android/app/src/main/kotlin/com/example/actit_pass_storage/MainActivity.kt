@@ -16,13 +16,19 @@ import java.io.FileOutputStream
 class MainActivity : FlutterActivity() {
     private val channelName = "actit_pass_storage/spb_wallet"
     private val openRequestCode = 7401
+    private val createRequestCode = 7402
     private var pendingPickResult: MethodChannel.Result? = null
+    private var pendingCreateResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
             when (call.method) {
                 "pickSpbWallet" -> pickSpbWallet(result)
+                "createSpbWalletDocument" -> {
+                    val displayName = call.argument<String>("displayName") ?: "wallet.swl"
+                    createSpbWalletDocument(displayName, result)
+                }
                 "copySpbWallet" -> {
                     val uri = call.argument<String>("uri")
                     val displayName = call.argument<String>("displayName")
@@ -79,8 +85,44 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(intent, openRequestCode)
     }
 
+    private fun createSpbWalletDocument(displayName: String, result: MethodChannel.Result) {
+        if (pendingCreateResult != null) {
+            result.error("busy", "SPB Wallet creator is already open", null)
+            return
+        }
+        pendingCreateResult = result
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/octet-stream"
+            putExtra(Intent.EXTRA_TITLE, displayName)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        startActivityForResult(intent, createRequestCode)
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == createRequestCode) {
+            val result = pendingCreateResult
+            pendingCreateResult = null
+            if (result == null) return
+            if (resultCode != Activity.RESULT_OK || data?.data == null) {
+                result.success(null)
+                return
+            }
+            val uri = data.data!!
+            val flags = data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            val persisted = persistUriPermission(uri, flags)
+            val name = displayName(uri)
+            result.success(mapOf(
+                "uri" to uri.toString(),
+                "displayName" to name,
+                "displayPath" to displayPath(uri, name),
+                "writable" to uriWritable(uri, flags),
+                "persisted" to persisted
+            ))
+            return
+        }
         if (requestCode != openRequestCode) return
         val result = pendingPickResult
         pendingPickResult = null
@@ -91,15 +133,34 @@ class MainActivity : FlutterActivity() {
         }
         val uri = data.data!!
         val flags = data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        try {
-            contentResolver.takePersistableUriPermission(uri, flags)
-        } catch (_: SecurityException) {
-            // Some providers grant temporary access only. We can still work during this session.
-        }
-        copySpbWallet(uri, null, result)
+        val persisted = persistUriPermission(uri, flags)
+        copySpbWallet(uri, null, result, uriWritable(uri, flags), persisted)
     }
 
-    private fun copySpbWallet(uri: Uri, knownDisplayName: String?, result: MethodChannel.Result) {
+    private fun persistUriPermission(uri: Uri, flags: Int): Boolean {
+        return try {
+            contentResolver.takePersistableUriPermission(uri, flags)
+            true
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+    private fun uriWritable(uri: Uri, grantedFlags: Int = 0): Boolean {
+        if (uri.scheme == "file") return true
+        if (grantedFlags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0) return true
+        return contentResolver.persistedUriPermissions.any {
+            it.uri == uri && it.isWritePermission
+        }
+    }
+
+    private fun copySpbWallet(
+        uri: Uri,
+        knownDisplayName: String?,
+        result: MethodChannel.Result,
+        writable: Boolean = uriWritable(uri),
+        persisted: Boolean = contentResolver.persistedUriPermissions.any { it.uri == uri }
+    ) {
         try {
             val displayName = knownDisplayName?.takeIf { it.isNotBlank() } ?: displayName(uri)
             val local = File(cacheDir, "spbwallet_${System.currentTimeMillis()}_$displayName")
@@ -113,7 +174,9 @@ class MainActivity : FlutterActivity() {
                 "uri" to uri.toString(),
                 "localPath" to local.absolutePath,
                 "displayName" to displayName,
-                "displayPath" to displayPath(uri, displayName)
+                "displayPath" to displayPath(uri, displayName),
+                "writable" to writable,
+                "persisted" to persisted
             ))
         } catch (error: Throwable) {
             result.error("copy_failed", error.message, null)

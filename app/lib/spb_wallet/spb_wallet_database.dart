@@ -127,21 +127,16 @@ class SpbWalletDatabase {
 
   List<SpbWalletAttachmentRecord> loadAttachments(String cardId) {
     return _db.select(
-        'SELECT hex(ID) AS ID, hex(CardID) AS CardID, Name, Data FROM spbwlt_CardAttachment WHERE hex(CardID) = ?',
+        'SELECT hex(ID) AS ID, hex(CardID) AS CardID, Name '
+        'FROM spbwlt_CardAttachment WHERE hex(CardID) = ?',
         [cardId]).map((row) {
-      var size = -1;
-      String? error;
-      try {
-        size = attachmentCodec.decode(row['Data']).bytes.length;
-      } catch (exception) {
-        error = exception.toString();
-      }
       return SpbWalletAttachmentRecord(
         id: _string(row['ID']),
         cardId: _string(row['CardID']),
         fileName: crypto.decryptText(row['Name']),
-        size: size,
-        decodeError: error,
+        // Attachment payloads can be very large. Decode them only when the
+        // user opens or exports a particular attachment.
+        size: -1,
       );
     }).toList();
   }

@@ -103,6 +103,99 @@ void main() {
     await tester.binding.setSurfaceSize(null);
   });
 
+  testWidgets('vault layout adapts to phones, landscape and tablet',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      tester.binding.setSurfaceSize(null);
+    });
+    const mobileSizes = [
+      Size(320, 640),
+      Size(360, 800),
+      Size(412, 915),
+      Size(640, 360),
+    ];
+    for (final size in mobileSizes) {
+      await tester.binding.setSurfaceSize(size);
+      await tester.pumpWidget(
+        const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('spbMobilePaneHeader')), findsOneWidget,
+          reason: 'Размер $size должен использовать мобильную компоновку.');
+      expect(find.byKey(const Key('spbMobileWalletTitle')), findsNothing,
+          reason: 'Название кошелька не должно занимать место в списке.');
+      expect(tester.takeException(), isNull, reason: 'Размер $size');
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+
+    await tester.binding.setSurfaceSize(const Size(800, 1280));
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('spbNavigatorSplitter')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    debugDefaultTargetPlatformOverride = null;
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('mobile templates have one header and reachable tasks',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      tester.binding.setSurfaceSize(null);
+    });
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Шаблоны'));
+    await tester.pumpAndSettle();
+    // Заголовок и нижняя кнопка режима, без второго заголовка рабочей области.
+    expect(find.text('Шаблоны'), findsNWidgets(2));
+    expect(
+      find.byKey(const Key('mobileTemplateTasksForward')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('mobileTemplateTasksForward')));
+    await tester.pumpAndSettle();
+    expect(find.text('Задачи'), findsOneWidget);
+    expect(find.text('Удалить'), findsOneWidget);
+    expect(find.byKey(const Key('mobilePaneBack')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    debugDefaultTargetPlatformOverride = null;
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('password screen remains usable at narrow phone sizes',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      tester.binding.setSurfaceSize(null);
+    });
+    for (final size in const [Size(320, 640), Size(360, 800), Size(412, 915)]) {
+      await tester.binding.setSurfaceSize(size);
+      await tester.pumpWidget(const ActitPassApp());
+      await tester.pump();
+      expect(find.byKey(const Key('passwordInput')), findsOneWidget);
+      expect(
+        tester.getSize(find.byKey(const Key('keypad1'))).height,
+        greaterThanOrEqualTo(60),
+        reason: 'Кнопки не должны уменьшаться на экране $size.',
+      );
+      expect(tester.takeException(), isNull, reason: 'Размер $size');
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+    debugDefaultTargetPlatformOverride = null;
+    await tester.binding.setSurfaceSize(null);
+  });
+
   testWidgets('renders vault entry screen', (tester) async {
     await tester.pumpWidget(const ActitPassApp());
     await tester.pump();

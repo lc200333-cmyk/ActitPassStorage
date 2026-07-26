@@ -1,8 +1,7 @@
 import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:actit_pass_storage/main.dart';
 import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -57,6 +56,67 @@ CardTemplate _templateForTest(SpbWalletTemplateRecord source) {
 }
 
 void main() {
+  late SpbWalletSnapshot responsiveSnapshot;
+
+  setUpAll(() async {
+    if (_fixtureSkip) return;
+    responsiveSnapshot = await _withWalletCopy(
+      (wallet, _) async => wallet.loadSnapshot(),
+    );
+  });
+
+  testWidgets(
+    'MW data renders at all supported phone and tablet sizes',
+    (tester) async {
+      final templateIds =
+          responsiveSnapshot.templates.take(8).map((entry) => entry.id).toSet();
+      final uiSnapshot = SpbWalletSnapshot(
+        templates: responsiveSnapshot.templates
+            .where((entry) => templateIds.contains(entry.id))
+            .toList(),
+        cards: responsiveSnapshot.cards
+            .where((entry) => templateIds.contains(entry.templateId))
+            .take(20)
+            .toList(),
+        categories: responsiveSnapshot.categories,
+        embeddedIconPngs: responsiveSnapshot.embeddedIconPngs,
+      );
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() {
+        debugDefaultTargetPlatformOverride = null;
+        tester.binding.setSurfaceSize(null);
+      });
+
+      for (final size in const [
+        Size(320, 640),
+        Size(360, 800),
+        Size(412, 915),
+        Size(640, 360),
+        Size(800, 1280),
+      ]) {
+        await tester.binding.setSurfaceSize(size);
+        await tester.pumpWidget(
+          const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+        );
+        await tester.pumpAndSettle();
+        final dynamic state = tester.state(find.byType(VaultShell));
+        state.applySpbSnapshot(uiSnapshot);
+        state.setState(() {});
+        await tester.pump();
+
+        expect(state.items, hasLength(uiSnapshot.cards.length),
+            reason: 'Размер $size');
+        expect(state.templates, hasLength(uiSnapshot.templates.length),
+            reason: 'Размер $size');
+        expect(tester.takeException(), isNull, reason: 'Размер $size');
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+      debugDefaultTargetPlatformOverride = null;
+      await tester.binding.setSurfaceSize(null);
+    },
+    skip: _fixtureSkip,
+  );
+
   test('built-in IconID values use explicit matching assets', () {
     const expected = <String, String>{
       'A74FE6691728757D': 'icons_010.png', // Visa
@@ -91,11 +151,11 @@ void main() {
     () async {
       await _withWalletCopy((wallet, _) async {
         final snapshot = wallet.loadSnapshot();
-        expect(snapshot.templates, hasLength(59));
-        expect(snapshot.cards, hasLength(241));
+        expect(snapshot.templates, hasLength(60));
+        expect(snapshot.cards, hasLength(245));
         expect(
           snapshot.cards.where((card) => card.description.trim().isNotEmpty),
-          hasLength(212),
+          hasLength(215),
         );
 
         final templates = {
@@ -114,9 +174,9 @@ void main() {
           );
           accessibleNotes++;
         }
-        expect(accessibleNotes, 212);
+        expect(accessibleNotes, 215);
 
-        expect(snapshot.embeddedIconPngs, hasLength(3));
+        expect(snapshot.embeddedIconPngs, hasLength(4));
         for (final bytes in snapshot.embeddedIconPngs.values) {
           expect(
             bytes.take(8),
@@ -124,9 +184,13 @@ void main() {
           );
         }
         for (final template in snapshot.templates) {
-          expect(spbOriginalIconAsset(template.iconId), isNotNull,
-              reason:
-                  'Библиотечная иконка ${template.iconId} должна иметь asset.');
+          expect(
+            spbOriginalIconAsset(template.iconId) != null ||
+                snapshot.embeddedIconPngs.containsKey(template.iconId),
+            isTrue,
+            reason:
+                'Иконка ${template.iconId} должна иметь asset или встроенные данные.',
+          );
         }
       });
     },
@@ -216,8 +280,8 @@ void main() {
         );
 
         final after = wallet.loadSnapshot();
-        expect(after.templates, hasLength(59));
-        expect(after.cards, hasLength(241));
+        expect(after.templates, hasLength(60));
+        expect(after.cards, hasLength(245));
         for (final card in after.cards) {
           expect(
             card.fieldValues,

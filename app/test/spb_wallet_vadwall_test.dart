@@ -1,8 +1,8 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:actit_pass_storage/main.dart';
 import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -53,6 +53,61 @@ Future<T> _withCopy<T>(
 }
 
 void main() {
+  late SpbWalletSnapshot responsiveSnapshot;
+
+  setUpAll(() async {
+    if (_skip) return;
+    responsiveSnapshot = await _withCopy(
+      (wallet) async => wallet.loadSnapshot(),
+    );
+  });
+
+  testWidgets(
+    'VadWall data renders in phone and tablet layouts',
+    (tester) async {
+      final templateIds =
+          responsiveSnapshot.templates.take(8).map((entry) => entry.id).toSet();
+      final uiSnapshot = SpbWalletSnapshot(
+        templates: responsiveSnapshot.templates
+            .where((entry) => templateIds.contains(entry.id))
+            .toList(),
+        cards: responsiveSnapshot.cards
+            .where((entry) => templateIds.contains(entry.templateId))
+            .take(20)
+            .toList(),
+        categories: responsiveSnapshot.categories,
+        embeddedIconPngs: responsiveSnapshot.embeddedIconPngs,
+      );
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() {
+        debugDefaultTargetPlatformOverride = null;
+        tester.binding.setSurfaceSize(null);
+      });
+      for (final size in const [Size(360, 800), Size(800, 1280)]) {
+        await tester.binding.setSurfaceSize(size);
+        await tester.pumpWidget(
+          const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+        );
+        await tester.pumpAndSettle();
+        final dynamic state = tester.state(find.byType(VaultShell));
+        state.applySpbSnapshot(uiSnapshot);
+        state.setState(() {});
+        await tester.pump();
+
+        expect(state.items, hasLength(uiSnapshot.cards.length),
+            reason: 'Размер $size');
+        expect(state.templates, hasLength(uiSnapshot.templates.length),
+            reason: 'Размер $size');
+        expect(tester.takeException(), isNull, reason: 'Размер $size');
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+      debugDefaultTargetPlatformOverride = null;
+      await tester.binding.setSurfaceSize(null);
+    },
+    skip: _skip,
+    timeout: const Timeout(Duration(seconds: 30)),
+  );
+
   test(
     'VadWall loads every card, template, folder, value and note',
     () async {

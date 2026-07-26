@@ -66,6 +66,44 @@ void main() {
         isEmpty);
   });
 
+  testWidgets('orphaned cards remain visible through a safe template',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+    final dynamic state = tester.state(find.byType(VaultShell));
+    state.applySpbSnapshot(
+      const SpbWalletSnapshot(
+        templates: [],
+        categories: [],
+        cards: [
+          SpbWalletCardRecord(
+            id: 'orphan-card',
+            title: 'Карточка без шаблона',
+            description: 'Заметка сохранена',
+            categoryPath: '',
+            templateId: 'missing-template',
+            fieldValues: {'missing-field': 'Важное значение'},
+            attachments: [],
+            hitCount: 0,
+            iconId: '',
+            cardColor: 16777215,
+          ),
+        ],
+      ),
+    );
+    state.setState(() {});
+    await tester.pumpAndSettle();
+
+    expect(state.templates.single.name, 'Неизвестный шаблон');
+    expect(state.items.single.values['missing-field'], 'Важное значение');
+    expect(find.text('Карточка без шаблона'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('template workspace opens edit, export and delete menu',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1280, 900));
