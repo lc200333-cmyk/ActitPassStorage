@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:image/image.dart' as image;
 import 'package:sqlite3/sqlite3.dart';
 
 import 'spb_wallet_attachment_codec.dart';
@@ -23,17 +24,26 @@ class SpbWalletDatabase {
   static const String _categoryPathSeparator = ' / ';
 
   static SpbWalletDatabase open(String path, String password) {
+    Database? db;
     try {
-      final db = sqlite3.open(path);
+      db = sqlite3.open(path);
       final wallet = SpbWalletDatabase._(path, db, SpbWalletCrypto(password));
       wallet._validateSchema();
       wallet._validatePassword();
       return wallet;
+    } on SpbWalletOpenException {
+      db?.dispose();
+      rethrow;
     } on SqliteException catch (error) {
+      db?.dispose();
       throw SpbWalletOpenException(
           'Не удалось открыть SQLite базу SPB Wallet: ${error.message}');
     } on SpbWalletCryptoException catch (error) {
+      db?.dispose();
       throw SpbWalletOpenException(error.message);
+    } catch (_) {
+      db?.dispose();
+      rethrow;
     }
   }
 
@@ -54,6 +64,7 @@ class SpbWalletDatabase {
   SpbWalletSnapshot loadSnapshot() {
     final categories = _loadCategories();
     final templates = _loadTemplates();
+    final embeddedIconPngs = _loadEmbeddedIconPngs();
     final cards = <SpbWalletCardRecord>[];
 
     for (final row in _db.select(
@@ -91,7 +102,27 @@ class SpbWalletDatabase {
       templates: templates,
       cards: cards,
       categories: categories.values.toList(),
+      embeddedIconPngs: embeddedIconPngs,
     );
+  }
+
+  Map<String, Uint8List> _loadEmbeddedIconPngs() {
+    final icons = <String, Uint8List>{};
+    if (_columns('spbwlt_Icon').isEmpty) return icons;
+    for (final row in _db.select(
+        'SELECT hex(ID) AS ID, Data FROM spbwlt_Icon WHERE Data IS NOT NULL')) {
+      try {
+        final iconBytes = attachmentCodec.decode(row['Data']).bytes;
+        final decoded = image.IcoDecoder().decodeImageLargest(iconBytes) ??
+            image.decodeImage(iconBytes);
+        if (decoded == null) continue;
+        icons[_string(row['ID']).toUpperCase()] =
+            Uint8List.fromList(image.encodePng(decoded));
+      } catch (_) {
+        // A damaged custom icon must not prevent the wallet from opening.
+      }
+    }
+    return icons;
   }
 
   List<SpbWalletAttachmentRecord> loadAttachments(String cardId) {
@@ -251,16 +282,29 @@ class SpbWalletDatabase {
       final exists = _db.select(
           'SELECT 1 FROM spbwlt_Card WHERE hex(ID) = ?', [draft.id]).isNotEmpty;
       if (exists) {
-        _db.execute(
-          'UPDATE spbwlt_Card SET Name = ?, Description = ?, ParentCategoryID = ?, TemplateID = ? WHERE hex(ID) = ?',
-          [
-            crypto.encryptText(draft.title),
-            description,
-            _idFromHex(categoryId),
-            _idFromHex(draft.templateId),
-            draft.id
-          ],
-        );
+        if (draft.preserveExistingDescriptionWhenEmpty &&
+            draft.description.trim().isEmpty) {
+          _db.execute(
+            'UPDATE spbwlt_Card SET Name = ?, ParentCategoryID = ?, TemplateID = ? WHERE hex(ID) = ?',
+            [
+              crypto.encryptText(draft.title),
+              _idFromHex(categoryId),
+              _idFromHex(draft.templateId),
+              draft.id
+            ],
+          );
+        } else {
+          _db.execute(
+            'UPDATE spbwlt_Card SET Name = ?, Description = ?, ParentCategoryID = ?, TemplateID = ? WHERE hex(ID) = ?',
+            [
+              crypto.encryptText(draft.title),
+              description,
+              _idFromHex(categoryId),
+              _idFromHex(draft.templateId),
+              draft.id
+            ],
+          );
+        }
       } else {
         final templateRows = _db.select(
             'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?',
@@ -297,14 +341,10 @@ class SpbWalletDatabase {
       final desiredFieldIds = draft.fieldValues.keys.toSet();
       for (final entry in valueIdsByField.entries) {
         final ids = entry.value;
-        if (!desiredFieldIds.contains(entry.key)) {
-          for (final valueId in ids) {
-            _db.execute('DELETE FROM spbwlt_CardFieldValue WHERE hex(ID) = ?',
-                [valueId]);
-          }
-          existingValues.remove(entry.key);
-          continue;
-        }
+        // Values unknown to the current UI/template are intentionally kept.
+        // Old SPB Wallet databases may contain custom or legacy fields, and
+        // opening and saving a card must never delete them implicitly.
+        if (!desiredFieldIds.contains(entry.key)) continue;
         for (final duplicateId in ids.skip(1)) {
           _db.execute('DELETE FROM spbwlt_CardFieldValue WHERE hex(ID) = ?',
               [duplicateId]);
@@ -339,6 +379,11 @@ class SpbWalletDatabase {
     _transaction(() {
       _deleteCardById(cardId);
     });
+  }
+
+  void ensureCategoryPath(String path) {
+    if (path.trim().isEmpty) return;
+    _transaction(() => _ensureCategoryPath(path));
   }
 
   void _deleteCardById(String cardId) {
@@ -1118,11 +1163,13 @@ class SpbWalletSnapshot {
     required this.templates,
     required this.cards,
     required this.categories,
+    this.embeddedIconPngs = const {},
   });
 
   final List<SpbWalletTemplateRecord> templates;
   final List<SpbWalletCardRecord> cards;
   final List<SpbWalletCategoryRecord> categories;
+  final Map<String, Uint8List> embeddedIconPngs;
 }
 
 class SpbWalletTemplateRecord {
@@ -1203,6 +1250,7 @@ class SpbWalletCardDraft {
     this.iconId,
     this.cardColor,
     this.backgroundImageBase64,
+    this.preserveExistingDescriptionWhenEmpty = false,
   });
 
   final String id;
@@ -1214,6 +1262,7 @@ class SpbWalletCardDraft {
   final String? iconId;
   final int? cardColor;
   final String? backgroundImageBase64;
+  final bool preserveExistingDescriptionWhenEmpty;
 }
 
 class SpbWalletAttachmentRecord {
