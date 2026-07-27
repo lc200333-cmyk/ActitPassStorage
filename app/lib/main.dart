@@ -2217,6 +2217,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           message = null;
         });
         passwordUnlockDebounce?.cancel();
+        passwordController.clear();
+        confirmController.clear();
         if (!Platform.isAndroid || spbWalletUri == null) {
           await rememberRecentVault(spbWalletPath!);
         }
@@ -2246,6 +2248,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       await Future<void>.delayed(const Duration(milliseconds: 16));
       try {
         await createSwlVault(password);
+        passwordController.clear();
+        confirmController.clear();
       } catch (error) {
         setState(() => message = 'Не удалось создать .swl базу: $error');
       } finally {
@@ -2257,6 +2261,25 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> closeCurrentVaultForPasswordPrompt() async {
+    passwordUnlockDebounce?.cancel();
+    automaticUnlockInProgress = false;
+    if (spbWallet != null) {
+      await finalizeSessionTrash();
+    }
+    spbWallet?.close();
+    spbWallet = null;
+    passwordController.clear();
+    confirmController.clear();
+    revealed.clear();
+    if (!mounted) return;
+    setState(() {
+      unlocked = false;
+      entryMode = EntryMode.openSwl;
+      message = null;
+    });
+  }
+
   Future<void> pickSpbWalletFile() async {
     if (Platform.isAndroid) {
       try {
@@ -2265,6 +2288,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         if (picked == null) return;
         final path = picked['localPath']?.toString();
         if (path == null || path.isEmpty) return;
+        await closeCurrentVaultForPasswordPrompt();
+        if (!mounted) return;
         setState(() {
           spbWalletPath = path;
           spbWalletUri = picked['uri']?.toString();
@@ -2303,6 +2328,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     );
     final path = result?.files.single.path;
     if (path == null) return;
+    await closeCurrentVaultForPasswordPrompt();
+    if (!mounted) return;
     setState(() {
       spbWalletPath = path;
       spbWalletUri = null;
@@ -2395,6 +2422,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     String password, {
     File? targetFile,
     bool rememberLocalFile = true,
+    bool unlockAfterCreate = true,
   }) async {
     final file = targetFile ?? await swlVaultFile();
     if (file.existsSync()) {
@@ -2478,8 +2506,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       conflicts = [];
       lastSyncAt = null;
       selectedItemId = items.isEmpty ? null : items.first.id;
-      unlocked = true;
-      activeView = 'cards';
+      if (unlockAfterCreate) {
+        unlocked = true;
+        activeView = 'cards';
+      }
       message = null;
     });
     if (rememberLocalFile) {
@@ -2498,6 +2528,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     var showNewPassword = false;
     var showRepeatedPassword = false;
     var isCreating = false;
+    var createdVault = false;
     String? dialogError;
 
     Future<void> pickNewVaultDirectory(StateSetter setDialogState) async {
@@ -2692,6 +2723,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                             newPassword,
                             targetFile: targetFile,
                             rememberLocalFile: false,
+                            unlockAfterCreate: false,
                           );
                           spbWalletUri = document['uri']?.toString();
                           spbWalletDisplayPath =
@@ -2721,9 +2753,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                           await createSwlVault(
                             newPassword,
                             targetFile: targetFile,
+                            unlockAfterCreate: false,
                           );
                         }
                         entryMode = EntryMode.openSwl;
+                        createdVault = true;
                         if (dialogContext.mounted) {
                           Navigator.of(dialogContext).pop();
                         }
@@ -2768,9 +2802,22 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
     pathController.dispose();
     nameController.dispose();
+    newPasswordController.clear();
+    repeatPasswordController.clear();
     newPasswordController.dispose();
     repeatPasswordController.dispose();
-    if (mounted && !unlocked) passwordFocusNode.requestFocus();
+    if (!mounted) return;
+    if (createdVault) {
+      passwordController.clear();
+      confirmController.clear();
+      setState(() {
+        unlocked = true;
+        activeView = 'cards';
+        message = null;
+      });
+    } else if (!unlocked) {
+      passwordFocusNode.requestFocus();
+    }
   }
 
   Map<String, String> demoCategoryIcons() => const {
@@ -2853,6 +2900,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       activeView = 'cards';
       message = null;
     });
+    passwordController.clear();
+    confirmController.clear();
     await rememberRecentVault(localPath);
   }
 
@@ -2962,6 +3011,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         if (localPath == null || localPath.isEmpty) {
           throw StateError('Не удалось открыть выбранную .swl базу.');
         }
+        await closeCurrentVaultForPasswordPrompt();
+        if (!mounted) return;
         setState(() {
           entryMode = EntryMode.openSwl;
           message = null;
@@ -2977,6 +3028,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               copied?['displayName']?.toString() ?? vault.title;
         });
       } else {
+        await closeCurrentVaultForPasswordPrompt();
+        if (!mounted) return;
         setState(() {
           entryMode = EntryMode.openSwl;
           message = null;
@@ -5206,6 +5259,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         ],
       ),
     );
+    controller.clear();
     controller.dispose();
     return result;
   }
@@ -5240,6 +5294,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         ],
       ),
     );
+    controller.clear();
     controller.dispose();
     return result;
   }
@@ -6775,51 +6830,51 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                   padding: EdgeInsets.symmetric(vertical: 18),
                                   child: Divider(height: 1),
                                 ),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  alignment: WrapAlignment.spaceBetween,
+                                Row(
                                   children: [
-                                    PopupMenuButton<String>(
-                                      key: const Key('fileMenu'),
-                                      tooltip: 'Файл',
-                                      onSelected: (value) {
-                                        if (value == 'open') {
-                                          pickSpbWalletFile();
-                                        }
-                                      },
-                                      itemBuilder: (context) => const [
-                                        PopupMenuItem(
-                                          value: 'open',
-                                          child: Row(
-                                            children: [
-                                              Icon(Icons.folder_open_outlined),
-                                              SizedBox(width: 10),
-                                              Text('Открыть файл…'),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                      child: SizedBox(
-                                        width: 110,
-                                        height: 40,
-                                        child: IgnorePointer(
-                                          child: passwordKey(
-                                            label: 'Открыть файл',
-                                            child: const Icon(
-                                              Icons.folder_outlined,
-                                              color: Colors.white,
-                                              size: 25,
+                                    Expanded(
+                                      child: PopupMenuButton<String>(
+                                        key: const Key('fileMenu'),
+                                        tooltip: 'Файл',
+                                        onSelected: (value) {
+                                          if (value == 'open') {
+                                            pickSpbWalletFile();
+                                          }
+                                        },
+                                        itemBuilder: (context) => const [
+                                          PopupMenuItem(
+                                            value: 'open',
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                    Icons.folder_open_outlined),
+                                                SizedBox(width: 10),
+                                                Text('Открыть файл…'),
+                                              ],
                                             ),
-                                            height: 40,
-                                            fontSize: 18,
-                                            onPressed: () {},
+                                          ),
+                                        ],
+                                        child: SizedBox(
+                                          width: double.infinity,
+                                          height: 40,
+                                          child: IgnorePointer(
+                                            child: passwordKey(
+                                              label: 'Открыть файл',
+                                              child: const Icon(
+                                                Icons.folder_outlined,
+                                                color: Colors.white,
+                                                size: 25,
+                                              ),
+                                              height: 40,
+                                              fontSize: 18,
+                                              onPressed: () {},
+                                            ),
                                           ),
                                         ),
                                       ),
                                     ),
-                                    SizedBox(
-                                      width: 110,
+                                    const SizedBox(width: 8),
+                                    Expanded(
                                       child: passwordKey(
                                         key: const Key('createVault'),
                                         label: '+',
@@ -6829,8 +6884,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                         onPressed: createNewVaultFromLogin,
                                       ),
                                     ),
-                                    SizedBox(
-                                      width: 110,
+                                    const SizedBox(width: 8),
+                                    Expanded(
                                       child: passwordKey(
                                         key: const Key('loginOk'),
                                         label: 'OK',
@@ -6839,13 +6894,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                         onPressed: unlock,
                                       ),
                                     ),
-                                    SizedBox(
-                                      width: 124,
+                                    const SizedBox(width: 8),
+                                    Expanded(
                                       child: passwordKey(
                                         key: const Key('loginCancel'),
                                         label: 'Отмена',
                                         height: 40,
-                                        fontSize: 17,
+                                        fontSize: 15,
                                         top: redTop,
                                         bottom: redBottom,
                                         onPressed: () {

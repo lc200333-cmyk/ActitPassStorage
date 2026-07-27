@@ -13,6 +13,9 @@ class SpbWalletDatabase {
   SpbWalletDatabase._(this.path, this._db, this.crypto)
       : attachmentCodec = SpbWalletAttachmentCodec(crypto);
 
+  static const String defaultCardIconId = '62767D3E1BC8E2C8';
+  static const String defaultFolderIconId = '0C1E037B56E9E59B';
+
   final String path;
   final Database _db;
   final SpbWalletCrypto crypto;
@@ -271,6 +274,7 @@ class SpbWalletDatabase {
   void saveCard(SpbWalletCardDraft draft) {
     _transaction(() {
       final categoryId = _ensureCategoryPath(draft.categoryPath);
+      final iconId = _resolvedCardIconId(draft.iconId, draft.templateId);
       final description = draft.description.trim().isEmpty
           ? null
           : crypto.encryptText(draft.description);
@@ -318,7 +322,7 @@ class SpbWalletDatabase {
             0,
             _idFromHex(draft.templateId),
             _idFromHex(categoryId),
-            _idFromHex(draft.iconId ?? _defaultIconId()),
+            _idFromHex(iconId),
           ],
         );
       }
@@ -366,7 +370,7 @@ class SpbWalletDatabase {
       }
       _saveCardBackground(draft.id, draft.backgroundImageBase64);
       _saveCardColor(draft.id, draft.cardColor);
-      _saveCardIcon(draft.id, draft.iconId);
+      _saveCardIcon(draft.id, iconId);
     });
   }
 
@@ -495,7 +499,10 @@ class SpbWalletDatabase {
       if (categoryId.isEmpty) return;
       _db.execute(
         'UPDATE spbwlt_Category SET IconID = ? WHERE hex(ID) = ?',
-        [_idFromHex(iconId), categoryId],
+        [
+          _idFromHex(iconId.isEmpty ? defaultFolderIconId : iconId),
+          categoryId,
+        ],
       );
     });
   }
@@ -503,10 +510,13 @@ class SpbWalletDatabase {
   void createCategory(String categoryPath, String iconId) {
     _transaction(() {
       final categoryId = _ensureCategoryPath(categoryPath);
-      if (categoryId.isEmpty || iconId.isEmpty) return;
+      if (categoryId.isEmpty) return;
       _db.execute(
         'UPDATE spbwlt_Category SET IconID = ? WHERE hex(ID) = ?',
-        [_idFromHex(iconId), categoryId],
+        [
+          _idFromHex(iconId.isEmpty ? defaultFolderIconId : iconId),
+          categoryId,
+        ],
       );
     });
   }
@@ -534,7 +544,11 @@ class SpbWalletDatabase {
       }
       _db.execute(
         'UPDATE spbwlt_Category SET Name = ?, IconID = ? WHERE hex(ID) = ?',
-        [crypto.encryptText(cleanName), _idFromHex(iconId), categoryId],
+        [
+          crypto.encryptText(cleanName),
+          _idFromHex(iconId.isEmpty ? defaultFolderIconId : iconId),
+          categoryId,
+        ],
       );
     });
   }
@@ -896,7 +910,7 @@ CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
             _idFromHex(found),
             crypto.encryptText(part),
             null,
-            _idFromHex(_defaultIconId()),
+            _idFromHex(defaultFolderIconId),
             _idFromHex(_defaultTemplateId()),
             _idFromHex(parentId),
           ],
@@ -998,7 +1012,7 @@ CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
         Uint8List.fromList('16777215'.codeUnits),
         1,
         0,
-        _idFromHex(_defaultIconId()),
+        _idFromHex(defaultCardIconId),
         _idFromHex(_defaultImageId()),
         4,
         1,
@@ -1038,8 +1052,7 @@ CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
         [1, cardId]);
   }
 
-  void _saveCardIcon(String cardId, String? iconId) {
-    if (iconId == null || iconId.isEmpty) return;
+  void _saveCardIcon(String cardId, String iconId) {
     final rows = _db.select(
         'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card WHERE hex(ID) = ?',
         [cardId]);
@@ -1052,6 +1065,23 @@ CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
       _db.execute('UPDATE spbwlt_CardView SET IconID = ? WHERE hex(ID) = ?',
           [_idFromHex(iconId), cardViewId]);
     }
+  }
+
+  String _resolvedCardIconId(String? iconId, String templateId) {
+    if (iconId != null && iconId.isNotEmpty) return iconId;
+    final rows = _db.select(
+      'SELECT hex(spbwlt_CardView.IconID) AS IconID '
+      'FROM spbwlt_Template '
+      'LEFT JOIN spbwlt_CardView '
+      'ON spbwlt_CardView.ID = spbwlt_Template.CardViewID '
+      'WHERE hex(spbwlt_Template.ID) = ?',
+      [templateId],
+    );
+    if (rows.isNotEmpty) {
+      final templateIconId = _string(rows.first['IconID']);
+      if (templateIconId.isNotEmpty) return templateIconId;
+    }
+    return defaultCardIconId;
   }
 
   void _saveTemplateIcon(String templateId, String? iconId) {
@@ -1135,16 +1165,6 @@ CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
         1,
       ],
     );
-  }
-
-  String _defaultIconId() {
-    final cardRows = _db.select(
-        'SELECT hex(IconID) AS ID FROM spbwlt_Card WHERE length(IconID) > 0 LIMIT 1');
-    if (cardRows.isNotEmpty) return _string(cardRows.first['ID']);
-    final viewRows = _db.select(
-        'SELECT hex(IconID) AS ID FROM spbwlt_CardView WHERE length(IconID) > 0 LIMIT 1');
-    if (viewRows.isNotEmpty) return _string(viewRows.first['ID']);
-    return '';
   }
 
   String _defaultImageId() {

@@ -345,6 +345,28 @@ void main() {
     expect(find.text('Открыть файл…'), findsOneWidget);
   });
 
+  testWidgets('switching vault clears password and returns to login',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(720, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(find.byType(VaultShell));
+    state.passwordController.text = 'must-not-remain-in-memory';
+    await state.closeCurrentVaultForPasswordPrompt();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('passwordInput')), findsOneWidget);
+    final field = tester.widget<TextField>(
+      find.byKey(const Key('passwordInput')),
+    );
+    expect(field.controller!.text, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('new vault dialog never reuses the current password',
       (tester) async {
     await tester.pumpWidget(const ActitPassApp());
