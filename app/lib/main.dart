@@ -460,6 +460,26 @@ class SessionTrashEntry {
   final String iconId;
 }
 
+class SessionUndoEntry {
+  const SessionUndoEntry({
+    required this.label,
+    required this.iconId,
+    required this.databaseSnapshot,
+    required this.trash,
+    required this.trashCardIds,
+    required this.trashFolderPaths,
+    required this.trashTemplateIds,
+  });
+
+  final String label;
+  final String iconId;
+  final SpbWalletUndoSnapshot databaseSnapshot;
+  final List<SessionTrashEntry> trash;
+  final Set<String> trashCardIds;
+  final Set<String> trashFolderPaths;
+  final Set<String> trashTemplateIds;
+}
+
 class ExistingVault {
   const ExistingVault({
     required this.title,
@@ -1926,6 +1946,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   String? spbWalletDisplayPath;
   bool spbWalletWritable = true;
   bool spbWritePending = false;
+  bool vaultDirty = false;
   String? syncSourcePath;
   String? syncSourceUrl;
   String? syncOriginProvider;
@@ -1949,6 +1970,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   bool spbFoundExpanded = true;
   bool spbFrequentExpanded = true;
   bool spbObjectMenuPointerActive = false;
+  final GlobalKey spbSessionUndoButtonKey = GlobalKey();
   final GlobalKey spbSessionTrashButtonKey = GlobalKey();
   final ScrollController spbFoundScrollController = ScrollController();
   final ScrollController spbFrequentScrollController = ScrollController();
@@ -1974,6 +1996,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   final Set<String> sessionTrashCardIds = {};
   final Set<String> sessionTrashFolderPaths = {};
   final Set<String> sessionTrashTemplateIds = {};
+  final List<SessionUndoEntry> sessionUndoHistory = [];
+  bool sessionUndoInProgress = false;
 
   bool get createMode => entryMode == EntryMode.createSwl;
 
@@ -2097,7 +2121,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     inactivityCountdownTimer?.cancel();
     purgeSessionTrashFromDatabase();
     persistVaultState();
-    spbWallet?.close();
+    clearSessionUndoHistory();
+    spbWallet?.close(flush: vaultDirty);
     passwordUnlockDebounce?.cancel();
     vaultNameController.dispose();
     passwordController.dispose();
@@ -2125,9 +2150,105 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   void persistVaultState() {
     final wallet = spbWallet;
-    if (wallet == null) return;
+    if (wallet == null || !vaultDirty) return;
     wallet.saveRecentlyOpenedCardIds(recentlyOpenedItemIds);
     wallet.flushToDisk();
+  }
+
+  void markVaultDirty() {
+    vaultDirty = true;
+    spbWritePending = true;
+  }
+
+  Future<SessionUndoEntry> captureSessionUndo(
+    String label,
+    String iconId,
+  ) async {
+    final wallet = spbWallet;
+    if (wallet == null) {
+      throw StateError('База данных не открыта.');
+    }
+    return SessionUndoEntry(
+      label: label,
+      iconId: iconId,
+      databaseSnapshot: await wallet.createUndoSnapshot(),
+      trash: List<SessionTrashEntry>.from(sessionTrash),
+      trashCardIds: Set<String>.from(sessionTrashCardIds),
+      trashFolderPaths: Set<String>.from(sessionTrashFolderPaths),
+      trashTemplateIds: Set<String>.from(sessionTrashTemplateIds),
+    );
+  }
+
+  void commitSessionUndo(SessionUndoEntry entry) {
+    sessionUndoHistory.add(entry);
+    while (sessionUndoHistory.length > 12) {
+      sessionUndoHistory.removeAt(0).databaseSnapshot.dispose();
+    }
+    if (mounted) setState(() {});
+  }
+
+  void discardSessionUndo(SessionUndoEntry? entry) {
+    entry?.databaseSnapshot.dispose();
+  }
+
+  void clearSessionUndoHistory() {
+    for (final entry in sessionUndoHistory) {
+      entry.databaseSnapshot.dispose();
+    }
+    sessionUndoHistory.clear();
+  }
+
+  Future<void> restoreSessionUndoAt(int index) async {
+    final wallet = spbWallet;
+    if (wallet == null ||
+        sessionUndoInProgress ||
+        index < 0 ||
+        index >= sessionUndoHistory.length) {
+      return;
+    }
+    sessionUndoInProgress = true;
+    final entry = sessionUndoHistory[index];
+    try {
+      await wallet.restoreUndoSnapshot(entry.databaseSnapshot);
+      sessionTrash
+        ..clear()
+        ..addAll(entry.trash);
+      sessionTrashCardIds
+        ..clear()
+        ..addAll(entry.trashCardIds);
+      sessionTrashFolderPaths
+        ..clear()
+        ..addAll(entry.trashFolderPaths);
+      sessionTrashTemplateIds
+        ..clear()
+        ..addAll(entry.trashTemplateIds);
+      for (final removed
+          in sessionUndoHistory.sublist(index, sessionUndoHistory.length)) {
+        removed.databaseSnapshot.dispose();
+      }
+      sessionUndoHistory.removeRange(index, sessionUndoHistory.length);
+      markVaultDirty();
+      final written = await writeBackSpbWallet();
+      final snapshot = wallet.loadSnapshot();
+      if (!mounted) return;
+      setState(() {
+        applySpbSnapshot(snapshot);
+        if (selectedItemId != null &&
+            !items.any((item) => item.id == selectedItemId)) {
+          selectedItemId = null;
+        }
+        if (selectedTemplateId != null &&
+            !templates.any((template) => template.id == selectedTemplateId)) {
+          selectedTemplateId = null;
+        }
+        if (written) message = null;
+      });
+      showSpbOperationMessage('Отменено: ${entry.label}');
+    } catch (error) {
+      showSpbOperationMessage('Не удалось отменить изменение: $error');
+    } finally {
+      sessionUndoInProgress = false;
+    }
   }
 
   bool isPathInSessionTrash(String path) {
@@ -2147,6 +2268,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       sessionTrashTemplateIds.clear();
       return;
     }
+    markVaultDirty();
     final rootFolders = sessionTrashFolderPaths.where(
       (path) => !sessionTrashFolderPaths.any(
         (other) => other != path && path.startsWith('$other / '),
@@ -2202,10 +2324,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         if (spbWallet != null) {
           await finalizeSessionTrash();
         }
-        spbWallet?.close();
+        clearSessionUndoHistory();
+        spbWallet?.close(flush: vaultDirty);
         final wallet = SpbWalletDatabase.open(spbWalletPath!, password);
         final snapshot = wallet.loadSnapshot();
         spbWallet = wallet;
+        vaultDirty = false;
         spbIconIdByUiIcon.clear();
         setState(() {
           applySpbSnapshot(snapshot);
@@ -2267,8 +2391,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (spbWallet != null) {
       await finalizeSessionTrash();
     }
-    spbWallet?.close();
+    clearSessionUndoHistory();
+    spbWallet?.close(flush: vaultDirty);
     spbWallet = null;
+    vaultDirty = false;
     passwordController.clear();
     confirmController.clear();
     revealed.clear();
@@ -2493,8 +2619,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (spbWallet != null) {
       await finalizeSessionTrash();
     }
-    spbWallet?.close();
+    clearSessionUndoHistory();
+    spbWallet?.close(flush: vaultDirty);
     spbWallet = wallet;
+    vaultDirty = false;
     setState(() {
       spbWalletPath = file.path;
       spbWalletUri = null;
@@ -2730,7 +2858,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                               document['displayPath']?.toString() ??
                                   document['displayName']?.toString();
                           spbWalletWritable = document['writable'] != false;
-                          final written = await writeBackSpbWallet();
+                          final written = await writeBackSpbWallet(force: true);
                           if (!written) {
                             throw StateError(
                               'Не удалось записать новую базу в выбранный файл.',
@@ -2879,11 +3007,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (spbWallet != null) {
       await finalizeSessionTrash();
     }
-    spbWallet?.close();
+    clearSessionUndoHistory();
+    spbWallet?.close(flush: vaultDirty);
     await loadSpb64PngIconAssets();
     final wallet = SpbWalletDatabase.open(localPath, password);
     final snapshot = wallet.loadSnapshot();
     spbWallet = wallet;
+    vaultDirty = false;
     spbIconIdByUiIcon.clear();
     setState(() {
       spbWalletPath = localPath;
@@ -3055,9 +3185,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
   }
 
-  Future<bool> writeBackSpbWallet() async {
+  Future<bool> writeBackSpbWallet({bool force = false}) async {
+    if (!force && !vaultDirty) {
+      spbWritePending = false;
+      return true;
+    }
     var ok = true;
     try {
+      spbWallet?.saveRecentlyOpenedCardIds(recentlyOpenedItemIds);
       spbWallet?.flushToDisk();
       if (Platform.isAndroid && spbWalletUri != null && spbWalletPath != null) {
         if (!spbWalletWritable) {
@@ -3089,6 +3224,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         lastSyncAt = DateTime.now();
       }
       spbWritePending = false;
+      vaultDirty = false;
     } catch (error) {
       ok = false;
       spbWritePending = true;
@@ -3800,63 +3936,93 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       color: const Color(0xfff4f4f4),
       padding: EdgeInsets.fromLTRB(mobile ? 22 : 11, 7, 12, 7),
       child: mobile
-          ? Row(
-              children: [
-                Transform.translate(
-                  offset: const Offset(0, 3),
-                  child: const Text(
-                    'Поиск',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xff202020),
+          ? LayoutBuilder(
+              builder: (context, constraints) => Row(
+                children: [
+                  if (constraints.maxWidth >= 316) ...[
+                    Transform.translate(
+                      offset: const Offset(0, 3),
+                      child: const Text(
+                        'Поиск',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xff202020),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: FractionallySizedBox(
-                      widthFactor: 0.92,
-                      alignment: Alignment.centerLeft,
-                      child: searchField,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                buildSpbSearchButton(
-                  key: const Key('spbClearSearchButton'),
-                  icon: Icons.close,
-                  tooltip: 'Очистить поиск',
-                  gradient: const [Color(0xffff6b63), Color(0xffc90000)],
-                  onTap: () {
-                    searchController.clear();
-                    setState(() => spbSubmittedSearchQuery = '');
-                  },
-                ),
-                const SizedBox(width: 4),
-                buildSpbSearchButton(
-                  key: const Key('spbSubmitSearchButton'),
-                  icon: Icons.search,
-                  tooltip: 'Начать поиск',
-                  gradient: const [Color(0xff42bff5), Color(0xff006fc4)],
-                  onTap: () => submitSpbSearch(searchController.text),
-                ),
-                const SizedBox(width: 4),
-                buildSpbSearchButton(
-                  key: spbSessionTrashButtonKey,
-                  icon: Icons.delete_forever_outlined,
-                  tooltip: 'Восстановить удалённые',
-                  gradient: const [
-                    Color(0xff5bc96d),
-                    Color(0xff08772f),
+                    const SizedBox(width: 8),
                   ],
-                  onTap: showSessionTrashMenu,
-                ),
-              ],
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: FractionallySizedBox(
+                        widthFactor: 0.92,
+                        alignment: Alignment.centerLeft,
+                        child: searchField,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  buildSpbSearchButton(
+                    key: const Key('spbClearSearchButton'),
+                    icon: Icons.close,
+                    tooltip: 'Очистить поиск',
+                    gradient: const [Color(0xff5b5b5b), Color(0xff262626)],
+                    onTap: () {
+                      searchController.clear();
+                      setState(() => spbSubmittedSearchQuery = '');
+                    },
+                  ),
+                  const SizedBox(width: 4),
+                  buildSpbSearchButton(
+                    key: const Key('spbSubmitSearchButton'),
+                    icon: Icons.search,
+                    tooltip: 'Начать поиск',
+                    gradient: const [Color(0xff42bff5), Color(0xff006fc4)],
+                    onTap: () => submitSpbSearch(searchController.text),
+                  ),
+                  const SizedBox(width: 4),
+                  buildSpbSearchButton(
+                    key: spbSessionUndoButtonKey,
+                    icon: Icons.undo,
+                    tooltip: 'Отменить изменения этой сессии',
+                    gradient: const [
+                      Color(0xffffdc58),
+                      Color(0xffc58a00),
+                    ],
+                    onTap: showSessionUndoMenu,
+                  ),
+                  const SizedBox(width: 4),
+                  buildSpbSearchButton(
+                    key: spbSessionTrashButtonKey,
+                    icon: Icons.delete_forever_outlined,
+                    tooltip: 'Восстановить удалённые',
+                    gradient: const [
+                      Color(0xff5bc96d),
+                      Color(0xff08772f),
+                    ],
+                    onTap: showSessionTrashMenu,
+                  ),
+                  const SizedBox(width: 4),
+                  Transform.translate(
+                    offset: const Offset(-1, 0),
+                    child: buildSpbSearchButton(
+                      key: const Key('spbForceCloseButton'),
+                      icon: Icons.close,
+                      tooltip: 'Сохранить базу и закрыть программу',
+                      gradient: const [
+                        Color(0xffff5a5f),
+                        Color(0xffa90000),
+                      ],
+                      onTap: exitApplication,
+                    ),
+                  ),
+                ],
+              ),
             )
           : Stack(
+              clipBehavior: Clip.none,
               children: [
                 Row(
                   children: [
@@ -3887,7 +4053,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                         key: const Key('spbClearSearchButton'),
                         icon: Icons.close,
                         tooltip: 'Очистить поиск',
-                        gradient: const [Color(0xffff6b63), Color(0xffc90000)],
+                        gradient: const [
+                          Color(0xff5b5b5b),
+                          Color(0xff262626),
+                        ],
                         onTap: () {
                           searchController.clear();
                           setState(() => spbSubmittedSearchQuery = '');
@@ -3905,22 +4074,103 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   ),
                 ),
                 Positioned(
-                  right: (desktopActionsPanelWidth ?? 300) + 13,
+                  right: (desktopActionsPanelWidth ?? 300) - 49.2,
                   top: 0,
-                  child: buildSpbSearchButton(
-                    key: spbSessionTrashButtonKey,
-                    icon: Icons.delete_forever_outlined,
-                    tooltip: 'Восстановить удалённые',
-                    gradient: const [
-                      Color(0xff5bc96d),
-                      Color(0xff08772f),
+                  child: Row(
+                    children: [
+                      buildSpbSearchButton(
+                        key: spbSessionUndoButtonKey,
+                        icon: Icons.undo,
+                        tooltip: 'Отменить изменения этой сессии',
+                        gradient: const [
+                          Color(0xffffdc58),
+                          Color(0xffc58a00),
+                        ],
+                        onTap: showSessionUndoMenu,
+                      ),
+                      const SizedBox(width: 4),
+                      buildSpbSearchButton(
+                        key: spbSessionTrashButtonKey,
+                        icon: Icons.delete_forever_outlined,
+                        tooltip: 'Восстановить удалённые',
+                        gradient: const [
+                          Color(0xff5bc96d),
+                          Color(0xff08772f),
+                        ],
+                        onTap: showSessionTrashMenu,
+                      ),
+                      const SizedBox(width: 4),
+                      Transform.translate(
+                        offset: const Offset(-1, 0),
+                        child: buildSpbSearchButton(
+                          key: const Key('spbForceCloseButton'),
+                          icon: Icons.close,
+                          tooltip: 'Сохранить базу и закрыть программу',
+                          gradient: const [
+                            Color(0xffff5a5f),
+                            Color(0xffa90000),
+                          ],
+                          onTap: exitApplication,
+                        ),
+                      ),
                     ],
-                    onTap: showSessionTrashMenu,
                   ),
                 ),
               ],
             ),
     );
+  }
+
+  Future<void> showSessionUndoMenu() async {
+    final buttonContext = spbSessionUndoButtonKey.currentContext;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final button = buttonContext?.findRenderObject() as RenderBox?;
+    if (button == null || overlay == null) return;
+    final offset = button.localToGlobal(Offset.zero, ancestor: overlay);
+    final selected = await showMenu<int>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        offset.dx,
+        offset.dy + button.size.height,
+        overlay.size.width - offset.dx - button.size.width,
+        0,
+      ),
+      items: sessionUndoHistory.isEmpty
+          ? const [
+              PopupMenuItem<int>(
+                enabled: false,
+                child: Text('Нет изменений для отмены'),
+              ),
+            ]
+          : [
+              for (var index = sessionUndoHistory.length - 1;
+                  index >= 0;
+                  index--)
+                PopupMenuItem<int>(
+                  value: index,
+                  child: Row(
+                    children: [
+                      templateIconWidget(
+                        sessionUndoHistory[index].iconId,
+                        size: 28,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          sessionUndoHistory[index].label,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+    );
+    if (selected != null && mounted) {
+      await restoreSessionUndoAt(selected);
+    }
   }
 
   Future<void> showSessionTrashMenu() async {
@@ -3967,30 +4217,46 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             ],
     );
     if (selected != null && mounted) {
-      restoreSessionTrashEntry(selected);
+      await restoreSessionTrashEntry(selected);
     }
   }
 
-  void restoreSessionTrashEntry(SessionTrashEntry entry) {
-    switch (entry.kind) {
-      case SessionTrashKind.card:
-        sessionTrashCardIds.remove(entry.id);
-        break;
-      case SessionTrashKind.folder:
-        sessionTrashFolderPaths.remove(entry.id);
-        break;
-      case SessionTrashKind.template:
-        sessionTrashTemplateIds.remove(entry.id);
-        break;
-    }
-    sessionTrash.remove(entry);
+  Future<void> restoreSessionTrashEntry(SessionTrashEntry entry) async {
     final wallet = spbWallet;
     if (wallet == null) return;
-    final snapshot = wallet.loadSnapshot();
-    setState(() {
-      applySpbSnapshot(snapshot);
-      message = null;
-    });
+    SessionUndoEntry? undoEntry;
+    try {
+      final kind = switch (entry.kind) {
+        SessionTrashKind.card => 'карточки',
+        SessionTrashKind.folder => 'папки',
+        SessionTrashKind.template => 'шаблона',
+      };
+      undoEntry = await captureSessionUndo(
+        'Восстановление $kind: ${entry.title}',
+        entry.iconId,
+      );
+      switch (entry.kind) {
+        case SessionTrashKind.card:
+          sessionTrashCardIds.remove(entry.id);
+          break;
+        case SessionTrashKind.folder:
+          sessionTrashFolderPaths.remove(entry.id);
+          break;
+        case SessionTrashKind.template:
+          sessionTrashTemplateIds.remove(entry.id);
+          break;
+      }
+      sessionTrash.remove(entry);
+      final snapshot = wallet.loadSnapshot();
+      setState(() {
+        applySpbSnapshot(snapshot);
+        message = null;
+      });
+      commitSessionUndo(undoEntry);
+    } catch (error) {
+      discardSessionUndo(undoEntry);
+      showSpbOperationMessage('Не удалось восстановить объект: $error');
+    }
   }
 
   Widget buildSpbSearchButton({
@@ -4826,7 +5092,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       );
       return false;
     }
+    SessionUndoEntry? undoEntry;
     try {
+      undoEntry = await captureSessionUndo(
+        'Удаление шаблона: ${template.name}',
+        template.iconId,
+      );
       sessionTrashTemplateIds.add(template.id);
       sessionTrash.add(
         SessionTrashEntry(
@@ -4848,8 +5119,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         }
         message = null;
       });
+      commitSessionUndo(undoEntry);
       return true;
     } catch (error) {
+      discardSessionUndo(undoEntry);
       sessionTrashTemplateIds.remove(template.id);
       sessionTrash.removeWhere(
         (entry) =>
@@ -5491,6 +5764,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (!ensureSpbWalletWritable()) return;
     File? temporary;
     SpbWalletDatabase? source;
+    SessionUndoEntry? undoEntry;
     try {
       final picked = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -5523,6 +5797,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         source = SpbWalletDatabase.open(sourcePath, password);
       }
       final snapshot = source.loadSnapshot();
+      undoEntry = await captureSessionUndo(
+        'Импорт карточек: ${snapshot.cards.length}',
+        'folder',
+      );
       final templateIds = <String, String>{};
       final fieldIds = <String, Map<String, String>>{};
       for (final template in snapshot.templates) {
@@ -5580,9 +5858,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           );
         }
       }
+      if (snapshot.templates.isNotEmpty || snapshot.cards.isNotEmpty) {
+        markVaultDirty();
+      }
       final written = await writeBackSpbWallet();
       final updated = destination.loadSnapshot();
       setState(() => applySpbSnapshot(updated));
+      commitSessionUndo(undoEntry);
       showSpbOperationMessage(
         written
             ? 'Импортировано карточек: ${snapshot.cards.length}'
@@ -5590,9 +5872,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 'записать не удалось.',
       );
     } catch (error) {
+      discardSessionUndo(undoEntry);
       showSpbOperationMessage('Не удалось импортировать SWL: $error');
     } finally {
-      source?.close();
+      source?.close(flush: false);
       if (temporary != null && temporary.existsSync()) {
         temporary.deleteSync();
       }
@@ -6103,8 +6386,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   Future<void> lockVault() async {
     await finalizeSessionTrash();
-    spbWallet?.close();
+    clearSessionUndoHistory();
+    spbWallet?.close(flush: vaultDirty);
     spbWallet = null;
+    vaultDirty = false;
     syncSourcePath = null;
     syncSourceUrl = null;
     syncOriginProvider = null;
@@ -6300,11 +6585,19 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   Future<void> exitApplication() async {
     purgeSessionTrashFromDatabase();
     persistVaultState();
-    await writeBackSpbWallet();
+    final saved = await writeBackSpbWallet();
+    if (!saved) {
+      showSpbOperationMessage(
+        'Программа не закрыта: не удалось сохранить изменения базы.',
+      );
+      return;
+    }
     passwordController.clear();
     confirmController.clear();
-    spbWallet?.close();
+    clearSessionUndoHistory();
+    spbWallet?.close(flush: vaultDirty);
     spbWallet = null;
+    vaultDirty = false;
     spbWalletPath = null;
     spbWalletUri = null;
     spbWalletDisplayPath = null;
@@ -6394,8 +6687,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     purgeSessionTrashFromDatabase();
     persistVaultState();
     await writeBackSpbWallet();
-    spbWallet?.close();
+    clearSessionUndoHistory();
+    spbWallet?.close(flush: vaultDirty);
     spbWallet = null;
+    vaultDirty = false;
     if (Platform.isAndroid || Platform.isIOS) {
       await SystemNavigator.pop();
     } else {
@@ -7666,7 +7961,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       if (confirmed != true || !mounted) return;
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted) return;
+      SessionUndoEntry? undoEntry;
       try {
+        undoEntry = await captureSessionUndo(
+          'Удаление папки: ${folder.name}',
+          folder.iconId ?? defaultIconForCategoryPath(folder.path),
+        );
         sessionTrashFolderPaths.add(folder.path);
         sessionTrash.add(
           SessionTrashEntry(
@@ -7685,7 +7985,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           }
           message = null;
         });
+        commitSessionUndo(undoEntry);
       } catch (error) {
+        discardSessionUndo(undoEntry);
         setState(() => message = 'Не удалось удалить папку: $error');
       }
       return;
@@ -7694,7 +7996,20 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       if (!editing && parentPath.trim().isNotEmpty) parentPath.trim(),
       saved.name,
     ].join(' / ');
+    if (editing &&
+        saved.name == folder.name &&
+        saved.iconId ==
+            (folder.iconId ?? defaultIconForCategoryPath(folder.path))) {
+      return;
+    }
+    SessionUndoEntry? undoEntry;
     try {
+      undoEntry = await captureSessionUndo(
+        editing
+            ? 'Изменение папки: ${folder.name}'
+            : 'Создание папки: ${saved.name}',
+        saved.iconId,
+      );
       final spbIconId = spbIconIdForUi(saved.iconId, 'folder') ??
           syntheticSpbIconIdForUi(saved.iconId);
       if (editing) {
@@ -7702,13 +8017,16 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       } else {
         wallet.createCategory(fullPath, spbIconId);
       }
+      markVaultDirty();
       final written = await writeBackSpbWallet();
       final snapshot = wallet.loadSnapshot();
       setState(() {
         applySpbSnapshot(snapshot);
         if (written) message = null;
       });
+      commitSessionUndo(undoEntry);
     } catch (error) {
+      discardSessionUndo(undoEntry);
       setState(() => message = 'Не удалось сохранить папку: $error');
     }
   }
@@ -7744,7 +8062,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     final parentParts = categoryParts(folder.path);
     if (parentParts.isNotEmpty) parentParts.removeLast();
     final parentPath = parentParts.join(' / ');
+    SessionUndoEntry? undoEntry;
     try {
+      undoEntry = await captureSessionUndo(
+        'Удаление папки: ${folder.name}',
+        folder.iconId ?? defaultIconForCategoryPath(folder.path),
+      );
       sessionTrashFolderPaths.add(folder.path);
       sessionTrash.add(
         SessionTrashEntry(
@@ -7767,7 +8090,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         }
         message = null;
       });
+      commitSessionUndo(undoEntry);
     } catch (error) {
+      discardSessionUndo(undoEntry);
       setState(() => message = 'Не удалось удалить папку: $error');
     }
   }
@@ -7858,7 +8183,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       if (recentlyOpenedItemIds.length > 10) {
         recentlyOpenedItemIds.removeRange(10, recentlyOpenedItemIds.length);
       }
-      spbWallet?.saveRecentlyOpenedCardIds(recentlyOpenedItemIds);
       items = [
         for (final entry in items)
           entry.id == item.id
@@ -7879,15 +8203,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               : entry,
       ];
     });
-    if (spbWallet != null) {
-      try {
-        spbWallet!.recordCardHit(item.id);
-        await writeBackSpbWallet();
-      } catch (error) {
-        setState(
-            () => message = 'Не удалось обновить счетчик .swl базы: $error');
-      }
-    } else {
+    if (spbWallet == null) {
       setState(() => message =
           'Откройте или создайте .swl базу перед изменением карточек.');
     }
@@ -8233,7 +8549,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           'Откройте или создайте .swl базу перед удалением карточек.');
       return false;
     }
+    SessionUndoEntry? undoEntry;
     try {
+      undoEntry = await captureSessionUndo(
+        'Удаление карточки: ${item.title}',
+        itemIconId(item, templateFor(item.templateId)),
+      );
       sessionTrashCardIds.add(item.id);
       sessionTrash.add(
         SessionTrashEntry(
@@ -8250,8 +8571,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         recentlyOpenedItemIds.remove(item.id);
         message = null;
       });
+      commitSessionUndo(undoEntry);
       return true;
     } catch (error) {
+      discardSessionUndo(undoEntry);
       setState(() => message = 'Не удалось удалить карточку: $error');
       return false;
     }
@@ -8638,13 +8961,74 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     return null;
   }
 
+  bool spbItemsHaveSameStoredContent(SecretItem first, SecretItem second) {
+    if (first.templateId != second.templateId ||
+        first.title != second.title ||
+        first.category != second.category ||
+        first.colorId != second.colorId ||
+        first.iconId != second.iconId ||
+        first.backgroundImageBase64 != second.backgroundImageBase64 ||
+        first.spbColor != second.spbColor ||
+        !mapEquals(first.values, second.values) ||
+        first.attachments.length != second.attachments.length) {
+      return false;
+    }
+    for (var index = 0; index < first.attachments.length; index++) {
+      final original = first.attachments[index];
+      final edited = second.attachments[index];
+      if (original.id != edited.id ||
+          original.fileName != edited.fileName ||
+          original.size != edited.size ||
+          edited.deleted ||
+          edited.pendingBytes != null) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool spbTemplatesHaveSameStoredContent(
+    CardTemplate first,
+    CardTemplate second,
+  ) {
+    if (first.name != second.name ||
+        first.iconId != second.iconId ||
+        first.colorId != second.colorId ||
+        first.fields.length != second.fields.length) {
+      return false;
+    }
+    for (var index = 0; index < first.fields.length; index++) {
+      final original = first.fields[index];
+      final edited = second.fields[index];
+      if (original.id != edited.id ||
+          original.label != edited.label ||
+          original.type != edited.type ||
+          original.required != edited.required ||
+          original.secret != edited.secret) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   Future<String?> saveSpbItem(SecretItem saved) async {
     final wallet = spbWallet;
     if (wallet == null) return null;
     if (!ensureSpbWalletWritable()) return null;
     final cardId = isSpbHexId(saved.id) ? saved.id : SpbWalletDatabase.makeId();
+    final existing = itemById(saved.id);
+    if (existing != null && spbItemsHaveSameStoredContent(existing, saved)) {
+      return existing.id;
+    }
     final template = templateFor(saved.templateId);
+    SessionUndoEntry? undoEntry;
     try {
+      undoEntry = await captureSessionUndo(
+        existing == null
+            ? 'Создание карточки: ${saved.title}'
+            : 'Изменение карточки: ${saved.title}',
+        itemIconId(saved, template),
+      );
       wallet.saveCard(
         SpbWalletCardDraft(
           id: cardId,
@@ -8664,6 +9048,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           backgroundImageBase64: saved.backgroundImageBase64,
         ),
       );
+      markVaultDirty();
       for (final attachment in saved.attachments) {
         if (attachment.deleted && attachment.id.isNotEmpty) {
           wallet.deleteAttachment(attachment.id);
@@ -8683,8 +9068,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         selectedItemId = cardId;
         if (written) message = null;
       });
+      commitSessionUndo(undoEntry);
       return cardId;
     } catch (error) {
+      discardSessionUndo(undoEntry);
       setState(() => message = 'Не удалось сохранить .swl базу: $error');
       return null;
     }
@@ -8797,8 +9184,28 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }) async {
     if (spbWallet != null) {
       if (!ensureSpbWalletWritable()) return false;
+      if (!isNew) {
+        CardTemplate? existing;
+        for (final template in templates) {
+          if (template.id == saved.id) {
+            existing = template;
+            break;
+          }
+        }
+        if (existing != null &&
+            spbTemplatesHaveSameStoredContent(existing, saved)) {
+          return true;
+        }
+      }
       final prepared = prepareSpbTemplate(saved, isNew);
+      SessionUndoEntry? undoEntry;
       try {
+        undoEntry = await captureSessionUndo(
+          isNew
+              ? 'Создание шаблона: ${saved.name}'
+              : 'Изменение шаблона: ${saved.name}',
+          saved.iconId,
+        );
         spbWallet!.saveTemplate(
           SpbWalletTemplateDraft(
             id: prepared.id,
@@ -8814,6 +9221,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 .toList(),
           ),
         );
+        markVaultDirty();
         final written = await writeBackSpbWallet();
         final snapshot = spbWallet!.loadSnapshot();
         setState(() {
@@ -8821,8 +9229,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           selectedTemplateId = prepared.id;
           if (written) message = null;
         });
+        commitSessionUndo(undoEntry);
         return true;
       } catch (error) {
+        discardSessionUndo(undoEntry);
         setState(
             () => message = 'Не удалось сохранить шаблон .swl базы: $error');
         return false;
@@ -8866,6 +9276,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   Future<void> runSync() async {
     if (spbWallet == null) {
       setState(() => message = 'Запись доступна после открытия .swl базы.');
+      return;
+    }
+    if (!vaultDirty) {
+      showSpbOperationMessage('Изменений нет. Файл базы не перезаписывался.');
       return;
     }
     final ok = await writeBackSpbWallet();

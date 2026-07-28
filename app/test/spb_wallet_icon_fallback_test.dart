@@ -75,4 +75,92 @@ void main() {
       await directory.delete(recursive: true);
     }
   });
+
+  test('read-only open and close preserve the database timestamp', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'actitpass_read_only_',
+    );
+    final file = File(
+      '${directory.path}${Platform.pathSeparator}read-only.swl',
+    );
+    const password = 'read-only-password';
+    final created = SpbWalletDatabase.create(file.path, password);
+    final templateId = SpbWalletDatabase.makeId();
+    created.saveTemplate(
+      SpbWalletTemplateDraft(
+        id: templateId,
+        name: 'Read only',
+        fields: const [],
+      ),
+    );
+    created.saveCard(
+      SpbWalletCardDraft(
+        id: SpbWalletDatabase.makeId(),
+        title: 'Viewed card',
+        description: '',
+        categoryPath: '',
+        templateId: templateId,
+        fieldValues: const {},
+      ),
+    );
+    created.close();
+
+    final originalTimestamp = DateTime.utc(2020, 1, 2, 3, 4, 6);
+    await file.setLastModified(originalTimestamp);
+    final opened = SpbWalletDatabase.open(file.path, password);
+    opened.loadSnapshot();
+    expect(opened.loadRecentlyOpenedCardIds(), isEmpty);
+    opened.close(flush: false);
+
+    expect(await file.lastModified(), originalTimestamp.toLocal());
+    await directory.delete(recursive: true);
+  });
+
+  test('in-memory undo snapshot restores changed card data', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'actitpass_undo_snapshot_',
+    );
+    final path = '${directory.path}${Platform.pathSeparator}undo.swl';
+    final wallet = SpbWalletDatabase.create(path, 'undo-password');
+    final templateId = SpbWalletDatabase.makeId();
+    final cardId = SpbWalletDatabase.makeId();
+    wallet.saveTemplate(
+      SpbWalletTemplateDraft(
+        id: templateId,
+        name: 'Undo template',
+        fields: const [],
+      ),
+    );
+    wallet.saveCard(
+      SpbWalletCardDraft(
+        id: cardId,
+        title: 'Before',
+        description: '',
+        categoryPath: '',
+        templateId: templateId,
+        fieldValues: const {},
+      ),
+    );
+    final undo = await wallet.createUndoSnapshot();
+    try {
+      wallet.saveCard(
+        SpbWalletCardDraft(
+          id: cardId,
+          title: 'After',
+          description: '',
+          categoryPath: '',
+          templateId: templateId,
+          fieldValues: const {},
+        ),
+      );
+      expect(wallet.loadSnapshot().cards.single.title, 'After');
+
+      await wallet.restoreUndoSnapshot(undo);
+      expect(wallet.loadSnapshot().cards.single.title, 'Before');
+    } finally {
+      undo.dispose();
+      wallet.close();
+      await directory.delete(recursive: true);
+    }
+  });
 }

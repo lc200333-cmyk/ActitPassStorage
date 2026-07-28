@@ -9,6 +9,19 @@ import 'package:sqlite3/sqlite3.dart';
 import 'spb_wallet_attachment_codec.dart';
 import 'spb_wallet_crypto.dart';
 
+class SpbWalletUndoSnapshot {
+  SpbWalletUndoSnapshot._(this._database);
+
+  final Database _database;
+  bool _disposed = false;
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _database.dispose();
+  }
+}
+
 class SpbWalletDatabase {
   SpbWalletDatabase._(this.path, this._db, this.crypto)
       : attachmentCodec = SpbWalletAttachmentCodec(crypto);
@@ -584,8 +597,30 @@ class SpbWalletDatabase {
     _db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
   }
 
+  Future<SpbWalletUndoSnapshot> createUndoSnapshot() async {
+    final snapshot = sqlite3.openInMemory();
+    try {
+      await _db.backup(snapshot, nPage: -1).drain<void>();
+      return SpbWalletUndoSnapshot._(snapshot);
+    } catch (_) {
+      snapshot.dispose();
+      rethrow;
+    }
+  }
+
+  Future<void> restoreUndoSnapshot(SpbWalletUndoSnapshot snapshot) async {
+    if (snapshot._disposed) {
+      throw StateError('Снимок истории изменений уже освобождён.');
+    }
+    await snapshot._database.backup(_db, nPage: -1).drain<void>();
+  }
+
   List<String> loadRecentlyOpenedCardIds() {
-    _ensureActitPassStateTable();
+    final table = _db.select(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+      ['actitpass_State'],
+    );
+    if (table.isEmpty) return const [];
     final rows = _db.select(
       'SELECT StateValue FROM actitpass_State WHERE StateKey = ?',
       ['recently_opened_cards'],
@@ -617,8 +652,8 @@ CREATE TABLE IF NOT EXISTS actitpass_State (
 )''');
   }
 
-  void close() {
-    flushToDisk();
+  void close({bool flush = true}) {
+    if (flush) flushToDisk();
     _db.dispose();
   }
 

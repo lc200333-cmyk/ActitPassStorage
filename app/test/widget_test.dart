@@ -50,6 +50,29 @@ void main() {
     expect(find.text('Создать кошелёк'), findsOneWidget);
     expect(find.text('Создать новую папку'), findsOneWidget);
     expect(find.text('Сделать архивную копию'), findsOneWidget);
+    final undo = find.byTooltip('Отменить изменения этой сессии');
+    final trash = find.byTooltip('Восстановить удалённые');
+    final forceClose = find.byKey(const Key('spbForceCloseButton'));
+    expect(undo, findsOneWidget);
+    expect(trash, findsOneWidget);
+    expect(forceClose, findsOneWidget);
+    expect(tester.getTopLeft(undo).dx, lessThan(tester.getTopLeft(trash).dx));
+    expect(
+      tester.getTopRight(trash).dx,
+      closeTo(1023, 0.6),
+      reason:
+          'Правая граница зелёной кнопки должна совпадать с разделителем центрального и правого окон.',
+    );
+    final undoToTrashGap =
+        tester.getTopLeft(trash).dx - tester.getTopRight(undo).dx;
+    final trashToCloseGap =
+        tester.getTopLeft(forceClose).dx - tester.getTopRight(trash).dx;
+    expect(undoToTrashGap, greaterThan(0));
+    expect(trashToCloseGap, closeTo(undoToTrashGap, 0.1));
+    expect(
+      tester.getCenter(forceClose).dy,
+      closeTo(tester.getCenter(trash).dy, 0.1),
+    );
     await tester.tap(
       find.byKey(const Key('spbCentralWorkspace')),
       buttons: kSecondaryMouseButton,
@@ -84,6 +107,11 @@ void main() {
     expect(find.byKey(const Key('spbWalletRoot')), findsNothing);
     expect(find.byKey(const Key('spbClearSearchButton')), findsOneWidget);
     expect(find.byKey(const Key('spbSubmitSearchButton')), findsOneWidget);
+    expect(
+      find.byTooltip('Отменить изменения этой сессии'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('spbForceCloseButton')), findsOneWidget);
     await tester.tap(find.byKey(const Key('spbMobilePaneHeader')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('mobilePaneBack')), findsOneWidget);
