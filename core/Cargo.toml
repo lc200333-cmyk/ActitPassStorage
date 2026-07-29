@@ -8,6 +8,6 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-version = "0.1.19"
+version = "0.1.20"
 license = "UNLICENSED"
 authors = ["ActitPassStorage"]
