@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image/image.dart' as image;
 import 'package:path_provider/path_provider.dart';
 
 import 'spb_wallet/spb_wallet_database.dart';
@@ -19,10 +20,15 @@ void main() {
 
 final rootScaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 const spbIconBundleAsset = 'assets/spb_icons.bundle';
+const thirdPartyIconBundleAsset =
+    'assets/third_party/icons_unique_visual_studio.zip';
 List<String> spb64PngIconAssets = [];
 Future<List<String>>? spb64PngIconAssetsFuture;
 Map<String, Uint8List> spbBundledIconPngs = {};
 Map<String, Uint8List> spbEmbeddedIconPngs = {};
+List<String> thirdPartyIconAssets = [];
+Future<List<String>>? thirdPartyIconAssetsFuture;
+Map<String, Uint8List> thirdPartyIconPngs = {};
 
 Future<List<String>> loadSpb64PngIconAssets() {
   return spb64PngIconAssetsFuture ??= () async {
@@ -52,6 +58,30 @@ Future<List<String>> loadSpb64PngIconAssets() {
         .toSet()
         .toList(growable: false);
     return spb64PngIconAssets;
+  }();
+}
+
+Future<List<String>> loadThirdPartyIconAssets() {
+  return thirdPartyIconAssetsFuture ??= () async {
+    final data = await rootBundle.load(thirdPartyIconBundleAsset);
+    final bytes =
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+    final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+    final packedIcons = <String, Uint8List>{};
+    for (final file in archive.files) {
+      if (!file.isFile) continue;
+      final normalizedName = file.name.replaceAll('\\', '/');
+      if (!normalizedName.startsWith('output/png/') ||
+          !normalizedName.toLowerCase().endsWith('.png')) {
+        continue;
+      }
+      packedIcons['third-party://$normalizedName'] =
+          Uint8List.fromList(file.content);
+    }
+    thirdPartyIconPngs = packedIcons;
+    thirdPartyIconAssets = packedIcons.keys.toList(growable: false)
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return thirdPartyIconAssets;
   }();
 }
 
@@ -274,6 +304,9 @@ class CardTemplate {
     required this.colorId,
     required this.fields,
     this.builtIn = false,
+    this.embeddedIconBase64,
+    this.iconFileName,
+    this.spbColor,
   });
 
   final String id;
@@ -282,6 +315,9 @@ class CardTemplate {
   final String colorId;
   final List<FieldDefinition> fields;
   final bool builtIn;
+  final String? embeddedIconBase64;
+  final String? iconFileName;
+  final int? spbColor;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -289,6 +325,9 @@ class CardTemplate {
         'iconId': iconId,
         'colorId': colorId,
         'builtIn': builtIn,
+        'embeddedIconBase64': embeddedIconBase64,
+        'iconFileName': iconFileName,
+        'spbColor': spbColor,
         'fields': fields.map((field) => field.toJson()).toList(),
       };
 
@@ -298,6 +337,9 @@ class CardTemplate {
         iconId: json['iconId'] as String,
         colorId: json['colorId'] as String,
         builtIn: json['builtIn'] == true,
+        embeddedIconBase64: json['embeddedIconBase64'] as String?,
+        iconFileName: json['iconFileName'] as String?,
+        spbColor: json['spbColor'] as int?,
         fields: (json['fields'] as List<dynamic>)
             .map((field) =>
                 FieldDefinition.fromJson(field as Map<String, dynamic>))
@@ -415,6 +457,9 @@ CardTemplate decodeSwtTemplate(Uint8List bytes) {
       iconId: template.iconId,
       colorId: template.colorId,
       fields: template.fields,
+      embeddedIconBase64: template.embeddedIconBase64,
+      iconFileName: template.iconFileName,
+      spbColor: template.spbColor,
     );
   } catch (_) {
     return decodeLegacySpbSwtTemplate(bytes);
@@ -775,6 +820,40 @@ const palette = [
   PaletteColor('violet', 'Фиолетовый', Color(0xffe6def0), Color(0xff4a3568)),
   PaletteColor('red', 'Красный', Color(0xfff2dddc), Color(0xff6a2b2b)),
   PaletteColor('amber', 'Янтарный', Color(0xfff3e7ca), Color(0xff5d4318)),
+];
+
+const templateColorPalette = [
+  PaletteColor(
+      'template_gray', 'Бледно-серый', Color(0xffe8e8e8), Color(0xff242424)),
+  PaletteColor(
+      'template_red', 'Бледно-красный', Color(0xfff8d7da), Color(0xff54292d)),
+  PaletteColor('template_coral', 'Бледно-коралловый', Color(0xfff9ddd2),
+      Color(0xff583329)),
+  PaletteColor('template_orange', 'Бледно-оранжевый', Color(0xfffbe5c8),
+      Color(0xff583c20)),
+  PaletteColor(
+      'template_yellow', 'Бледно-жёлтый', Color(0xfffbf3c4), Color(0xff51491e)),
+  PaletteColor('template_lime', 'Бледно-салатовый', Color(0xffedf5c8),
+      Color(0xff414b22)),
+  PaletteColor(
+      'template_green', 'Бледно-зелёный', Color(0xffdaf1d8), Color(0xff294b2a)),
+  PaletteColor(
+      'template_mint', 'Бледно-мятный', Color(0xffd5f1e3), Color(0xff24493a)),
+  PaletteColor('template_cyan', 'Бледно-бирюзовый', Color(0xffd5f2f2),
+      Color(0xff21494b)),
+  PaletteColor(
+      'template_sky', 'Бледно-голубой', Color(0xffd8ecfa), Color(0xff24445a)),
+  PaletteColor(
+      'template_blue', 'Бледно-синий', Color(0xffdce4fa), Color(0xff293b61)),
+  PaletteColor(
+      'template_indigo', 'Бледно-индиго', Color(0xffe2dff7), Color(0xff39345e)),
+  PaletteColor('template_violet', 'Бледно-фиолетовый', Color(0xffeaddf6),
+      Color(0xff49335c)),
+  PaletteColor(
+      'template_pink', 'Бледно-розовый', Color(0xfff5ddf0), Color(0xff58344f)),
+  PaletteColor('template_rose', 'Бледно-розово-серый', Color(0xfff7e1e8),
+      Color(0xff583943)),
+  PaletteColor('template_white', 'Белый', Color(0xffffffff), Color(0xff222222)),
 ];
 
 const templateIcons = [
@@ -1363,10 +1442,12 @@ List<CardTemplate> builtInTemplates() => const [
       ),
     ];
 
-PaletteColor colorById(String id) => palette.firstWhere(
-      (color) => color.id == id,
-      orElse: () => palette.first,
-    );
+PaletteColor colorById(String id) {
+  for (final color in [...palette, ...templateColorPalette]) {
+    if (color.id == id) return color;
+  }
+  return palette.first;
+}
 
 int paletteColorToSpb(String colorId) =>
     colorById(colorId).bg.toARGB32() & 0x00ffffff;
@@ -1388,6 +1469,16 @@ String spbColorToPaletteId(int color) {
     }
   }
   return best.id;
+}
+
+String spbTemplateColorToPaletteId(int color) {
+  final normalized = color & 0x00ffffff;
+  for (final candidate in templateColorPalette) {
+    if ((candidate.bg.toARGB32() & 0x00ffffff) == normalized) {
+      return candidate.id;
+    }
+  }
+  return spbColorToPaletteId(color);
 }
 
 /// Цвет для отрисовки карточки: если известен точный RGB из SPB Wallet
@@ -1740,6 +1831,8 @@ String spbTemplateIconForUi(SpbWalletTemplateRecord template) {
     return spbPasswordTemplateIconAsset;
   }
   if (spbOriginalIconAsset(iconId) != null) return iconId;
+  final selectedUiIcon = uiIconIdFromSyntheticSpbIcon(iconId);
+  if (selectedUiIcon != null) return selectedUiIcon;
   return defaultIconForTemplateName(
     template.name,
     template.fields.map((field) => field.name),
@@ -3652,7 +3745,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         id: template.id,
         name: template.name,
         iconId: iconId,
-        colorId: 'neutral',
+        colorId: spbTemplateColorToPaletteId(template.cardColor),
+        spbColor: template.cardColor,
         fields: fields,
       );
     }).toList();
@@ -3775,6 +3869,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   String? spbIconIdForUi(String uiIconId, String fallbackUiIconId) {
     if (isSpbHexId(uiIconId)) return uiIconId.toUpperCase();
+    final selectedAsset = spbPngIconAsset(uiIconId);
+    if (selectedAsset != null) {
+      final normalizedSelectedAsset = normalizeSpbPackedIconId(selectedAsset);
+      for (final entry in spbOriginalIconAssets.entries) {
+        if (normalizeSpbPackedIconId(entry.value) == normalizedSelectedAsset) {
+          return entry.key;
+        }
+      }
+    }
     final direct = spbIconIdByUiIcon[uiIconId];
     if (direct != null && isSpbHexId(direct)) return direct;
     if (uiIconId == fallbackUiIconId) {
@@ -5094,6 +5197,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           child: Text('Редактировать'),
         ),
         PopupMenuItem(
+          key: Key('copyTemplateContextAction'),
+          value: 'copy',
+          child: Text('Копировать'),
+        ),
+        PopupMenuItem(
           key: Key('exportTemplateContextAction'),
           value: 'export',
           child: Text('Экспортировать'),
@@ -5108,10 +5216,43 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (!mounted || selected == null) return;
     if (selected == 'edit') {
       await openTemplateDialog(template: template);
+    } else if (selected == 'copy') {
+      await cloneSpbTemplate(template);
     } else if (selected == 'export') {
       await exportSelectedSpbTemplate();
     } else if (selected == 'delete') {
       await deleteTemplateWithConfirmation(template);
+    }
+  }
+
+  Future<void> cloneSpbTemplate(CardTemplate template) async {
+    final existingNames = templates.map((entry) => entry.name).toSet();
+    var suffix = 1;
+    var cloneName = '${template.name} ($suffix)';
+    while (existingNames.contains(cloneName)) {
+      suffix++;
+      cloneName = '${template.name} ($suffix)';
+    }
+    final clone = CardTemplate(
+      id: makeId('tpl'),
+      name: cloneName,
+      iconId: template.iconId,
+      colorId: template.colorId,
+      spbColor: template.spbColor,
+      fields: [
+        for (final field in template.fields)
+          FieldDefinition(
+            id: field.id,
+            label: field.label,
+            type: field.type,
+            required: field.required,
+            secret: field.secret,
+          ),
+      ],
+    );
+    final saved = await saveSpbTemplateDefinition(clone, isNew: true);
+    if (saved) {
+      showTemplateActionMessage('Создана копия шаблона «$cloneName».');
     }
   }
 
@@ -5571,7 +5712,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         await exportSpbItems([item], suggestedName: item.title);
         break;
       case 'copy':
-        await copySpbCard(item);
+        await cloneSpbCard(item);
         break;
       case 'share':
         await shareSpbCard(item);
@@ -5867,6 +6008,51 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       ClipboardData(text: spbCardClipboardText(item)),
     );
     showSpbOperationMessage('Текст карточки скопирован');
+  }
+
+  Future<void> cloneSpbCard(SecretItem item) async {
+    final wallet = spbWallet;
+    if (wallet == null || !ensureSpbWalletWritable()) return;
+    final existingTitles = items.map((entry) => entry.title).toSet();
+    var suffix = 1;
+    var cloneTitle = '${item.title} ($suffix)';
+    while (existingTitles.contains(cloneTitle)) {
+      suffix++;
+      cloneTitle = '${item.title} ($suffix)';
+    }
+    final clonedAttachments = <SecretAttachment>[];
+    try {
+      for (final attachment in item.attachments) {
+        final bytes = wallet.readAttachmentBytes(attachment.id);
+        clonedAttachments.add(
+          SecretAttachment(
+            id: '',
+            fileName: attachment.fileName,
+            size: bytes.length,
+            pendingBytes: bytes,
+          ),
+        );
+      }
+      final clone = SecretItem(
+        id: makeId('item'),
+        templateId: item.templateId,
+        title: cloneTitle,
+        category: item.category,
+        colorId: item.colorId,
+        values: Map<String, String>.from(item.values),
+        modifiedAt: DateTime.now(),
+        attachments: clonedAttachments,
+        iconId: item.iconId,
+        backgroundImageBase64: item.backgroundImageBase64,
+        spbColor: item.spbColor,
+      );
+      final savedId = await persistItem(clone);
+      if (savedId != null) {
+        showSpbOperationMessage('Создана копия карточки «$cloneTitle».');
+      }
+    } catch (error) {
+      showSpbOperationMessage('Не удалось скопировать карточку: $error');
+    }
   }
 
   Future<void> shareSpbCard(SecretItem item) async {
@@ -9020,6 +9206,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       name: '${template.name}(1)',
       iconId: template.iconId,
       colorId: template.colorId,
+      spbColor: template.spbColor,
       builtIn: false,
       fields: [
         for (final field in template.fields)
@@ -9128,6 +9315,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (first.name != second.name ||
         first.iconId != second.iconId ||
         first.colorId != second.colorId ||
+        first.spbColor != second.spbColor ||
         first.fields.length != second.fields.length) {
       return false;
     }
@@ -9345,6 +9533,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             id: prepared.id,
             name: prepared.name,
             iconId: spbIconIdForUi(prepared.iconId, prepared.iconId),
+            cardColor: prepared.spbColor ?? paletteColorToSpb(prepared.colorId),
+            iconBytes: prepared.embeddedIconBase64 == null
+                ? null
+                : base64Decode(prepared.embeddedIconBase64!),
+            iconFileName: prepared.iconFileName,
             fields: prepared.fields
                 .where((field) => field.id != spbDescriptionFieldId)
                 .map((field) => SpbWalletTemplateFieldRecord(
@@ -9384,6 +9577,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       name: template.name,
       iconId: template.iconId,
       colorId: template.colorId,
+      embeddedIconBase64: template.embeddedIconBase64,
+      iconFileName: template.iconFileName,
+      spbColor: template.spbColor,
       fields: template.fields
           .where((field) => field.id != spbDescriptionFieldId)
           .map((field) => FieldDefinition(
@@ -10043,6 +10239,99 @@ Future<String?> showSpbOriginalIconPickerDialog(
   );
 }
 
+Future<String?> showThirdPartyIconPickerDialog(BuildContext context) async {
+  final iconAssets = await loadThirdPartyIconAssets();
+  if (!context.mounted) return null;
+  var visible = iconAssets;
+  return showDialog<String>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: const Text('Сторонние иконки'),
+        content: SizedBox(
+          width: min(MediaQuery.of(context).size.width - 48, 660),
+          height: min(MediaQuery.of(context).size.height - 180, 520),
+          child: Column(
+            children: [
+              TextField(
+                key: const Key('thirdPartyIconSearch'),
+                decoration: const InputDecoration(
+                  hintText: 'Поиск по имени файла',
+                  prefixIcon: Icon(Icons.search),
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onChanged: (query) {
+                  final normalized = query.trim().toLowerCase();
+                  setDialogState(() {
+                    visible = normalized.isEmpty
+                        ? iconAssets
+                        : iconAssets
+                            .where((entry) =>
+                                entry.toLowerCase().contains(normalized))
+                            .toList(growable: false);
+                  });
+                },
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: GridView.builder(
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 82,
+                    mainAxisExtent: 82,
+                    mainAxisSpacing: 7,
+                    crossAxisSpacing: 7,
+                  ),
+                  itemCount: visible.length,
+                  itemBuilder: (context, index) {
+                    final iconId = visible[index];
+                    final bytes = thirdPartyIconPngs[iconId];
+                    final fileName = iconId.split('/').last;
+                    return Tooltip(
+                      message: fileName,
+                      child: InkWell(
+                        onTap: () => Navigator.pop(context, iconId),
+                        borderRadius: BorderRadius.circular(7),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            border: Border.all(
+                              color: Theme.of(context).dividerColor,
+                            ),
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: bytes == null
+                                ? const Icon(Icons.broken_image_outlined)
+                                : Image.memory(
+                                    bytes,
+                                    width: 56,
+                                    height: 56,
+                                    fit: BoxFit.contain,
+                                    filterQuality: FilterQuality.medium,
+                                  ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class ItemEditorDialog extends StatefulWidget {
   const ItemEditorDialog({
     required this.templates,
@@ -10628,18 +10917,71 @@ class TemplateFieldDraft {
       );
 }
 
+class TemplateFieldSnapshot {
+  const TemplateFieldSnapshot({
+    required this.id,
+    required this.label,
+    required this.type,
+  });
+
+  final String id;
+  final String label;
+  final String type;
+}
+
+class TemplateEditorSnapshot {
+  const TemplateEditorSnapshot({
+    required this.name,
+    required this.iconId,
+    required this.colorId,
+    this.spbColor,
+    this.customIconBase64,
+    this.customIconFileName,
+    required this.fields,
+  });
+
+  final String name;
+  final String iconId;
+  final String colorId;
+  final int? spbColor;
+  final String? customIconBase64;
+  final String? customIconFileName;
+  final List<TemplateFieldSnapshot> fields;
+
+  String get signature => [
+        name,
+        iconId,
+        colorId,
+        spbColor?.toString() ?? '',
+        customIconBase64 ?? '',
+        customIconFileName ?? '',
+        for (final field in fields)
+          '${field.id}\u0001${field.label}\u0001${field.type}',
+      ].join('\u0002');
+}
+
 class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
   late final TextEditingController name;
   late String iconId;
   late String colorId;
+  int? spbColor;
+  Uint8List? customIconBytes;
+  String? customIconFileName;
   late final List<TemplateFieldDraft> fields;
+  final List<TemplateEditorSnapshot> undoHistory = [];
 
   @override
   void initState() {
     super.initState();
     name = TextEditingController(text: widget.initial?.name ?? '');
-    iconId = widget.initial?.iconId ?? 'key';
+    final initialIconId = widget.initial?.iconId;
+    iconId = initialIconId ?? spbPasswordTemplateIconAsset;
     colorId = widget.initial?.colorId ?? 'neutral';
+    spbColor = widget.initial?.spbColor;
+    customIconBytes = widget.initial?.embeddedIconBase64 == null
+        ? null
+        : base64Decode(widget.initial!.embeddedIconBase64!);
+    customIconFileName = widget.initial?.iconFileName;
     final sourceFields = widget.initial?.fields ??
         const [
           FieldDefinition(id: 'username', label: 'Логин', type: 'username'),
@@ -10666,142 +11008,480 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(
-        widget.initial == null ? 'Создание шаблона' : 'Редактирование шаблона',
-      ),
-      content: SizedBox(
-        width: min(MediaQuery.of(context).size.width - 48, 620),
-        child: SingleChildScrollView(
+    final media = MediaQuery.of(context).size;
+    final fullScreen = Platform.isAndroid || media.width < 700;
+    return Align(
+      alignment: Alignment.center,
+      child: Material(
+        color: const Color(0xfff4f4f4),
+        elevation: 24,
+        clipBehavior: Clip.antiAlias,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.zero,
+          side: BorderSide(color: Color(0xff7f8d98)),
+        ),
+        child: SizedBox(
+          key: const Key('templateEditorSurface'),
+          width: fullScreen ? media.width : min(media.width - 24, 720),
+          height: double.infinity,
           child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              TextField(
-                  controller: name,
-                  decoration: const InputDecoration(
-                      labelText: 'Название шаблона',
-                      border: OutlineInputBorder())),
-              const SizedBox(height: 14),
-              const Text('Пиктограмма'),
-              const SizedBox(height: 8),
-              templateIconPicker(),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Text('Поля', style: Theme.of(context).textTheme.titleSmall),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: addField,
-                    icon: const Icon(Icons.add),
-                    label: const Text('Добавить поле'),
+              templateTitleBar(),
+              Expanded(
+                child: ColoredBox(
+                  color: colorById(colorId).bg,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        templateIconPicker(),
+                        const SizedBox(height: 12),
+                        templateColorPicker(),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Text('Поля',
+                                style: Theme.of(context).textTheme.titleSmall),
+                            const Spacer(),
+                            TextButton.icon(
+                              key: const Key('templateAddFieldButton'),
+                              onPressed: addField,
+                              icon: const Icon(Icons.add),
+                              label: const Text('Добавить поле'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        ...fields.map(fieldEditor),
+                      ],
+                    ),
                   ),
-                ],
+                ),
               ),
-              const SizedBox(height: 8),
-              ...fields.map(fieldEditor),
+              templateBottomBar(),
             ],
           ),
         ),
       ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена')),
-        FilledButton(
-          onPressed: () {
-            Navigator.pop(
-              context,
-              CardTemplate(
-                id: widget.initial?.id ?? makeId('tpl'),
-                name: name.text.trim().isEmpty
-                    ? 'Новый шаблон'
-                    : name.text.trim(),
-                iconId: iconId,
-                colorId: colorId,
-                builtIn: widget.initial?.builtIn ?? false,
-                fields: fields.map((field) => field.toField()).toList(),
+    );
+  }
+
+  Widget templateTitleBar() {
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+        ),
+        border: Border(bottom: BorderSide(color: Color(0xff7f8d98))),
+      ),
+      child: TextField(
+        key: const Key('templateNameField'),
+        controller: name,
+        onTap: rememberCurrentAction,
+        style: const TextStyle(fontSize: 18),
+        decoration: const InputDecoration(
+          hintText: 'Название шаблона',
+          border: InputBorder.none,
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(vertical: 12),
+        ),
+      ),
+    );
+  }
+
+  Widget templateIconPicker() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          key: const Key('templateBoundIcon'),
+          width: 112,
+          height: 112,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: const Color(0xff82929d), width: 2),
+            borderRadius: BorderRadius.circular(5),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x26000000),
+                offset: Offset(1, 2),
+                blurRadius: 5,
               ),
-            );
-          },
-          child: const Text('Сохранить'),
+            ],
+          ),
+          child: customIconBytes == null
+              ? templateIconWidget(iconId, size: 88)
+              : Image.memory(
+                  customIconBytes!,
+                  width: 88,
+                  height: 88,
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.medium,
+                ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Выбрать иконку',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 7),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final buttons = [
+                    templatePickerButton(
+                      key: const Key('templateSpbDefaultButton'),
+                      label: 'SPB',
+                      icon: Icons.photo_library_outlined,
+                      tooltip: 'Иконки из базы SPB',
+                      onPressed: pickSpbIcon,
+                    ),
+                    templatePickerButton(
+                      key: const Key('templatePictogramsButton'),
+                      label: 'пиктограммы',
+                      icon: Icons.category_outlined,
+                      tooltip: 'Выбрать пиктограмму',
+                      onPressed: pickPictogram,
+                    ),
+                    templatePickerButton(
+                      key: const Key('templateIconsButton'),
+                      label: 'сторонние',
+                      icon: Icons.public_outlined,
+                      tooltip: 'Иконки Visual Studio',
+                      onPressed: pickThirdPartyIcon,
+                    ),
+                    templatePickerButton(
+                      key: const Key('templateUploadIconButton'),
+                      label: 'загрузить иконку',
+                      icon: Icons.upload_file_outlined,
+                      tooltip: 'Загрузить файл PNG или ICO',
+                      onPressed: pickCustomIconFile,
+                    ),
+                  ];
+                  if (constraints.maxWidth >= 420) {
+                    return Row(
+                      children: [
+                        for (var index = 0;
+                            index < buttons.length;
+                            index++) ...[
+                          if (index > 0) const SizedBox(width: 7),
+                          Expanded(child: buttons[index]),
+                        ],
+                      ],
+                    );
+                  }
+                  final width = (constraints.maxWidth - 7) / 2;
+                  return Wrap(
+                    spacing: 7,
+                    runSpacing: 7,
+                    children: [
+                      for (final button in buttons)
+                        SizedBox(width: width, child: button),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ],
     );
   }
 
-  Widget templateIconPicker() {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+  Widget templatePickerButton({
+    required Key key,
+    required String label,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onPressed,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Opacity(
+        opacity: onPressed == null ? 0.48 : 1,
+        child: Material(
+          key: key,
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(5),
+            child: Ink(
+              height: 48,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xfff4f4f4), Color(0xff969696)],
+                ),
+                border: Border.all(color: const Color(0xff676767)),
+                borderRadius: BorderRadius.circular(5),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.white,
+                    offset: Offset(-1, -1),
+                    blurRadius: 0.5,
+                  ),
+                  BoxShadow(
+                    color: Color(0x66000000),
+                    offset: Offset(1, 1),
+                    blurRadius: 1,
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 18, color: const Color(0xff303030)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xff303030),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget templateColorPicker() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ...quickTemplateIcons(iconId).map((icon) => ChoiceChip(
-              selected: icon.id == iconId,
-              label: Icon(templateIconGlyph(icon.id), size: 18),
-              tooltip: icon.label,
-              onSelected: (_) => setState(() => iconId = icon.id),
-            )),
-        OutlinedButton.icon(
-          onPressed: () async {
-            final picked = await showIconPickerDialog(context, iconId);
-            if (picked != null) setState(() => iconId = picked);
-          },
-          icon: const Icon(Icons.apps_outlined),
-          label: const Text('Все пиктограммы'),
+        const Text(
+          'Цвет шаблона',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 5,
+          runSpacing: 5,
+          children: [
+            for (final color in templateColorPalette)
+              Tooltip(
+                message: color.label,
+                child: InkWell(
+                  key: ValueKey('templateColor-${color.id}'),
+                  onTap: () {
+                    if (colorId == color.id) return;
+                    rememberCurrentAction();
+                    setState(() {
+                      colorId = color.id;
+                      spbColor = null;
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    width: 30,
+                    height: 27,
+                    decoration: BoxDecoration(
+                      color: color.bg,
+                      border: Border.all(
+                        color: colorId == color.id
+                            ? const Color(0xff253d4c)
+                            : const Color(0xff8b969d),
+                        width: colorId == color.id ? 2.5 : 1,
+                      ),
+                      borderRadius: BorderRadius.circular(4),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x1f000000),
+                          offset: Offset(1, 1),
+                          blurRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: colorId == color.id
+                        ? const Icon(Icons.check, size: 17)
+                        : null,
+                  ),
+                ),
+              ),
+          ],
         ),
       ],
+    );
+  }
+
+  Widget templateBottomBar() {
+    return Container(
+      height: 50,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: const BoxDecoration(
+        color: Color(0xffdce8f1),
+        border: Border(top: BorderSide(color: Color(0xff7f8d98))),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          templateActionButton(
+            key: const Key('templateUndoButton'),
+            icon: Icons.undo,
+            tooltip: 'Отменить последнее действие',
+            colors: const [Color(0xffffdc58), Color(0xffc58a00)],
+            onTap: undoHistory.isEmpty ? null : undoLastAction,
+          ),
+          const SizedBox(width: 6),
+          templateActionButton(
+            key: const Key('templateSaveButton'),
+            icon: Icons.check,
+            tooltip: 'Сохранить шаблон',
+            colors: const [Color(0xff5bc96d), Color(0xff08772f)],
+            onTap: saveTemplate,
+          ),
+          const SizedBox(width: 6),
+          templateActionButton(
+            key: const Key('templateCloseButton'),
+            icon: Icons.close,
+            tooltip: 'Закрыть без сохранения',
+            colors: const [Color(0xffff5a5f), Color(0xffa90000)],
+            onTap: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget templateActionButton({
+    required Key key,
+    required IconData icon,
+    required String tooltip,
+    required List<Color> colors,
+    required VoidCallback? onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Opacity(
+        opacity: onTap == null ? 0.55 : 1,
+        child: Material(
+          key: key,
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            child: Ink(
+              width: 38,
+              height: 34,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: colors,
+                ),
+                border: Border.all(color: const Color(0xff56636c)),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Icon(icon, color: Colors.white, size: 22),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
   Widget fieldEditor(TemplateFieldDraft field) {
     return Card(
+      key: ValueKey('templateField-${field.id}'),
       elevation: 0,
+      color: colorById(colorId).bg,
+      surfaceTintColor: Colors.transparent,
       child: Padding(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(8),
         child: Column(
           children: [
-            TextField(
-              controller: field.label,
-              decoration: const InputDecoration(
-                  labelText: 'Название поля', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 10),
             Row(
               children: [
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: field.type,
-                    decoration: const InputDecoration(
-                        labelText: 'Тип', border: OutlineInputBorder()),
-                    items: const [
-                      DropdownMenuItem(
-                          value: 'text', child: Text('Маленькая строка')),
-                      DropdownMenuItem(value: 'username', child: Text('Логин')),
-                      DropdownMenuItem(
-                          value: 'multiline_note',
-                          child: Text('Большая строка')),
-                      DropdownMenuItem(
-                          value: 'password', child: Text('Пароль')),
-                      DropdownMenuItem(
-                          value: 'custom_secret', child: Text('Секрет')),
-                      DropdownMenuItem(value: 'number', child: Text('Число')),
-                      DropdownMenuItem(value: 'url', child: Text('Сайт')),
-                      DropdownMenuItem(value: 'email', child: Text('Email')),
-                      DropdownMenuItem(value: 'phone', child: Text('Телефон')),
-                      DropdownMenuItem(value: 'date', child: Text('Дата')),
-                      DropdownMenuItem(value: 'totp', child: Text('TOTP')),
-                    ],
-                    onChanged: (value) => setState(() {
-                      field.type = value ?? 'text';
-                    }),
+                  child: SizedBox(
+                    height: 44,
+                    child: TextField(
+                      key: ValueKey('templateFieldName-${field.id}'),
+                      controller: field.label,
+                      onTap: rememberCurrentAction,
+                      decoration: InputDecoration(
+                        labelText: 'Название поля',
+                        border: const OutlineInputBorder(),
+                        filled: true,
+                        fillColor: colorById(colorId).bg,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                IconButton(
+                const SizedBox(width: 7),
+                fieldMoveButtons(field),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: SizedBox(
+                    height: 44,
+                    child: DropdownButtonFormField<String>(
+                      key: ValueKey('templateFieldType-${field.id}'),
+                      initialValue: field.type,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: 'Тип',
+                        border: const OutlineInputBorder(),
+                        filled: true,
+                        fillColor: colorById(colorId).bg,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'text', child: Text('Маленькая строка')),
+                        DropdownMenuItem(
+                            value: 'username', child: Text('Логин')),
+                        DropdownMenuItem(
+                            value: 'multiline_note',
+                            child: Text('Большая строка')),
+                        DropdownMenuItem(
+                            value: 'password', child: Text('Пароль')),
+                        DropdownMenuItem(
+                            value: 'custom_secret', child: Text('Секрет')),
+                        DropdownMenuItem(value: 'number', child: Text('Число')),
+                        DropdownMenuItem(value: 'url', child: Text('Сайт')),
+                        DropdownMenuItem(value: 'email', child: Text('Email')),
+                        DropdownMenuItem(
+                            value: 'phone', child: Text('Телефон')),
+                        DropdownMenuItem(value: 'date', child: Text('Дата')),
+                        DropdownMenuItem(value: 'totp', child: Text('TOTP')),
+                      ],
+                      onChanged: (value) {
+                        rememberCurrentAction();
+                        setState(() => field.type = value ?? 'text');
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 7),
+                fieldMoveButton(
+                  key: ValueKey('templateFieldDelete-${field.id}'),
                   tooltip: 'Удалить поле',
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed:
-                      fields.length <= 1 ? null : () => removeField(field),
+                  icon: Icons.delete_outline,
+                  height: 44,
+                  onTap: fields.length <= 1 ? null : () => removeField(field),
                 ),
               ],
             ),
@@ -10811,7 +11491,82 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
     );
   }
 
+  Widget fieldMoveButtons(TemplateFieldDraft field) {
+    final index = fields.indexOf(field);
+    return SizedBox(
+      width: 31,
+      height: 44,
+      child: Column(
+        children: [
+          fieldMoveButton(
+            key: ValueKey('templateFieldUp-${field.id}'),
+            icon: Icons.keyboard_arrow_up,
+            tooltip: 'Переместить поле вверх',
+            onTap: index > 0 ? () => moveField(field, -1) : null,
+          ),
+          const SizedBox(height: 2),
+          fieldMoveButton(
+            key: ValueKey('templateFieldDown-${field.id}'),
+            icon: Icons.keyboard_arrow_down,
+            tooltip: 'Переместить поле вниз',
+            onTap: index < fields.length - 1 ? () => moveField(field, 1) : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget fieldMoveButton({
+    required Key key,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onTap,
+    double height = 21,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Opacity(
+        opacity: onTap == null ? 0.45 : 1,
+        child: Material(
+          key: key,
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(3),
+            child: Ink(
+              width: 31,
+              height: height,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xfff4f4f4), Color(0xff8d8d8d)],
+                ),
+                border: Border.all(color: const Color(0xff676767)),
+                borderRadius: BorderRadius.circular(3),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.white,
+                    offset: Offset(-1, -1),
+                    blurRadius: 0.5,
+                  ),
+                  BoxShadow(
+                    color: Color(0x66000000),
+                    offset: Offset(1, 1),
+                    blurRadius: 1,
+                  ),
+                ],
+              ),
+              child: Icon(icon, size: 19, color: const Color(0xff303030)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void addField() {
+    rememberCurrentAction();
     setState(() {
       fields.add(
         TemplateFieldDraft(
@@ -10823,10 +11578,169 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
   }
 
   void removeField(TemplateFieldDraft field) {
+    rememberCurrentAction();
     setState(() {
       fields.remove(field);
       field.dispose();
     });
+  }
+
+  void moveField(TemplateFieldDraft field, int offset) {
+    final oldIndex = fields.indexOf(field);
+    final newIndex = oldIndex + offset;
+    if (oldIndex < 0 || newIndex < 0 || newIndex >= fields.length) return;
+    rememberCurrentAction();
+    setState(() {
+      fields.removeAt(oldIndex);
+      fields.insert(newIndex, field);
+    });
+  }
+
+  TemplateEditorSnapshot currentSnapshot() => TemplateEditorSnapshot(
+        name: name.text,
+        iconId: iconId,
+        colorId: colorId,
+        spbColor: spbColor,
+        customIconBase64:
+            customIconBytes == null ? null : base64Encode(customIconBytes!),
+        customIconFileName: customIconFileName,
+        fields: [
+          for (final field in fields)
+            TemplateFieldSnapshot(
+              id: field.id,
+              label: field.label.text,
+              type: field.type,
+            ),
+        ],
+      );
+
+  void rememberCurrentAction() {
+    final snapshot = currentSnapshot();
+    if (undoHistory.isNotEmpty &&
+        undoHistory.last.signature == snapshot.signature) {
+      return;
+    }
+    setState(() => undoHistory.add(snapshot));
+  }
+
+  void undoLastAction() {
+    if (undoHistory.isEmpty) return;
+    final snapshot = undoHistory.removeLast();
+    setState(() {
+      name.text = snapshot.name;
+      iconId = snapshot.iconId;
+      colorId = snapshot.colorId;
+      spbColor = snapshot.spbColor;
+      customIconBytes = snapshot.customIconBase64 == null
+          ? null
+          : base64Decode(snapshot.customIconBase64!);
+      customIconFileName = snapshot.customIconFileName;
+      for (final field in fields) {
+        field.dispose();
+      }
+      fields
+        ..clear()
+        ..addAll(
+          snapshot.fields.map(
+            (field) => TemplateFieldDraft(
+              FieldDefinition(
+                id: field.id,
+                label: field.label,
+                type: field.type,
+                secret: fieldTypeIsSecret(field.type),
+              ),
+            ),
+          ),
+        );
+    });
+  }
+
+  void changeIcon(String selectedIconId) {
+    if (selectedIconId == iconId) return;
+    rememberCurrentAction();
+    setState(() {
+      iconId = selectedIconId;
+      customIconBytes = null;
+      customIconFileName = null;
+    });
+  }
+
+  Future<void> pickPictogram() async {
+    final picked = await showIconPickerDialog(context, iconId);
+    if (picked != null && mounted) changeIcon(picked);
+  }
+
+  Future<void> pickSpbIcon() async {
+    final picked = await showSpbOriginalIconPickerDialog(context, iconId);
+    if (picked != null && mounted) changeIcon(picked);
+  }
+
+  Future<void> pickThirdPartyIcon() async {
+    final picked = await showThirdPartyIconPickerDialog(context);
+    if (picked == null || !mounted) return;
+    final bytes = thirdPartyIconPngs[picked];
+    if (bytes == null) return;
+    applyCustomIcon(bytes, picked.split('/').last);
+  }
+
+  Future<void> pickCustomIconFile() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['png', 'ico'],
+      withData: true,
+    );
+    final file = picked?.files.single;
+    if (file == null || !mounted) return;
+    Uint8List? bytes = file.bytes;
+    if (bytes == null && file.path != null) {
+      bytes = await File(file.path!).readAsBytes();
+    }
+    if (bytes == null || bytes.isEmpty || !mounted) return;
+    image.Image? decoded;
+    try {
+      decoded = image.IcoDecoder().decodeImageLargest(bytes);
+    } catch (_) {
+      // The selected file can be PNG rather than ICO.
+    }
+    decoded ??= image.decodeImage(bytes);
+    if (decoded == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось прочитать файл иконки.')),
+      );
+      return;
+    }
+    final pngBytes = Uint8List.fromList(image.encodePng(decoded));
+    final pngFileName = file.name.toLowerCase().endsWith('.png')
+        ? file.name
+        : '${file.name.replaceAll(RegExp(r'\.ico$', caseSensitive: false), '')}.png';
+    applyCustomIcon(pngBytes, pngFileName);
+  }
+
+  void applyCustomIcon(Uint8List pngBytes, String fileName) {
+    rememberCurrentAction();
+    setState(() {
+      iconId = SpbWalletDatabase.makeId();
+      customIconBytes = pngBytes;
+      customIconFileName = fileName;
+    });
+  }
+
+  void saveTemplate() {
+    Navigator.pop(
+      context,
+      CardTemplate(
+        id: widget.initial?.id ?? makeId('tpl'),
+        name: name.text.trim().isEmpty ? 'Новый шаблон' : name.text.trim(),
+        iconId: iconId,
+        colorId: colorId,
+        spbColor: spbColor,
+        builtIn: widget.initial?.builtIn ?? false,
+        embeddedIconBase64:
+            customIconBytes == null ? null : base64Encode(customIconBytes!),
+        iconFileName: customIconFileName,
+        fields: fields.map((field) => field.toField()).toList(),
+      ),
+    );
   }
 }
 

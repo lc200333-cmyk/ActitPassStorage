@@ -1,10 +1,160 @@
 import 'package:actit_pass_storage/main.dart';
+import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('third-party Visual Studio icon bundle is available',
+      (tester) async {
+    final icons = await loadThirdPartyIconAssets();
+
+    expect(icons, hasLength(1356));
+    expect(thirdPartyIconPngs[icons.first], isNotEmpty);
+  });
+
+  test('selected template icon survives the stored IconID round trip', () {
+    const selected = 'spb://third_party/custom_icon.png';
+    final previousAssets = spb64PngIconAssets;
+    spb64PngIconAssets = const [selected];
+    addTearDown(() => spb64PngIconAssets = previousAssets);
+    final storedIconId = syntheticSpbIconIdForUi(selected);
+    final loadedIconId = spbTemplateIconForUi(
+      SpbWalletTemplateRecord(
+        id: 'template',
+        name: 'Название не определяет иконку',
+        iconId: storedIconId,
+        fields: const [],
+      ),
+    );
+
+    expect(loadedIconId, selected);
+  });
+
+  testWidgets('template editor uses SPB layout and supports local undo',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final template = builtInTemplates().first;
+
+    await tester.pumpWidget(
+      MaterialApp(home: TemplateEditorDialog(initial: template)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getSize(find.byKey(const Key('templateEditorSurface'))),
+      const Size(360, 800),
+    );
+    expect(find.byKey(const Key('templateNameField')), findsOneWidget);
+    expect(find.byKey(const Key('templateBoundIcon')), findsOneWidget);
+    expect(find.text('Выбрать иконку'), findsOneWidget);
+    expect(find.byKey(const Key('templateSpbDefaultButton')), findsOneWidget);
+    expect(find.byKey(const Key('templatePictogramsButton')), findsOneWidget);
+    expect(find.byKey(const Key('templateIconsButton')), findsOneWidget);
+    expect(find.byKey(const Key('templateUploadIconButton')), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget.key is ValueKey<String> &&
+            (widget.key! as ValueKey<String>)
+                .value
+                .startsWith('templateColor-'),
+      ),
+      findsNWidgets(16),
+    );
+    expect(find.byKey(const Key('templateUndoButton')), findsOneWidget);
+    expect(find.byKey(const Key('templateSaveButton')), findsOneWidget);
+    expect(find.byKey(const Key('templateCloseButton')), findsOneWidget);
+    final externalIcons = tester.widget<InkWell>(
+      find.descendant(
+        of: find.byKey(const Key('templateIconsButton')),
+        matching: find.byType(InkWell),
+      ),
+    );
+    expect(externalIcons.onTap, isNotNull);
+    final uploadIcon = tester.widget<InkWell>(
+      find.descendant(
+        of: find.byKey(const Key('templateUploadIconButton')),
+        matching: find.byType(InkWell),
+      ),
+    );
+    expect(uploadIcon.onTap, isNotNull);
+    final iconFrame = tester.widget<Container>(
+      find.byKey(const Key('templateBoundIcon')),
+    );
+    final iconDecoration = iconFrame.decoration! as BoxDecoration;
+    expect((iconDecoration.border! as Border).top.width, 2);
+    expect(iconDecoration.borderRadius, BorderRadius.circular(5));
+    expect(iconDecoration.boxShadow, isNotEmpty);
+
+    await tester.tap(
+      find.byKey(const ValueKey('templateColor-template_sky')),
+    );
+    await tester.pump();
+    final coloredNameField = tester.widget<TextField>(
+      find.byKey(ValueKey('templateFieldName-${template.fields.first.id}')),
+    );
+    final coloredTypeField = tester.widget<DropdownButtonFormField<String>>(
+      find.byKey(ValueKey('templateFieldType-${template.fields.first.id}')),
+    );
+    expect(
+        coloredNameField.decoration!.fillColor, colorById('template_sky').bg);
+    expect(coloredTypeField.decoration.fillColor, colorById('template_sky').bg);
+    expect(tester.takeException(), isNull);
+
+    final firstField =
+        find.byKey(ValueKey('templateField-${template.fields.first.id}'));
+    final secondField =
+        find.byKey(ValueKey('templateField-${template.fields[1].id}'));
+    final firstFieldId = template.fields.first.id;
+    final deleteButton =
+        find.byKey(ValueKey('templateFieldDelete-$firstFieldId'));
+    final upButton = find.byKey(ValueKey('templateFieldUp-$firstFieldId'));
+    expect(tester.getSize(deleteButton).width, tester.getSize(upButton).width);
+    expect(
+      tester
+          .getTopRight(
+            find.byKey(ValueKey('templateFieldName-$firstFieldId')),
+          )
+          .dx,
+      tester
+          .getTopRight(
+            find.byKey(ValueKey('templateFieldType-$firstFieldId')),
+          )
+          .dx,
+    );
+    expect(
+      tester.getTopLeft(firstField).dy,
+      lessThan(tester.getTopLeft(secondField).dy),
+    );
+    await tester.tap(
+      find.byKey(ValueKey('templateFieldDown-${template.fields.first.id}')),
+    );
+    await tester.pump();
+    expect(
+      tester.getTopLeft(firstField).dy,
+      greaterThan(tester.getTopLeft(secondField).dy),
+    );
+    await tester.tap(find.byKey(const Key('templateUndoButton')));
+    await tester.pump();
+    expect(
+      tester.getTopLeft(firstField).dy,
+      lessThan(tester.getTopLeft(secondField).dy),
+    );
+    final nameField = find.byKey(const Key('templateNameField'));
+    await tester.tap(nameField);
+    await tester.enterText(nameField, 'Изменённый шаблон');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('templateUndoButton')));
+    await tester.pump();
+
+    final field = tester.widget<TextField>(nameField);
+    expect(field.controller!.text, template.name);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('card editor offers original SPB icons before pictograms',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(720, 900));
@@ -80,6 +230,21 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Создать карточку'), findsOneWidget);
     expect(find.text('Создать папку'), findsOneWidget);
+    await tester.tapAt(const Offset(2, 2));
+    await tester.pumpAndSettle();
+    final dynamic state = tester.state(find.byType(VaultShell));
+    state.mobileTemplatesOpen = true;
+    state.selectedTemplateId = state.templates.first.id;
+    state.setState(() {});
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(
+        ValueKey('spbCentralTemplate-${state.templates.first.id}'),
+      ),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('copyTemplateContextAction')), findsOneWidget);
     await tester.tapAt(const Offset(2, 2));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);

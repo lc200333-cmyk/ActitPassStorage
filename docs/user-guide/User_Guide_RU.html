@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>ActitPassStorage — руководство пользователя</title>
+  <style>
+    @page { size: A4; margin: 14mm 15mm 16mm; }
+    * { box-sizing: border-box; }
+    html { font-family: Arial, "Segoe UI", sans-serif; color: #17232b; }
+    body { margin: 0; font-size: 10.5pt; line-height: 1.38; }
+    h1, h2, h3 { margin: 0; color: #174d67; }
+    h1 { font-size: 31pt; line-height: 1.05; }
+    h2 { font-size: 21pt; margin-bottom: 5mm; padding-bottom: 2mm; border-bottom: 2px solid #61a9ce; }
+    h3 { font-size: 13pt; margin: 4mm 0 2mm; }
+    p { margin: 0 0 2.6mm; }
+    ul, ol { margin: 1.5mm 0 3mm 6mm; padding-left: 5mm; }
+    li { margin: 1.2mm 0; }
+    table { width: 100%; border-collapse: collapse; margin: 3mm 0; font-size: 9.6pt; }
+    th, td { border: 1px solid #b8c8d0; padding: 2.2mm; vertical-align: top; }
+    th { background: #dcecf5; text-align: left; color: #153e52; }
+    code, .key { font-family: Consolas, monospace; background: #edf2f4; border-radius: 3px; padding: 0.3mm 1mm; }
+    .page { page-break-after: always; min-height: 260mm; position: relative; }
+    .page:last-child { page-break-after: auto; }
+    .cover { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+    .cover img { width: 42mm; height: 42mm; object-fit: contain; margin-bottom: 10mm; }
+    .cover .subtitle { font-size: 16pt; margin-top: 5mm; color: #52636d; }
+    .cover .version { margin-top: 22mm; font-size: 11pt; color: #61747e; }
+    .callout { border-left: 4px solid #0a7d80; background: #e8f4f4; padding: 3mm 4mm; margin: 3mm 0; }
+    .warning { border-left-color: #d49a00; background: #fff6d8; }
+    .danger { border-left-color: #c8232a; background: #fdebec; }
+    .shot { display: block; width: 100%; max-height: 126mm; object-fit: contain; object-position: center top; margin: 3mm auto 2mm; border: 1px solid #b8c8d0; }
+    .shot.tall { max-height: 155mm; }
+    .shot.phone { width: auto; max-width: 67mm; max-height: 166mm; }
+    .caption { text-align: center; color: #5d6e77; font-size: 8.7pt; margin-bottom: 3mm; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; }
+    .two-images { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; align-items: start; }
+    .button { display: inline-block; min-width: 7mm; height: 7mm; margin-right: 2mm; border: 1px solid #33434f; border-radius: 2px; color: white; text-align: center; line-height: 6.3mm; font-weight: bold; }
+    .gray { background: linear-gradient(#626262,#252525); }
+    .blue { background: linear-gradient(#45bff3,#0873b9); }
+    .yellow { background: linear-gradient(#ffdd58,#c68d00); }
+    .green { background: linear-gradient(#62ca70,#087831); }
+    .red { background: linear-gradient(#ff5c61,#ac0000); }
+    .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 2mm 6mm; margin: 3mm 0; }
+    .legend div { display: flex; align-items: center; }
+    .small { font-size: 8.8pt; color: #596a73; }
+    .footer { position: absolute; bottom: 0; left: 0; right: 0; border-top: 1px solid #cad5da; padding-top: 2mm; color: #718088; font-size: 8pt; display: flex; justify-content: space-between; }
+    .toc td:first-child { width: 12mm; text-align: center; font-weight: bold; color: #18789d; }
+    .checklist { list-style: none; margin-left: 0; padding-left: 0; }
+    .checklist li::before { content: "□"; font-weight: bold; margin-right: 2mm; color: #087b7d; }
+  </style>
+</head>
+<body>
+
+<section class="page cover">
+  <img src="../../assets/icon.png" alt="Значок Pass Storage">
+  <h1>ActitPassStorage</h1>
+  <div class="subtitle">Руководство пользователя</div>
+  <div class="version">Версия 0.1.19 · Windows, Linux и Android<br>29 июля 2026 года</div>
+  <div class="footer"><span>ActitPassStorage</span><span>Руководство пользователя</span></div>
+</section>
+
+<section class="page">
+  <h2>Содержание и быстрый старт</h2>
+  <table class="toc">
+    <tr><td>1</td><td>Назначение программы и безопасность</td></tr>
+    <tr><td>2</td><td>Открытие существующей базы и ввод пароля</td></tr>
+    <tr><td>3</td><td>Создание новой базы</td></tr>
+    <tr><td>4</td><td>Основное окно и верхняя строка кнопок</td></tr>
+    <tr><td>5</td><td>Папки и карточки</td></tr>
+    <tr><td>6</td><td>Просмотр, редактирование и вложения</td></tr>
+    <tr><td>7</td><td>Шаблоны, импорт и экспорт</td></tr>
+    <tr><td>8</td><td>Поиск, отмена действий и корзина</td></tr>
+    <tr><td>9</td><td>Сохранение, закрытие и резервные копии</td></tr>
+    <tr><td>10</td><td>Android и узкий вертикальный экран</td></tr>
+    <tr><td>11</td><td>Устранение неполадок</td></tr>
+  </table>
+
+  <h3>Быстрый старт</h3>
+  <ol>
+    <li>Запустите программу.</li>
+    <li>Нажмите кнопку с изображением папки и выберите файл базы <span class="key">.swl</span>.</li>
+    <li>Введите пароль с клавиатуры или экранными кнопками и нажмите <b>OK</b>.</li>
+    <li>Выберите папку слева, затем карточку в центральной области.</li>
+    <li>Чтобы изменить карточку, откройте её контекстное меню и выберите <b>Редактировать</b>.</li>
+    <li>После изменений нажмите <b>Сохранить базу</b> либо красную кнопку безопасного закрытия.</li>
+  </ol>
+
+  <div class="callout warning"><b>Перед первой работой</b> сделайте резервную копию важного файла <span class="key">.swl</span> и храните её отдельно.</div>
+  <div class="footer"><span>Быстрый старт</span><span>2</span></div>
+</section>
+
+<section class="page">
+  <h2>1. Назначение и безопасность</h2>
+  <p>ActitPassStorage — локальная программа для работы с базами SPB Wallet: паролями, заметками, банковскими карточками, папками, шаблонами и вложениями. Основной формат базы — <span class="key">.swl</span>.</p>
+
+  <h3>Главные правила безопасности</h3>
+  <ul>
+    <li><b>Пароль базы нигде не сохраняется:</b> ни в настройках программы, ни в кеше, ни в списке последних файлов.</li>
+    <li>При выборе другой или новой базы пароль вводится заново.</li>
+    <li>Программа не отправляет содержимое базы в интернет.</li>
+    <li>Если база открывалась только для просмотра, её файл не перезаписывается, дата и время файла не меняются.</li>
+    <li>Запись выполняется только после реального изменения карточки, папки, шаблона или другого поля.</li>
+  </ul>
+
+  <div class="callout danger"><b>Важно:</b> восстановить забытый пароль средствами программы невозможно. Храните пароль в надёжном месте отдельно от базы.</div>
+
+  <h3>Поддерживаемые платформы</h3>
+  <table>
+    <tr><th>Платформа</th><th>Особенности</th></tr>
+    <tr><td>Windows</td><td>Трёхколоночное окно; мышь, правая кнопка, физическая клавиатура.</td></tr>
+    <tr><td>Linux</td><td>Та же логика работы и формат базы <span class="key">.swl</span>.</td></tr>
+    <tr><td>Android</td><td>Системный выбор файлов, сенсорное управление и компактная вертикальная компоновка.</td></tr>
+  </table>
+  <div class="footer"><span>Назначение и безопасность</span><span>3</span></div>
+</section>
+
+<section class="page">
+  <h2>2. Открытие базы и ввод пароля</h2>
+  <div class="two">
+    <div>
+      <ol>
+        <li>Нажмите кнопку <b>Открыть файл</b> с изображением папки.</li>
+        <li>Выберите существующий файл <span class="key">.swl</span>.</li>
+        <li>Введите пароль. Можно использовать физическую клавиатуру или экранную.</li>
+        <li>Нажмите <b>OK</b>.</li>
+      </ol>
+      <h3>Экранная клавиатура</h3>
+      <ul>
+        <li><b>CLR</b> — очистить введённое значение.</li>
+        <li><b>←</b> — удалить последний символ.</li>
+        <li><b>ABC</b> — заглавные буквы.</li>
+        <li><b>abc</b> — строчные буквы.</li>
+        <li><b>123</b> — цифры.</li>
+        <li><b>#!?</b> — специальные символы.</li>
+      </ul>
+    </div>
+    <div>
+      <img class="shot tall" src="images/01-login.png" alt="Экран ввода пароля">
+      <div class="caption">Экран ввода пароля</div>
+    </div>
+  </div>
+  <div class="callout">Если файл доступен только для чтения, программа разрешит просмотр, но сообщит о невозможности записать изменения. Выберите файл или папку с правом записи.</div>
+  <div class="footer"><span>Открытие базы</span><span>4</span></div>
+</section>
+
+<section class="page">
+  <h2>3. Создание новой базы</h2>
+  <div class="two">
+    <div>
+      <ol>
+        <li>На стартовом экране нажмите кнопку <b>+</b>.</li>
+        <li>В поле <b>Назначить путь</b> выберите папку.</li>
+        <li>Введите название базы. Расширение <span class="key">.swl</span> добавляется автоматически.</li>
+        <li>Введите новый пароль и повторите его.</li>
+        <li>Нажмите <b>OK</b>.</li>
+      </ol>
+      <div class="callout warning">Используйте уникальный длинный пароль. Не применяйте пароль от электронной почты или банковского приложения.</div>
+    </div>
+    <div>
+      <img class="shot tall" src="images/02-create-vault.png" alt="Создание новой базы">
+      <div class="caption">Диалог создания новой базы</div>
+    </div>
+  </div>
+  <h3>После создания</h3>
+  <p>База открывается сразу. Создайте нужные папки и карточки, затем выполните сохранение. Рекомендуется сразу сделать архивную копию через правую панель задач.</p>
+  <div class="footer"><span>Создание новой базы</span><span>5</span></div>
+</section>
+
+<section class="page">
+  <h2>4. Основное окно</h2>
+  <img class="shot" src="images/03-cards.png" alt="Основное окно">
+  <div class="caption">Основное окно: дерево папок, рабочая область и панель задач</div>
+
+  <table>
+    <tr><th>Область</th><th>Назначение</th></tr>
+    <tr><td>Левая</td><td>Папки базы и переключатели <b>Мои карточки</b> / <b>Шаблоны</b>.</td></tr>
+    <tr><td>Центральная</td><td>Папки, карточки или шаблоны выбранного раздела.</td></tr>
+    <tr><td>Правая — «Задачи»</td><td>Команды для текущего режима: создание, открытие, импорт, экспорт, удаление и сохранение.</td></tr>
+  </table>
+
+  <h3>Кнопки верхней строки</h3>
+  <div class="legend">
+    <div><span class="button gray">×</span> очистить строку поиска</div>
+    <div><span class="button blue">⌕</span> выполнить поиск</div>
+    <div><span class="button yellow">↶</span> отменить изменение текущей сессии</div>
+    <div><span class="button green">♻</span> восстановить удалённый объект</div>
+    <div><span class="button red">×</span> сохранить изменения и закрыть программу</div>
+  </div>
+  <div class="footer"><span>Основное окно</span><span>6</span></div>
+</section>
+
+<section class="page">
+  <h2>5. Папки и карточки</h2>
+  <h3>Создание папки</h3>
+  <ol>
+    <li>Выберите родительскую папку слева или корень базы.</li>
+    <li>В панели <b>Задачи</b> нажмите <b>Создать новую папку</b>.</li>
+    <li>Введите название и при необходимости выберите пиктограмму SPB Wallet.</li>
+    <li>Подтвердите создание.</li>
+  </ol>
+
+  <h3>Создание карточки</h3>
+  <ol>
+    <li>Выберите папку назначения.</li>
+    <li>Нажмите <b>Создать новую карточку</b>.</li>
+    <li>Выберите шаблон и пиктограмму.</li>
+    <li>Заполните поля. Секретные поля отображаются скрыто.</li>
+    <li>Нажмите <b>Сохранить</b>.</li>
+  </ol>
+
+  <h3>Контекстное меню карточки</h3>
+  <p>На компьютере нажмите правой кнопкой по карточке. На сенсорном экране выполните длительное нажатие.</p>
+  <img class="shot" src="images/04-card-context-menu.png" alt="Контекстное меню карточки">
+  <div class="caption">Команды карточки: Открыть, Редактировать, Экспорт, Копировать, Удалить</div>
+  <div class="footer"><span>Папки и карточки</span><span>7</span></div>
+</section>
+
+<section class="page">
+  <h2>6. Просмотр карточки и вложения</h2>
+  <img class="shot" src="images/05-card-preview.png" alt="Просмотр карточки">
+  <div class="caption">Просмотр карточки с демонстрационными данными</div>
+
+  <ul>
+    <li>Нажатие по значению поля копирует его в буфер обмена.</li>
+    <li>Пароль может оставаться скрытым точками, но при копировании используется настоящее значение.</li>
+    <li>Кнопка показа рядом с секретным полем временно отображает значение.</li>
+    <li><b>Заметки</b> открывают текстовое описание карточки.</li>
+    <li><b>Вложения</b> показывают связанные файлы. Добавление и удаление вложений выполняется в режиме редактирования.</li>
+  </ul>
+
+  <div class="callout warning"><b>Буфер обмена:</b> после копирования пароля не вставляйте его в неизвестные приложения. При необходимости очистите буфер обмена вручную.</div>
+
+  <h3>Редактирование</h3>
+  <p>Откройте контекстное меню карточки и выберите <b>Редактировать</b>. Измените нужные поля и подтвердите сохранение. До закрытия программы действие можно отменить жёлтой кнопкой.</p>
+  <div class="footer"><span>Просмотр и редактирование</span><span>8</span></div>
+</section>
+
+<section class="page">
+  <h2>7. Работа с шаблонами</h2>
+  <p>Шаблон определяет состав полей карточки: логин, пароль, сайт, номер карты, заметку и другие значения.</p>
+  <img class="shot" src="images/06-templates.png" alt="Раздел шаблонов">
+  <div class="caption">Раздел «Шаблоны»</div>
+
+  <h3>Команды панели «Задачи»</h3>
+  <table>
+    <tr><th>Команда</th><th>Действие</th></tr>
+    <tr><td>Создать новый</td><td>Создаёт собственный шаблон.</td></tr>
+    <tr><td>Редактировать</td><td>Изменяет выбранный шаблон и набор полей.</td></tr>
+    <tr><td>Импорт</td><td>Загружает шаблон из файла.</td></tr>
+    <tr><td>Экспорт</td><td>Сохраняет выбранный шаблон во внешний файл.</td></tr>
+    <tr><td>Удалить</td><td>Перемещает шаблон и связанные объекты во внутреннюю корзину текущей сессии.</td></tr>
+    <tr><td>Сохранить базу</td><td>Записывает накопленные изменения в исходный файл базы.</td></tr>
+  </table>
+  <div class="footer"><span>Шаблоны</span><span>9</span></div>
+</section>
+
+<section class="page">
+  <h2>7.1. Меню и редактор шаблона</h2>
+  <div class="two-images">
+    <div>
+      <img class="shot" src="images/07-template-context-menu.png" alt="Меню шаблона">
+      <div class="caption">Правый щелчок или длительное нажатие</div>
+    </div>
+    <div>
+      <img class="shot" src="images/08-template-editor.png" alt="Редактор шаблона">
+      <div class="caption">Редактор полей и пиктограммы</div>
+    </div>
+  </div>
+
+  <h3>Создание и изменение</h3>
+  <ol>
+    <li>Введите название шаблона.</li>
+    <li>Выберите пиктограмму SPB Wallet.</li>
+    <li>Добавьте поля и задайте тип каждого поля.</li>
+    <li>Для паролей используйте секретный тип поля.</li>
+    <li>Нажмите <b>Сохранить</b>.</li>
+  </ol>
+
+  <h3>Импорт из пустой области</h3>
+  <p>В центральной области шаблонов нажмите правой кнопкой по свободному месту. На сенсорном экране выполните длительное нажатие. В появившемся меню выберите <b>Импортировать</b>.</p>
+  <div class="footer"><span>Редактор шаблонов</span><span>10</span></div>
+</section>
+
+<section class="page">
+  <h2>8. Поиск, отмена и корзина</h2>
+  <h3>Поиск</h3>
+  <ol>
+    <li>Введите часть названия папки, карточки или шаблона.</li>
+    <li>Нажмите синюю кнопку поиска.</li>
+    <li>Счётчик <b>Найдено</b> в правой области покажет количество результатов.</li>
+    <li>Для сброса нажмите серую кнопку очистки.</li>
+  </ol>
+
+  <h3>Жёлтая кнопка — отмена изменений</h3>
+  <p>Открывает историю изменений текущего сеанса. Можно вернуть более раннее состояние карточек, папок, шаблонов и списков. История существует только до закрытия программы.</p>
+
+  <h3>Зелёная кнопка — внутренняя корзина</h3>
+  <p>Удалённые карточки, папки и шаблоны временно помещаются во внутреннюю корзину. Нажмите зелёную кнопку и выберите объект для восстановления.</p>
+
+  <div class="callout danger"><b>После закрытия программы</b> содержимое внутренней корзины и история отмены очищаются. Перед закрытием восстановите всё, что было удалено ошибочно.</div>
+
+  <h3>Удаление шаблона</h3>
+  <p>Если с шаблоном связаны карточки, диалог удаления сообщает их количество. Внимательно прочитайте предупреждение перед подтверждением.</p>
+  <div class="footer"><span>Поиск, отмена и корзина</span><span>11</span></div>
+</section>
+
+<section class="page">
+  <h2>9. Сохранение и закрытие</h2>
+  <h3>Обычное сохранение</h3>
+  <p>Нажмите <b>Сохранить базу</b> в правой панели задач. При успешной записи программа покажет сообщение.</p>
+
+  <h3>Красная кнопка закрытия</h3>
+  <p>Красная кнопка в верхней строке выполняет безопасное закрытие:</p>
+  <ul>
+    <li>если были изменения — сначала записывает базу, затем закрывает программу;</li>
+    <li>если изменений не было — закрывает базу без перезаписи файла;</li>
+    <li>если запись не удалась — не закрывает программу и позволяет повторить сохранение.</li>
+  </ul>
+
+  <h3>Архивная копия</h3>
+  <p>Команда <b>Сделать архивную копию</b> создаёт отдельную копию базы. Используйте её перед массовым редактированием, импортом или удалением.</p>
+
+  <table>
+    <tr><th>Ситуация</th><th>Рекомендуемое действие</th></tr>
+    <tr><td>Только просмотр</td><td>Закройте программу — дата исходного файла не изменится.</td></tr>
+    <tr><td>Изменено хотя бы одно поле</td><td>Нажмите «Сохранить базу» или красную кнопку.</td></tr>
+    <tr><td>Файл только для чтения</td><td>Экспортируйте/скопируйте базу в доступную для записи папку.</td></tr>
+    <tr><td>Перед крупным импортом</td><td>Создайте архивную копию.</td></tr>
+  </table>
+  <div class="footer"><span>Сохранение и закрытие</span><span>12</span></div>
+</section>
+
+<section class="page">
+  <h2>10. Android и узкий экран</h2>
+  <div class="two-images">
+    <div>
+      <img class="shot phone" src="images/11-mobile-cards.png" alt="Карточки на телефоне">
+      <div class="caption">Папки и карточки</div>
+    </div>
+    <div>
+      <img class="shot phone" src="images/12-mobile-templates.png" alt="Шаблоны на телефоне">
+      <div class="caption">Шаблоны</div>
+    </div>
+  </div>
+
+  <ul>
+    <li>На узком портретном экране интерфейс автоматически становится компактнее на 20%.</li>
+    <li>В каждый момент отображается одна основная панель. Используйте стрелки перехода между списком, содержимым и задачами.</li>
+    <li>Для контекстного меню используйте длительное нажатие.</li>
+    <li>Файлы выбираются системным диалогом Android (SAF).</li>
+    <li>Не перемещайте и не удаляйте исходный файл базы во время открытого сеанса.</li>
+  </ul>
+
+  <div class="callout">Пиктограммы карточек и папок упакованы внутри приложения в единый служебный файл и не должны отображаться в галерее. Файл <span class="key">.nomedia</span> дополнительно запрещает индексирование исходных Android-ресурсов.</div>
+  <div class="footer"><span>Android и узкий экран</span><span>13</span></div>
+</section>
+
+<section class="page">
+  <h2>11. Устранение неполадок</h2>
+  <table>
+    <tr><th>Проблема</th><th>Что проверить</th></tr>
+    <tr><td>Пароль не принимается</td><td>Проверьте регистр букв, раскладку и специальные символы. Пароль не восстанавливается и не хранится программой.</td></tr>
+    <tr><td>База не сохраняется</td><td>Проверьте права записи, свободное место и доступность исходного файла. На Android повторно выберите файл через системный диалог.</td></tr>
+    <tr><td>Файл не изменил дату</td><td>Это нормально, если база использовалась только для просмотра.</td></tr>
+    <tr><td>Карточка или шаблон удалены случайно</td><td>До закрытия программы нажмите зелёную кнопку и восстановите объект.</td></tr>
+    <tr><td>Нужно отменить редактирование</td><td>Нажмите жёлтую кнопку и выберите нужное состояние из истории сеанса.</td></tr>
+    <tr><td>Пиктограммы видны в галерее</td><td>Перезагрузите телефон или очистите кеш галереи после появления <span class="key">.nomedia</span>. Некоторые сторонние просмотрщики игнорируют этот файл.</td></tr>
+    <tr><td>База повреждена</td><td>Не перезаписывайте единственную копию. Откройте резервную или архивную копию.</td></tr>
+  </table>
+
+  <h3>Контрольный список перед закрытием</h3>
+  <ul class="checklist">
+    <li>Нужные изменения сохранены.</li>
+    <li>Ошибочно удалённые объекты восстановлены из зелёной корзины.</li>
+    <li>Для важных изменений создана архивная копия.</li>
+    <li>Программа закрывается красной кнопкой или штатным закрытием окна.</li>
+  </ul>
+
+  <div class="callout warning">Не редактируйте один и тот же файл базы одновременно в нескольких программах или на нескольких устройствах.</div>
+  <div class="footer"><span>Устранение неполадок</span><span>14</span></div>
+</section>
+
+</body>
+</html>

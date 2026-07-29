@@ -1,13 +1,26 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:actit_pass_storage/main.dart';
 import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   late SpbWalletSnapshot snapshot;
 
   setUpAll(() async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final fontFile = File(r'C:\Windows\Fonts\arial.ttf');
+    if (fontFile.existsSync()) {
+      final fontBytes = await fontFile.readAsBytes();
+      final loader = FontLoader('ManualArial')
+        ..addFont(Future.value(ByteData.sublistView(fontBytes)));
+      await loader.load();
+    }
+    await loadSpb64PngIconAssets();
     final wallet = SpbWalletDatabase.open(
       '../.tmp/ActitPassStorage-demo.swl',
       '2468',
@@ -24,11 +37,16 @@ void main() {
     Size size = const Size(1280, 800),
   }) async {
     await tester.binding.setSurfaceSize(size);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       MaterialApp(
         debugShowCheckedModeBanner: false,
+        builder: (context, child) => CompactPortraitScaler(
+          child: child ?? const SizedBox.shrink(),
+        ),
         theme: ThemeData(
           useMaterial3: true,
+          fontFamily: 'ManualArial',
           colorScheme: ColorScheme.fromSeed(
             seedColor: const Color(0xff2d6f73),
           ),
@@ -49,14 +67,10 @@ void main() {
 
   Future<void> golden(WidgetTester tester, String name) async {
     await expectLater(
-      find.byType(VaultShell),
+      find.byType(Overlay).first,
       matchesGoldenFile('goldens/manual/$name.png'),
     );
   }
-
-  tearDown(() async {
-    TestWidgetsFlutterBinding.ensureInitialized().setSurfaceSize(null);
-  });
 
   testWidgets('desktop cards and menus', (tester) async {
     final dynamic state = await pumpShell(tester);
@@ -79,7 +93,7 @@ void main() {
 
   testWidgets('desktop templates and editor', (tester) async {
     final dynamic state = await pumpShell(tester);
-    state.activeView = 'templates';
+    state.mobileTemplatesOpen = true;
     state.selectedTemplateId = state.templates.first.id;
     state.setState(() {});
     await tester.pumpAndSettle();
@@ -97,19 +111,6 @@ void main() {
     await golden(tester, '08-template-editor');
   });
 
-  testWidgets('desktop frequent and settings', (tester) async {
-    final dynamic state = await pumpShell(tester);
-    state.activeView = 'frequent';
-    state.setState(() {});
-    await tester.pumpAndSettle();
-    await golden(tester, '09-frequent');
-
-    state.activeView = 'settings';
-    state.setState(() {});
-    await tester.pumpAndSettle();
-    await golden(tester, '10-settings');
-  });
-
   testWidgets('phone cards and templates', (tester) async {
     final dynamic state = await pumpShell(
       tester,
@@ -117,7 +118,7 @@ void main() {
     );
     await golden(tester, '11-mobile-cards');
 
-    state.activeView = 'templates';
+    state.mobileTemplatesOpen = true;
     state.selectedTemplateId = state.templates.first.id;
     state.setState(() {});
     await tester.pumpAndSettle();

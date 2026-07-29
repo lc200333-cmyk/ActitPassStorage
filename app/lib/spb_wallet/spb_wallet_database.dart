@@ -129,8 +129,13 @@ class SpbWalletDatabase {
         'SELECT hex(ID) AS ID, Data FROM spbwlt_Icon WHERE Data IS NOT NULL')) {
       try {
         final iconBytes = attachmentCodec.decode(row['Data']).bytes;
-        final decoded = image.IcoDecoder().decodeImageLargest(iconBytes) ??
-            image.decodeImage(iconBytes);
+        image.Image? decoded;
+        try {
+          decoded = image.IcoDecoder().decodeImageLargest(iconBytes);
+        } catch (_) {
+          // The payload can be PNG rather than ICO.
+        }
+        decoded ??= image.decodeImage(iconBytes);
         if (decoded == null) continue;
         icons[_string(row['ID']).toUpperCase()] =
             Uint8List.fromList(image.encodePng(decoded));
@@ -227,7 +232,9 @@ class SpbWalletDatabase {
       if (templateExists) {
         _db.execute('UPDATE spbwlt_Template SET Name = ? WHERE hex(ID) = ?',
             [crypto.encryptText(draft.name), draft.id]);
+        _saveEmbeddedIcon(draft);
         _saveTemplateIcon(draft.id, draft.iconId);
+        _saveTemplateColor(draft.id, draft.cardColor);
       } else {
         final cardViewId = _createCardView();
         _db.execute(
@@ -239,7 +246,9 @@ class SpbWalletDatabase {
             _idFromHex(cardViewId)
           ],
         );
+        _saveEmbeddedIcon(draft);
         _saveTemplateIcon(draft.id, draft.iconId);
+        _saveTemplateColor(draft.id, draft.cardColor);
       }
       final existingIds = _db
           .select(
@@ -889,13 +898,14 @@ CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
     }
     final templates = <SpbWalletTemplateRecord>[];
     for (final row in _db.select(
-        'SELECT hex(spbwlt_Template.ID) AS ID, Name, hex(spbwlt_CardView.IconID) AS IconID FROM spbwlt_Template LEFT JOIN spbwlt_CardView ON spbwlt_CardView.ID = spbwlt_Template.CardViewID')) {
+        'SELECT hex(spbwlt_Template.ID) AS ID, Name, hex(spbwlt_CardView.IconID) AS IconID, spbwlt_CardView.CardColor AS CardColor FROM spbwlt_Template LEFT JOIN spbwlt_CardView ON spbwlt_CardView.ID = spbwlt_Template.CardViewID')) {
       final id = _string(row['ID']);
       templates.add(
         SpbWalletTemplateRecord(
           id: id,
           name: crypto.decryptText(row['Name']),
           iconId: _string(row['IconID']),
+          cardColor: _cardColorToInt(row['CardColor']),
           fields: byTemplate[id] ?? const [],
         ),
       );
@@ -1131,6 +1141,43 @@ CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
         [_idFromHex(iconId), cardViewId]);
   }
 
+  void _saveTemplateColor(String templateId, int? cardColor) {
+    if (cardColor == null) return;
+    final rows = _db.select(
+        'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?',
+        [templateId]);
+    if (rows.isEmpty) return;
+    final cardViewId = _string(rows.first['CardViewID']);
+    if (cardViewId.isEmpty) return;
+    _db.execute(
+      'UPDATE spbwlt_CardView SET CardColor = ?, FillCardWithColor = 1 WHERE hex(ID) = ?',
+      [_cardColorBlob(cardColor), cardViewId],
+    );
+  }
+
+  void _saveEmbeddedIcon(SpbWalletTemplateDraft draft) {
+    final iconId = draft.iconId;
+    final bytes = draft.iconBytes;
+    if (iconId == null || iconId.isEmpty || bytes == null || bytes.isEmpty) {
+      return;
+    }
+    final name = crypto.encryptText(draft.iconFileName ?? 'template-icon.png');
+    final data = attachmentCodec.encode(bytes);
+    final exists = _db.select(
+        'SELECT 1 FROM spbwlt_Icon WHERE hex(ID) = ?', [iconId]).isNotEmpty;
+    if (exists) {
+      _db.execute(
+        'UPDATE spbwlt_Icon SET Name = ?, Data = ? WHERE hex(ID) = ?',
+        [name, data, iconId],
+      );
+    } else {
+      _db.execute(
+        'INSERT INTO spbwlt_Icon (ID, Name, Data) VALUES (?, ?, ?)',
+        [_idFromHex(iconId), name, data],
+      );
+    }
+  }
+
   String _copyCardView(String sourceCardViewId) {
     if (sourceCardViewId.isEmpty) return _createCardView();
     final rows = _db.select(
@@ -1268,11 +1315,13 @@ class SpbWalletTemplateRecord {
       {required this.id,
       required this.name,
       required this.iconId,
+      this.cardColor = 0xffffff,
       required this.fields});
 
   final String id;
   final String name;
   final String iconId;
+  final int cardColor;
   final List<SpbWalletTemplateFieldRecord> fields;
 }
 
@@ -1294,12 +1343,18 @@ class SpbWalletTemplateDraft {
       {required this.id,
       required this.name,
       required this.fields,
-      this.iconId});
+      this.iconId,
+      this.cardColor,
+      this.iconBytes,
+      this.iconFileName});
 
   final String id;
   final String name;
   final List<SpbWalletTemplateFieldRecord> fields;
   final String? iconId;
+  final int? cardColor;
+  final List<int>? iconBytes;
+  final String? iconFileName;
 }
 
 class SpbWalletCardRecord {

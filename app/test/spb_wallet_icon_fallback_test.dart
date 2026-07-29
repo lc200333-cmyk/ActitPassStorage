@@ -2,8 +2,47 @@ import 'dart:io';
 
 import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as image;
 
 void main() {
+  test('template keeps its embedded icon and exact background color', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'actitpass_template_style_',
+    );
+    final path = '${directory.path}${Platform.pathSeparator}template.swl';
+    final wallet = SpbWalletDatabase.create(path, 'style-password');
+    final templateId = SpbWalletDatabase.makeId();
+    final iconId = SpbWalletDatabase.makeId();
+    final sourceIcon = image.Image(width: 16, height: 16);
+    image.fill(
+      sourceIcon,
+      color: image.ColorRgb8(120, 180, 220),
+    );
+    final iconBytes = image.encodePng(sourceIcon);
+    try {
+      wallet.saveTemplate(
+        SpbWalletTemplateDraft(
+          id: templateId,
+          name: 'Цветной шаблон',
+          iconId: iconId,
+          cardColor: 0xd8ecfa,
+          iconBytes: iconBytes,
+          iconFileName: 'custom.png',
+          fields: const [],
+        ),
+      );
+
+      final snapshot = wallet.loadSnapshot();
+      final template = snapshot.templates.single;
+      expect(template.iconId, iconId);
+      expect(template.cardColor, 0xd8ecfa);
+      expect(snapshot.embeddedIconPngs[iconId], isNotEmpty);
+    } finally {
+      wallet.close();
+      await directory.delete(recursive: true);
+    }
+  });
+
   test('missing card and folder icons use original SPB Wallet icons', () async {
     final directory = await Directory.systemTemp.createTemp(
       'actitpass_icon_fallback_',

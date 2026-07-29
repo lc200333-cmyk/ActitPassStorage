@@ -30,5 +30,7 @@ flutter:
     # All SPB Wallet card, folder and UI pictograms are packed into one
     # non-media asset so Android gallery applications cannot index them.
     - assets/spb_icons.bundle
+    # Third-party Visual Studio icon library, packed separately from SPB.
+    - assets/third_party/icons_unique_visual_studio.zip
     # Original template library. Legacy databases refer to stable identities.
     - assets/spb_wallet_libraries/templates/
