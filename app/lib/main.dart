@@ -148,10 +148,70 @@ class ActitPassApp extends StatelessWidget {
       scaffoldMessengerKey: rootScaffoldMessengerKey,
       title: 'ActitPassStorage',
       debugShowCheckedModeBanner: false,
+      builder: (context, child) => CompactPortraitScaler(
+        child: child ?? const SizedBox.shrink(),
+      ),
       theme: baseTheme.copyWith(
         textTheme: enlargedText,
       ),
       home: const VaultShell(),
+    );
+  }
+}
+
+class CompactPortraitScaler extends StatelessWidget {
+  const CompactPortraitScaler({required this.child, super.key});
+
+  static const double scale = 0.8;
+  static const double maxViewportWidth = 560;
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final viewport = media.size;
+    final compactPortrait =
+        viewport.width <= maxViewportWidth && viewport.height > viewport.width;
+    if (!compactPortrait) return child;
+
+    final logicalSize = Size(
+      viewport.width / scale,
+      viewport.height / scale,
+    );
+    EdgeInsets expandInsets(EdgeInsets value) => EdgeInsets.fromLTRB(
+          value.left / scale,
+          value.top / scale,
+          value.right / scale,
+          value.bottom / scale,
+        );
+
+    return ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.topLeft,
+        minWidth: logicalSize.width,
+        maxWidth: logicalSize.width,
+        minHeight: logicalSize.height,
+        maxHeight: logicalSize.height,
+        child: Transform.scale(
+          key: const Key('compactPortraitScale'),
+          scale: scale,
+          alignment: Alignment.topLeft,
+          child: SizedBox.fromSize(
+            size: logicalSize,
+            child: MediaQuery(
+              data: media.copyWith(
+                size: logicalSize,
+                padding: expandInsets(media.padding),
+                viewPadding: expandInsets(media.viewPadding),
+                viewInsets: expandInsets(media.viewInsets),
+                systemGestureInsets: expandInsets(media.systemGestureInsets),
+              ),
+              child: child,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

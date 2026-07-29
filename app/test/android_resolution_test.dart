@@ -60,6 +60,19 @@ void main() {
 
       await tester.pumpWidget(const ActitPassApp());
       await tester.pump();
+      final compactScale = find.byKey(const Key('compactPortraitScale'));
+      expect(compactScale, findsOneWidget, reason: profile.name);
+      final transform = tester.widget<Transform>(compactScale);
+      expect(
+        transform.transform.storage[0],
+        closeTo(0.8, 0.0001),
+        reason: '${profile.name}: horizontal compact scale',
+      );
+      expect(
+        transform.transform.storage[5],
+        closeTo(0.8, 0.0001),
+        reason: '${profile.name}: vertical compact scale',
+      );
       expectInsideViewport(
         tester,
         find.byKey(const Key('passwordInput')),
@@ -136,6 +149,11 @@ void main() {
 
       await tester.pumpWidget(const ActitPassApp());
       await tester.pump();
+      expect(
+        find.byKey(const Key('compactPortraitScale')),
+        findsNothing,
+        reason: '${profile.name}: landscape keeps the regular scale',
+      );
       expect(find.byKey(const Key('passwordInput')), findsOneWidget);
       expect(find.byType(SingleChildScrollView), findsWidgets);
       expect(tester.takeException(), isNull, reason: profile.name);
