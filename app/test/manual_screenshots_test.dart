@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:actit_pass_storage/main.dart';
 import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
