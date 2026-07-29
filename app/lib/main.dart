@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,22 +18,80 @@ void main() {
 }
 
 final rootScaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+const spbIconBundleAsset = 'assets/spb_icons.bundle';
 List<String> spb64PngIconAssets = [];
 Future<List<String>>? spb64PngIconAssetsFuture;
+Map<String, Uint8List> spbBundledIconPngs = {};
 Map<String, Uint8List> spbEmbeddedIconPngs = {};
 
 Future<List<String>> loadSpb64PngIconAssets() {
   return spb64PngIconAssetsFuture ??= () async {
-    final manifest = await rootBundle.loadString(
-      'assets/spb_icons_package/icons_64x64.txt',
-    );
+    final data = await rootBundle.load(spbIconBundleAsset);
+    final bytes =
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+    final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+    final packedIcons = <String, Uint8List>{};
+    String? pickerManifest;
+    for (final file in archive.files) {
+      if (!file.isFile) continue;
+      final normalizedName = file.name.replaceAll('\\', '/');
+      if (normalizedName == 'icons_64x64.txt') {
+        pickerManifest = utf8.decode(file.content, allowMalformed: true);
+      } else if (normalizedName.toLowerCase().endsWith('.png')) {
+        packedIcons['spb://$normalizedName'] = Uint8List.fromList(file.content);
+      }
+    }
+    spbBundledIconPngs = packedIcons;
+    final manifest = pickerManifest ?? '';
     spb64PngIconAssets = manifest
         .split(RegExp(r'\r?\n'))
-        .map((path) => path.trim())
-        .where((path) => path.toLowerCase().endsWith('.png'))
+        .map((path) => normalizeSpbPackedIconId(path.trim()))
+        .where((path) =>
+            path.toLowerCase().endsWith('.png') &&
+            packedIcons.containsKey(path))
+        .toSet()
         .toList(growable: false);
     return spb64PngIconAssets;
   }();
+}
+
+String normalizeSpbPackedIconId(String iconId) {
+  var normalized = iconId.replaceAll('\\', '/');
+  const legacyPrefixes = <String>[
+    'assets/spb_icons_package/',
+    'assets/spb_wallet_libraries/icons/',
+  ];
+  for (final prefix in legacyPrefixes) {
+    if (normalized.startsWith(prefix)) {
+      normalized = normalized.substring(prefix.length);
+      break;
+    }
+  }
+  return normalized.startsWith('spb://') ? normalized : 'spb://$normalized';
+}
+
+Uint8List? spbPackedIconBytes(String iconId) =>
+    spbBundledIconPngs[normalizeSpbPackedIconId(iconId)];
+
+Widget spbPackedImage(
+  String iconId, {
+  double? width,
+  double? height,
+  BoxFit fit = BoxFit.contain,
+  FilterQuality filterQuality = FilterQuality.medium,
+  Widget? fallback,
+}) {
+  final bytes = spbPackedIconBytes(iconId);
+  if (bytes == null) return fallback ?? const SizedBox.shrink();
+  return Image.memory(
+    bytes,
+    width: width,
+    height: height,
+    fit: fit,
+    filterQuality: filterQuality,
+    gaplessPlayback: true,
+    errorBuilder: fallback == null ? null : (_, __, ___) => fallback,
+  );
 }
 
 Future<void> copyCardFieldValue(String value) async {
@@ -1313,14 +1372,13 @@ Widget templateIconWidget(String id, {double size = 20, Color? color}) {
     return SizedBox(
       width: 64,
       height: 64,
-      child: Image.asset(
+      child: spbPackedImage(
         originalAsset,
         width: 64,
         height: 64,
         fit: BoxFit.none,
         filterQuality: FilterQuality.none,
-        errorBuilder: (_, __, ___) =>
-            Icon(Icons.vpn_key_outlined, size: size, color: color),
+        fallback: Icon(Icons.vpn_key_outlined, size: size, color: color),
       ),
     );
   }
@@ -1435,12 +1493,21 @@ String? uiIconIdFromSyntheticSpbIcon(String spbIconId) {
   }
   for (final asset in spb64PngIconAssets) {
     if (syntheticSpbIconIdForUi(asset) == normalized) return asset;
+    final relative = asset.startsWith('spb://') ? asset.substring(6) : asset;
+    // Releases up to v0.1.18 hashed the loose-file asset path. Recognize
+    // those IDs after moving the images into the single packed asset.
+    if (syntheticSpbIconIdForUi('assets/spb_icons_package/$relative') ==
+            normalized ||
+        syntheticSpbIconIdForUi(
+                'assets/spb_wallet_libraries/icons/$relative') ==
+            normalized) {
+      return asset;
+    }
   }
   return null;
 }
 
-const _spbOriginalIconAssetDirectory =
-    'assets/spb_wallet_libraries/icons/apk_icons/res/drawable-hdpi';
+const _spbOriginalIconAssetDirectory = 'spb://apk_icons/res/drawable-hdpi';
 
 // Built-in Spb Wallet IconID values are stable identifiers, not row numbers.
 // Keep the correspondence explicit: database order differs from icons_NNN.png.
@@ -1624,10 +1691,11 @@ String? spbOriginalIconAsset(String iconId) {
 }
 
 String? spbPngIconAsset(String iconId) {
-  if ((iconId.startsWith('assets/spb_icons_package/') ||
+  if ((iconId.startsWith('spb://') ||
+          iconId.startsWith('assets/spb_icons_package/') ||
           iconId.startsWith('assets/spb_wallet_libraries/icons/')) &&
       iconId.toLowerCase().endsWith('.png')) {
-    return iconId;
+    return normalizeSpbPackedIconId(iconId);
   }
   return spbOriginalIconAsset(iconId);
 }
@@ -3816,13 +3884,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   static const _spbRightPanel = Color(0xffc7d9ea);
   static const _spbBorder = Color(0xffb7b7b7);
 
-  Widget spbResourceIcon(String fileName, double size) => Image.asset(
-        'assets/spb_wallet_libraries/icons/apk_icons/res/'
-        'drawable-hdpi/$fileName',
+  Widget spbResourceIcon(String fileName, double size) => spbPackedImage(
+        'spb://apk_icons/res/drawable-hdpi/$fileName',
         width: size,
         height: size,
         fit: BoxFit.contain,
         filterQuality: FilterQuality.medium,
+        fallback: Icon(Icons.image_outlined, size: size),
       );
 
   Widget spbSizedDataIcon(String iconId, double size, {Color? fallbackColor}) {
@@ -3843,12 +3911,17 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
     final asset = spbPngIconAsset(iconId);
     if (asset != null) {
-      return Image.asset(
+      return spbPackedImage(
         asset,
         width: size,
         height: size,
         fit: BoxFit.contain,
         filterQuality: FilterQuality.medium,
+        fallback: Icon(
+          templateIconGlyph(iconId),
+          size: size,
+          color: fallbackColor ?? const Color(0xffd79a00),
+        ),
       );
     }
     return Icon(templateIconGlyph(iconId),
@@ -7890,11 +7963,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     key: const Key('spbFolderIconPicker'),
-                    icon: Image.asset(
+                    icon: spbPackedImage(
                       spbPngIconAsset(iconId) ?? spbDefaultOriginalIconAsset,
                       width: 30,
                       height: 30,
                       fit: BoxFit.contain,
+                      fallback: const Icon(Icons.folder_outlined, size: 30),
                     ),
                     label: const Text('Иконка папки (SPB Wallet)'),
                     onPressed: () async {
@@ -9866,7 +9940,7 @@ Future<String?> showSpbOriginalIconPickerDialog(
             final asset = iconId;
             final selected = iconId == selectedIconId;
             final fileName =
-                iconId.substring('assets/spb_icons_package/'.length);
+                iconId.startsWith('spb://') ? iconId.substring(6) : iconId;
             return Tooltip(
               message: fileName,
               child: InkWell(
@@ -9885,11 +9959,12 @@ Future<String?> showSpbOriginalIconPickerDialog(
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(8),
-                    child: Image.asset(
+                    child: spbPackedImage(
                       asset,
                       width: 56,
                       height: 56,
                       fit: BoxFit.contain,
+                      fallback: const Icon(Icons.image_outlined, size: 40),
                     ),
                   ),
                 ),
@@ -9997,11 +10072,12 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                   await showSpbOriginalIconPickerDialog(context, iconId);
               if (picked != null) setState(() => iconId = picked);
             },
-            icon: Image.asset(
+            icon: spbPackedImage(
               originalAsset,
               width: 30,
               height: 30,
               fit: BoxFit.contain,
+              fallback: const Icon(Icons.credit_card_outlined, size: 30),
             ),
             label: const Text(
               'Иконка карточки',
