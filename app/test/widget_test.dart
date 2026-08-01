@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:actit_pass_storage/main.dart';
 import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter/foundation.dart';
@@ -344,7 +346,9 @@ void main() {
       find.byKey(ValueKey('cardPreviewField-${template.fields[1].id}')),
       findsNothing,
     );
-    expect(find.byKey(const Key('cardPreviewCloseButton')), findsOneWidget);
+    expect(find.byKey(const Key('cardPreviewBackButton')), findsOneWidget);
+    expect(find.byKey(const Key('cardPreviewEditButton')), findsOneWidget);
+    expect(find.byKey(const Key('cardPreviewDeleteButton')), findsOneWidget);
     expect(
       find.byKey(const Key('cardPreviewSaveAttachmentButton')),
       findsNothing,
@@ -979,6 +983,29 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('password window warns before the five minute exit',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(720, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(const ActitPassApp());
+    await tester.pump();
+
+    final dynamic state = tester.state(find.byType(VaultShell));
+    state.showLockedExitWarning();
+    await tester.pump();
+
+    expect(find.text('Предупреждение'), findsOneWidget);
+    expect(
+      find.text('Программа сохранит базу и закроется через 30 секунд'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('lockedExitContinueButton')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('lockedExitContinueButton')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('passwordInput')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('new vault dialog never reuses the current password',
       (tester) async {
     await tester.pumpWidget(const ActitPassApp());
@@ -1040,6 +1067,61 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('loginPasswordHint')), findsOneWidget);
     expect(find.text('Подсказка не задана.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('login password hint is shown while yellow button is hovered',
+      (tester) async {
+    await tester.pumpWidget(const ActitPassApp());
+    await tester.pump();
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(1, 1));
+    await mouse.moveTo(
+      tester.getCenter(find.byKey(const Key('loginPasswordHintHover'))),
+    );
+    await tester.pump();
+    expect(find.byKey(const Key('loginPasswordHint')), findsOneWidget);
+
+    await mouse.moveTo(const Offset(1, 1));
+    await tester.pump();
+    expect(find.byKey(const Key('loginPasswordHint')), findsNothing);
+  });
+
+  testWidgets('delete card confirmation uses blue and red 3D buttons',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+    final dynamic state = tester.state(find.byType(VaultShell));
+    final template = builtInTemplates().first;
+    final item = SecretItem(
+      id: 'delete-dialog-card',
+      templateId: template.id,
+      title: 'Удаляемая карточка',
+      category: '',
+      colorId: template.colorId,
+      values: const {},
+      modifiedAt: DateTime(2026),
+    );
+
+    unawaited(state.deleteItemWithConfirmation(item));
+    await tester.pumpAndSettle();
+
+    final cancel = find.byKey(const Key('cancelDeleteCardButton'));
+    final confirm = find.byKey(const Key('confirmDeleteCardButton'));
+    expect(find.text('Удалить карточку'), findsOneWidget);
+    expect(cancel, findsOneWidget);
+    expect(confirm, findsOneWidget);
+    expect(tester.getSize(cancel), const Size(124, 40));
+    expect(tester.getSize(confirm), const Size(124, 40));
+
+    await tester.tap(cancel);
+    await tester.pumpAndSettle();
+    expect(confirm, findsNothing);
     expect(tester.takeException(), isNull);
   });
 

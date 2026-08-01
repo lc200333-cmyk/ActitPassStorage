@@ -2545,6 +2545,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   bool spbFoundExpanded = true;
   bool spbFrequentExpanded = true;
   bool spbObjectMenuPointerActive = false;
+  bool spbContextMenuOpen = false;
   final GlobalKey spbSessionUndoButtonKey = GlobalKey();
   final GlobalKey spbSessionTrashButtonKey = GlobalKey();
   final ScrollController spbFoundScrollController = ScrollController();
@@ -2553,6 +2554,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   Timer? inactivityCountdownTimer;
   int inactivitySecondsRemaining = 30;
   bool inactivityWarningVisible = false;
+  Timer? lockedExitTimer;
+  Timer? lockedExitCountdownTimer;
+  int lockedExitSecondsRemaining = 30;
+  bool lockedExitWarningVisible = false;
   Timer? passwordUnlockDebounce;
   bool automaticUnlockInProgress = false;
   bool closingForInactivity = false;
@@ -2699,6 +2704,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     inactivityTimer?.cancel();
     inactivityCountdownTimer?.cancel();
+    lockedExitTimer?.cancel();
+    lockedExitCountdownTimer?.cancel();
     purgeSessionTrashFromDatabase();
     persistVaultState();
     clearSessionUndoHistory();
@@ -4657,8 +4664,24 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (!unlocked) {
       inactivityTimer?.cancel();
       inactivityTimer = null;
-      return buildLocked();
+      ensureLockedExitTimer();
+      return Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => recordLockedUserActivity(),
+        onPointerMove: (_) => recordLockedUserActivity(),
+        onPointerSignal: (_) => recordLockedUserActivity(),
+        child: Focus(
+          canRequestFocus: false,
+          onKeyEvent: (_, __) {
+            recordLockedUserActivity();
+            return KeyEventResult.ignored;
+          },
+          child: buildLocked(),
+        ),
+      );
     }
+    lockedExitTimer?.cancel();
+    lockedExitTimer = null;
     ensureInactivityTimer();
     final shell = LayoutBuilder(
       builder: (context, constraints) {
@@ -6373,41 +6396,48 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   Future<void> showSpbFolderMenu(
       CategoryTreeNode folder, Offset globalPosition) async {
+    if (spbContextMenuOpen) return;
+    spbContextMenuOpen = true;
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
-    final selected = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromRect(
-        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
-        Offset.zero & overlay.size,
-      ),
-      items: const [
-        PopupMenuItem(
-          key: Key('viewFolderContextAction'),
-          value: 'view',
-          child: Text('Просмотр'),
+    String? selected;
+    try {
+      selected = await showMenu<String>(
+        context: context,
+        position: RelativeRect.fromRect(
+          Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+          Offset.zero & overlay.size,
         ),
-        PopupMenuItem(
-          key: Key('createInFolderContextAction'),
-          value: 'create',
-          child: Text('Создать'),
-        ),
-        PopupMenuItem(
-          key: Key('editFolderContextAction'),
-          value: 'edit',
-          child: Text('Редактировать'),
-        ),
-        PopupMenuItem(
-          key: Key('exportFolderContextAction'),
-          value: 'export',
-          child: Text('Экспортировать'),
-        ),
-        PopupMenuItem(
-          key: Key('importFolderContextAction'),
-          value: 'import',
-          child: Text('Импортировать'),
-        ),
-      ],
-    );
+        items: const [
+          PopupMenuItem(
+            key: Key('viewFolderContextAction'),
+            value: 'view',
+            child: Text('Просмотр'),
+          ),
+          PopupMenuItem(
+            key: Key('createInFolderContextAction'),
+            value: 'create',
+            child: Text('Создать'),
+          ),
+          PopupMenuItem(
+            key: Key('editFolderContextAction'),
+            value: 'edit',
+            child: Text('Редактировать'),
+          ),
+          PopupMenuItem(
+            key: Key('exportFolderContextAction'),
+            value: 'export',
+            child: Text('Экспортировать'),
+          ),
+          PopupMenuItem(
+            key: Key('importFolderContextAction'),
+            value: 'import',
+            child: Text('Импортировать'),
+          ),
+        ],
+      );
+    } finally {
+      spbContextMenuOpen = false;
+    }
     if (!mounted || selected == null) return;
     switch (selected) {
       case 'view':
@@ -6437,46 +6467,58 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   Future<void> showSpbCardMenu(SecretItem item, Offset globalPosition) async {
+    if (spbContextMenuOpen) return;
+    spbContextMenuOpen = true;
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
-    final selected = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromRect(
-        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
-        Offset.zero & overlay.size,
-      ),
-      items: const [
-        PopupMenuItem(
-          key: Key('viewCardContextAction'),
-          value: 'view',
-          child: Text('Просмотр'),
+    String? selected;
+    try {
+      selected = await showMenu<String>(
+        context: context,
+        position: RelativeRect.fromRect(
+          Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+          Offset.zero & overlay.size,
         ),
-        PopupMenuItem(
-          key: Key('createCardContextAction'),
-          value: 'create',
-          child: Text('Создать'),
-        ),
-        PopupMenuItem(
-          key: Key('editCardContextAction'),
-          value: 'edit',
-          child: Text('Редактировать'),
-        ),
-        PopupMenuItem(
-          key: Key('copyCardContextAction'),
-          value: 'copy',
-          child: Text('Копировать'),
-        ),
-        PopupMenuItem(
-          key: Key('exportObjectContextAction'),
-          value: 'export',
-          child: Text('Экспортировать'),
-        ),
-        PopupMenuItem(
-          key: Key('importCardContextAction'),
-          value: 'import',
-          child: Text('Импортировать'),
-        ),
-      ],
-    );
+        items: const [
+          PopupMenuItem(
+            key: Key('viewCardContextAction'),
+            value: 'view',
+            child: Text('Просмотр'),
+          ),
+          PopupMenuItem(
+            key: Key('createCardContextAction'),
+            value: 'create',
+            child: Text('Создать'),
+          ),
+          PopupMenuItem(
+            key: Key('editCardContextAction'),
+            value: 'edit',
+            child: Text('Редактировать'),
+          ),
+          PopupMenuItem(
+            key: Key('copyCardContextAction'),
+            value: 'copy',
+            child: Text('Копировать'),
+          ),
+          PopupMenuItem(
+            key: Key('exportObjectContextAction'),
+            value: 'export',
+            child: Text('Экспортировать'),
+          ),
+          PopupMenuItem(
+            key: Key('importCardContextAction'),
+            value: 'import',
+            child: Text('Импортировать'),
+          ),
+          PopupMenuItem(
+            key: Key('deleteCardContextAction'),
+            value: 'delete',
+            child: Text('Удалить'),
+          ),
+        ],
+      );
+    } finally {
+      spbContextMenuOpen = false;
+    }
     if (!mounted || selected == null) return;
     switch (selected) {
       case 'view':
@@ -6496,6 +6538,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         break;
       case 'import':
         await importSpbWalletCards();
+        break;
+      case 'delete':
+        await deleteItemWithConfirmation(item);
         break;
     }
   }
@@ -7749,11 +7794,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     passwordFocusNode.requestFocus();
   }
 
-  void toggleLoginPasswordHint() {
-    if (loginHintVisible) {
-      setState(() => loginHintVisible = false);
-      return;
-    }
+  void showLoginPasswordHint() {
+    if (loginHintVisible) return;
     final path = spbWalletPath;
     final hint = path == null || path.isEmpty
         ? ''
@@ -7764,7 +7806,16 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     });
   }
 
+  void hideLoginPasswordHint() {
+    if (!loginHintVisible) return;
+    setState(() => loginHintVisible = false);
+  }
+
   Future<void> exitApplication() async {
+    lockedExitTimer?.cancel();
+    lockedExitTimer = null;
+    lockedExitCountdownTimer?.cancel();
+    lockedExitCountdownTimer = null;
     purgeSessionTrashFromDatabase();
     persistVaultState();
     final saved = await writeBackSpbWallet();
@@ -7787,6 +7838,132 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       await SystemNavigator.pop();
     } else {
       exit(0);
+    }
+  }
+
+  void ensureLockedExitTimer() {
+    if (lockedExitWarningVisible) return;
+    lockedExitTimer ??= Timer(
+      const Duration(minutes: 4, seconds: 30),
+      showLockedExitWarning,
+    );
+  }
+
+  void recordLockedUserActivity() {
+    if (unlocked || lockedExitWarningVisible) return;
+    lockedExitTimer?.cancel();
+    lockedExitTimer = Timer(
+      const Duration(minutes: 4, seconds: 30),
+      showLockedExitWarning,
+    );
+  }
+
+  Future<void> showLockedExitWarning() async {
+    if (!mounted || unlocked || lockedExitWarningVisible) return;
+    lockedExitTimer?.cancel();
+    lockedExitTimer = null;
+    lockedExitWarningVisible = true;
+    lockedExitSecondsRemaining = 30;
+    StateSetter? updateDialog;
+    lockedExitCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      lockedExitSecondsRemaining--;
+      updateDialog?.call(() {});
+      if (lockedExitSecondsRemaining <= 0) {
+        lockedExitCountdownTimer?.cancel();
+        if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
+          Navigator.of(context, rootNavigator: true).pop(false);
+        }
+      }
+    });
+    final continued = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          updateDialog = setDialogState;
+          return Dialog(
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.zero,
+              side: BorderSide(color: Color(0xff7f8d98)),
+            ),
+            child: SizedBox(
+              width: 440,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    height: 48,
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+                      ),
+                      border: Border(
+                        bottom: BorderSide(color: Color(0xff7f8d98)),
+                      ),
+                    ),
+                    child: const Text(
+                      'Предупреждение',
+                      style: TextStyle(fontSize: 18),
+                    ),
+                  ),
+                  Container(
+                    width: double.infinity,
+                    color: const Color(0xfff4f4f4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 22,
+                      vertical: 24,
+                    ),
+                    child: Text(
+                      'Программа сохранит базу и закроется через '
+                      '$lockedExitSecondsRemaining секунд',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 20),
+                    ),
+                  ),
+                  Container(
+                    height: 50,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    decoration: const BoxDecoration(
+                      color: Color(0xffdce8f1),
+                      border: Border(
+                        top: BorderSide(color: Color(0xff7f8d98)),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        SpbGradientActionButton(
+                          key: const Key('lockedExitContinueButton'),
+                          icon: Icons.play_arrow,
+                          tooltip: 'Продолжить работу',
+                          colors: const [
+                            Color(0xff5bc96d),
+                            Color(0xff08772f),
+                          ],
+                          onTap: () => Navigator.of(dialogContext).pop(true),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    lockedExitCountdownTimer?.cancel();
+    lockedExitCountdownTimer = null;
+    lockedExitWarningVisible = false;
+    if (continued == true && mounted) {
+      recordLockedUserActivity();
+    } else {
+      await exitApplication();
     }
   }
 
@@ -8338,20 +8515,29 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                           ),
                                         ),
                                         const SizedBox(width: 6),
-                                        SizedBox.square(
-                                          dimension: 48,
-                                          child: passwordKey(
-                                            key: const Key(
-                                                'loginPasswordHintButton'),
-                                            label: 'Подсказка пароля',
-                                            height: 48,
-                                            top: const Color(0xffffdc58),
-                                            bottom: const Color(0xffc58a00),
-                                            onPressed: toggleLoginPasswordHint,
-                                            child: const Icon(
-                                              Icons.question_mark,
-                                              color: Colors.white,
-                                              size: 28,
+                                        MouseRegion(
+                                          key: const Key(
+                                              'loginPasswordHintHover'),
+                                          cursor: SystemMouseCursors.click,
+                                          onEnter: (_) =>
+                                              showLoginPasswordHint(),
+                                          onExit: (_) =>
+                                              hideLoginPasswordHint(),
+                                          child: SizedBox.square(
+                                            dimension: 48,
+                                            child: passwordKey(
+                                              key: const Key(
+                                                  'loginPasswordHintButton'),
+                                              label: 'Подсказка пароля',
+                                              height: 48,
+                                              top: const Color(0xffffdc58),
+                                              bottom: const Color(0xffc58a00),
+                                              onPressed: showLoginPasswordHint,
+                                              child: const Icon(
+                                                Icons.question_mark,
+                                                color: Colors.white,
+                                                size: 28,
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -9465,7 +9651,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       (entry) => entry.id == item.id,
       orElse: () => item,
     );
-    await showDialog<void>(
+    final action = await showDialog<CardPreviewAction>(
       context: context,
       builder: (context) => CardPreviewDialog(
         item: currentItem,
@@ -9477,6 +9663,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         onAddAttachment: spbWallet == null ? null : addAttachmentFromPreview,
       ),
     );
+    if (!mounted) return;
+    final latestItem = itemById(currentItem.id) ?? currentItem;
+    if (action == CardPreviewAction.edit) {
+      await openItemDialog(item: latestItem);
+    } else if (action == CardPreviewAction.delete) {
+      await deleteItemWithConfirmation(latestItem);
+    }
   }
 
   Future<SecretItem?> addAttachmentFromPreview(SecretItem item) async {
@@ -9791,17 +9984,35 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (!ensureSpbWalletWritable()) return false;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Удалить карточку?'),
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(4),
+        ),
+        title: const Text('Удалить карточку'),
         content: Text('Карточка "${item.title}" будет удалена из базы.'),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
+          SizedBox(
+            width: 124,
+            child: passwordKey(
+              key: const Key('cancelDeleteCardButton'),
+              label: 'Отмена',
+              height: 40,
+              fontSize: 18,
+              onPressed: () => Navigator.pop(dialogContext, false),
+            ),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Удалить'),
+          SizedBox(
+            width: 124,
+            child: passwordKey(
+              key: const Key('confirmDeleteCardButton'),
+              label: 'Удалить',
+              height: 40,
+              fontSize: 18,
+              top: const Color(0xffe04b3f),
+              bottom: const Color(0xff8f1515),
+              onPressed: () => Navigator.pop(dialogContext, true),
+            ),
           ),
         ],
       ),
@@ -11792,6 +12003,8 @@ class _CategoryEditorDialogState extends State<CategoryEditorDialog> {
   }
 }
 
+enum CardPreviewAction { back, edit, delete }
+
 class CardPreviewDialog extends StatefulWidget {
   const CardPreviewDialog({
     required this.item,
@@ -12164,14 +12377,45 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
                             const SizedBox(width: 6),
                           ],
                           SpbGradientActionButton(
-                            key: const Key('cardPreviewCloseButton'),
+                            key: const Key('cardPreviewBackButton'),
+                            icon: Icons.arrow_drop_up,
+                            tooltip: 'Вернуться к карточкам',
+                            colors: const [
+                              Color(0xffffdc58),
+                              Color(0xffc58a00),
+                            ],
+                            onTap: () => Navigator.pop(
+                              context,
+                              CardPreviewAction.back,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          SpbGradientActionButton(
+                            key: const Key('cardPreviewEditButton'),
+                            icon: Icons.edit,
+                            tooltip: 'Редактировать карточку',
+                            colors: const [
+                              Color(0xff5bc96d),
+                              Color(0xff08772f),
+                            ],
+                            onTap: () => Navigator.pop(
+                              context,
+                              CardPreviewAction.edit,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          SpbGradientActionButton(
+                            key: const Key('cardPreviewDeleteButton'),
                             icon: Icons.close,
-                            tooltip: 'Закрыть',
+                            tooltip: 'Удалить карточку',
                             colors: const [
                               Color(0xffff5a5f),
                               Color(0xffa90000),
                             ],
-                            onTap: () => Navigator.pop(context),
+                            onTap: () => Navigator.pop(
+                              context,
+                              CardPreviewAction.delete,
+                            ),
                           ),
                         ],
                       ),

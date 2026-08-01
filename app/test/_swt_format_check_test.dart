@@ -272,9 +272,11 @@ void main() {
         'copyCardContextAction',
         'exportObjectContextAction',
         'importCardContextAction',
+        'deleteCardContextAction',
       ]) {
         expect(find.byKey(Key(key)), findsOneWidget);
       }
+      expect(find.text('Импортировать'), findsOneWidget);
       await tester.tapAt(const Offset(8, 8));
       await tester.pumpAndSettle();
     }
