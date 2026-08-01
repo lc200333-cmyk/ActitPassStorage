@@ -3,6 +3,7 @@ import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -10,7 +11,17 @@ void main() {
       (tester) async {
     final icons = await loadThirdPartyIconAssets();
 
-    expect(icons, hasLength(1356));
+    expect(icons, hasLength(1388));
+    expect(
+      icons,
+      contains('third-party://output/png/icos/icon_01.png'),
+    );
+    expect(
+      icons,
+      contains('third-party://output/png/icos/icon_16.png'),
+    );
+    expect(icons, contains('third-party://icos/icon_01.png'));
+    expect(icons, contains('third-party://icos/icon_16.png'));
     expect(thirdPartyIconPngs[icons.first], isNotEmpty);
   });
 
@@ -30,6 +41,36 @@ void main() {
     );
 
     expect(loadedIconId, selected);
+  });
+
+  test('stored custom folder icon has priority over the folder name', () {
+    const iconId = 'A1B2C3D4E5F60708';
+    final previousIcons = spbEmbeddedIconPngs;
+    spbEmbeddedIconPngs = {
+      iconId: Uint8List.fromList([1, 2, 3])
+    };
+    addTearDown(() => spbEmbeddedIconPngs = previousIcons);
+
+    expect(spbFolderIconAsset('bank', iconId), iconId);
+  });
+
+  test('pictogram keeps the background hue and is slightly darker', () {
+    const background = Color(0xffc8e4f6);
+    final pictogram = pictogramColorForBackground(background);
+    final backgroundHsl = HSLColor.fromColor(background);
+    final pictogramHsl = HSLColor.fromColor(pictogram);
+    final backgroundArgb = background.toARGB32();
+    final pictogramArgb = pictogram.toARGB32();
+    int channel(int value, int shift) => (value >> shift) & 0xff;
+
+    expect(pictogramHsl.hue, closeTo(backgroundHsl.hue, 1.0));
+    expect(pictogramHsl.lightness, lessThan(backgroundHsl.lightness));
+    for (final shift in const [16, 8, 0]) {
+      expect(
+        channel(pictogramArgb, shift),
+        closeTo(channel(backgroundArgb, shift) * 0.8, 1.1),
+      );
+    }
   });
 
   testWidgets('template editor uses SPB layout and supports local undo',
@@ -102,6 +143,13 @@ void main() {
     expect(
         coloredNameField.decoration!.fillColor, colorById('template_sky').bg);
     expect(coloredTypeField.decoration.fillColor, colorById('template_sky').bg);
+    final coloredPictogram = tester.widget<Icon>(
+      find.descendant(
+        of: find.byKey(const Key('templateBoundIcon')),
+        matching: find.byType(Icon),
+      ),
+    );
+    expect(coloredPictogram.color, templatePictogramColor('template_sky'));
     expect(tester.takeException(), isNull);
 
     final firstField =
@@ -169,16 +217,323 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const Key('cardEditorSurface')), findsOneWidget);
+    expect(find.byKey(const Key('cardTitleField')), findsOneWidget);
+    expect(find.byKey(const Key('cardBoundIcon')), findsOneWidget);
+    expect(find.byKey(const Key('cardUndoButton')), findsOneWidget);
+    expect(find.byKey(const Key('cardCloseButton')), findsOneWidget);
+    expect(find.byKey(const Key('cardSaveButton')), findsOneWidget);
     final original = find.byKey(const Key('spbCardIconPicker'));
     final pictogram = find.byKey(const Key('cardPictogramPicker'));
+    final thirdParty = find.byKey(const Key('cardThirdPartyPicker'));
+    final upload = find.byKey(const Key('cardUploadIconButton'));
     expect(original, findsOneWidget);
     expect(pictogram, findsOneWidget);
+    expect(thirdParty, findsOneWidget);
+    expect(upload, findsOneWidget);
     expect(tester.getTopLeft(original).dx,
         lessThan(tester.getTopLeft(pictogram).dx));
+    for (final color in templateColorPalette) {
+      expect(find.byKey(ValueKey('cardColor-${color.id}')), findsOneWidget);
+    }
+    final iconBottom = tester
+        .getBottomLeft(
+          find.byKey(const Key('cardBoundIcon')),
+        )
+        .dy;
+    final colorTop = tester
+        .getTopLeft(
+          find.byKey(ValueKey('cardColor-${templateColorPalette.first.id}')),
+        )
+        .dy;
+    final titleTop =
+        tester.getTopLeft(find.byKey(const Key('cardTitleField'))).dy;
+    final templateTop =
+        tester.getTopLeft(find.byKey(const Key('cardTemplateField'))).dy;
+    expect(colorTop, greaterThan(iconBottom));
+    expect(titleTop, greaterThan(colorTop));
+    expect(templateTop, greaterThan(titleTop));
+    expect(find.text('Папка / каталог'), findsOneWidget);
+    final firstFieldId = builtInTemplates().first.fields.first.id;
+    final secondFieldId = builtInTemplates().first.fields[1].id;
+    expect(
+      find.byKey(ValueKey('cardFieldUp-$firstFieldId')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(ValueKey('cardFieldDown-$firstFieldId')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(ValueKey('cardFieldDelete-$firstFieldId')),
+      findsOneWidget,
+    );
+    final firstField = find.byKey(ValueKey('cardField-$firstFieldId'));
+    final secondField = find.byKey(ValueKey('cardField-$secondFieldId'));
+    final moveDown = find.byKey(ValueKey('cardFieldDown-$firstFieldId'));
+    await tester.ensureVisible(moveDown);
+    await tester.pumpAndSettle();
+    await tester.tap(moveDown);
+    await tester.pump();
+    expect(
+      tester.getTopLeft(firstField).dy,
+      greaterThan(tester.getTopLeft(secondField).dy),
+    );
+    await tester.tap(find.byKey(const Key('cardUndoButton')));
+    await tester.pump();
+    expect(
+      tester.getTopLeft(firstField).dy,
+      lessThan(tester.getTopLeft(secondField).dy),
+    );
 
+    await tester.ensureVisible(original);
+    await tester.pumpAndSettle();
     await tester.tap(original);
     await tester.pumpAndSettle();
     expect(find.text('Иконки SPB Wallet'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('card preview uses template design and skips empty fields',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      tester.binding.setSurfaceSize(null);
+    });
+    final template = builtInTemplates().first;
+    final item = SecretItem(
+      id: 'preview-card',
+      templateId: template.id,
+      title: 'Карточка просмотра',
+      category: '',
+      colorId: template.colorId,
+      values: {
+        template.fields[0].id: 'Заполнено',
+        template.fields[1].id: '',
+        template.fields[2].id: 'Заметка',
+      },
+      modifiedAt: DateTime(2026),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CardPreviewDialog(
+          item: item,
+          template: template,
+          onAddAttachment: (item) async => item,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final previewSize =
+        tester.getSize(find.byKey(const Key('cardPreviewSurface')));
+    expect(previewSize.width, 360);
+    expect(previewSize.height, greaterThan(500));
+    expect(find.byKey(const Key('cardPreviewTitle')), findsOneWidget);
+    expect(find.byKey(const Key('cardPreviewModifiedAt')), findsOneWidget);
+    expect(find.text('01.01.2026 00:00'), findsOneWidget);
+    expect(find.byKey(const Key('cardPreviewIcon')), findsOneWidget);
+    expect(
+      find.byKey(ValueKey('cardPreviewField-${template.fields[0].id}')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(ValueKey('cardPreviewField-${template.fields[1].id}')),
+      findsNothing,
+    );
+    expect(find.byKey(const Key('cardPreviewCloseButton')), findsOneWidget);
+    expect(
+      find.byKey(const Key('cardPreviewSaveAttachmentButton')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('cardPreviewAddAttachmentButton')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+    debugDefaultTargetPlatformOverride = null;
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('card preview copies all labeled values from context menu',
+      (tester) async {
+    final template = builtInTemplates().first;
+    final item = SecretItem(
+      id: 'copy-preview-card',
+      templateId: template.id,
+      title: 'Карточка для копирования',
+      category: 'Работа',
+      colorId: template.colorId,
+      values: {
+        template.fields[0].id: 'Пользователь',
+        template.fields[1].id: 'Секрет',
+      },
+      modifiedAt: DateTime(2026),
+    );
+    String? copiedText;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copiedText =
+            (call.arguments as Map<dynamic, dynamic>)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: CardPreviewDialog(item: item, template: template)),
+    );
+    await tester.pumpAndSettle();
+    await tester.longPress(find.byKey(const Key('cardPreviewTitle')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('copyAllCardFieldsAction')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('copyAllCardFieldsAction')));
+    await tester.pumpAndSettle();
+
+    expect(copiedText, contains('Название: Карточка для копирования'));
+    expect(copiedText, contains('Категория: Работа'));
+    expect(copiedText, contains('${template.fields[0].label}: Пользователь'));
+    expect(copiedText, contains('${template.fields[1].label}: Секрет'));
+  });
+
+  testWidgets('card attachment controls use requested colors and file names',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(720, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final template = builtInTemplates().first;
+    final attachments = [
+      const SecretAttachment(
+        id: '',
+        fileName: 'описание.txt',
+        size: 4,
+        pendingBytes: [1, 2, 3, 4],
+      ),
+      const SecretAttachment(
+        id: '',
+        fileName: 'звук.mp3',
+        size: 3,
+        pendingBytes: [5, 6, 7],
+      ),
+    ];
+    final item = SecretItem(
+      id: 'attachment-card',
+      templateId: template.id,
+      title: 'Вложения',
+      category: '',
+      colorId: template.colorId,
+      values: const {},
+      attachments: attachments,
+      modifiedAt: DateTime(2026),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ItemEditorDialog(
+          templates: builtInTemplates(),
+          categories: const [],
+          initial: item,
+          supportsAttachments: true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('описание.txt'), findsOneWidget);
+    expect(find.text('звук.mp3'), findsOneWidget);
+    expect(find.text('Вложения .swl'), findsNothing);
+    expect(find.byKey(const Key('cardEditorModifiedAt')), findsOneWidget);
+    expect(
+      find.byKey(const Key('cardEditorSaveAttachmentButton')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('cardEditorAddAttachmentButton')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('cardEditorDeleteAttachmentButton')),
+      findsOneWidget,
+    );
+    final editorName = tester.widget<GestureDetector>(
+      find.byKey(const ValueKey('cardEditorAttachment-описание.txt')),
+    );
+    expect(editorName.onSecondaryTapDown, isNotNull);
+    expect(editorName.onLongPress, isNotNull);
+
+    final deleteAttachment =
+        find.byKey(const Key('cardEditorDeleteAttachmentButton'));
+    await tester.ensureVisible(deleteAttachment);
+    await tester.pumpAndSettle();
+    await tester.tap(deleteAttachment);
+    await tester.pumpAndSettle();
+    expect(find.text('Удалить вложение'), findsOneWidget);
+    await tester.tap(find.text('описание.txt').last);
+    await tester.pumpAndSettle();
+    expect(find.text('описание.txt'), findsNothing);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CardPreviewDialog(
+          item: item,
+          template: template,
+          onAddAttachment: (item) async => item,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('cardPreviewSaveAttachmentButton')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('cardPreviewAddAttachmentButton')),
+      findsOneWidget,
+    );
+    final previewName = tester.widget<GestureDetector>(
+      find.byKey(const ValueKey('cardPreviewAttachment-описание.txt')),
+    );
+    expect(previewName.onSecondaryTapDown, isNotNull);
+    expect(previewName.onLongPress, isNotNull);
+  });
+
+  testWidgets('category editor uses template design and fills narrow screen',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() {
+      tester.binding.setSurfaceSize(null);
+    });
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: CategoryEditorDialog(
+          editing: true,
+          initialName: 'Работа',
+          initialIconId: 'folder',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final editorSize =
+        tester.getSize(find.byKey(const Key('categoryEditorSurface')));
+    expect(editorSize.width, 360);
+    expect(editorSize.height, greaterThanOrEqualTo(500));
+    expect(find.byKey(const Key('categoryBoundIcon')), findsOneWidget);
+    expect(find.byKey(const Key('spbFolderIconPicker')), findsOneWidget);
+    expect(find.byKey(const Key('categoryPictogramPicker')), findsOneWidget);
+    expect(find.byKey(const Key('categoryThirdPartyPicker')), findsOneWidget);
+    expect(find.byKey(const Key('categoryUploadIconButton')), findsOneWidget);
+    expect(find.byKey(const Key('categoryDeleteButton')), findsOneWidget);
+    expect(find.byKey(const Key('categorySaveButton')), findsOneWidget);
+    expect(find.byKey(const Key('categoryCloseButton')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -277,6 +632,8 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const Key('spbForceCloseButton')), findsOneWidget);
+    expect(find.byKey(const Key('mobilePaneBack')), findsOneWidget);
+    expect(find.byKey(const Key('mobilePaneForward')), findsOneWidget);
     await tester.tap(find.byKey(const Key('spbMobilePaneHeader')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('mobilePaneBack')), findsOneWidget);
@@ -285,7 +642,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Задачи'), findsOneWidget);
     expect(find.byKey(const Key('mobilePaneBack')), findsOneWidget);
-    expect(find.byKey(const Key('mobilePaneForward')), findsNothing);
+    expect(find.byKey(const Key('mobilePaneForward')), findsOneWidget);
     await tester.tap(find.byKey(const Key('mobilePaneBack')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('mobilePaneBack')));
@@ -349,17 +706,51 @@ void main() {
 
     await tester.tap(find.text('Шаблоны'));
     await tester.pumpAndSettle();
-    // Заголовок и нижняя кнопка режима, без второго заголовка рабочей области.
+    // Первая панель содержит список шаблонов.
     expect(find.text('Шаблоны'), findsNWidgets(2));
-    expect(
-      find.byKey(const Key('mobileTemplateTasksForward')),
-      findsOneWidget,
+    final templateTreeEntries = find.byWidgetPredicate(
+      (widget) =>
+          widget.key is ValueKey<String> &&
+          (widget.key! as ValueKey<String>).value.startsWith('spbTemplate-'),
     );
-    await tester.tap(find.byKey(const Key('mobileTemplateTasksForward')));
+    expect(templateTreeEntries, findsWidgets);
+    expect(find.byKey(const Key('mobilePaneBack')), findsOneWidget);
+    expect(find.byKey(const Key('mobilePaneForward')), findsOneWidget);
+
+    // В средней панели левая кнопка активна и возвращает к списку.
+    await tester.tap(find.byKey(const Key('mobilePaneForward')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('spbTemplateWorkspace')), findsOneWidget);
+    final backInk = tester.widget<InkWell>(
+      find.descendant(
+        of: find.byKey(const Key('mobilePaneBack')),
+        matching: find.byType(InkWell),
+      ),
+    );
+    expect(backInk.onTap, isNotNull);
+    await tester.tap(find.byKey(const Key('mobilePaneBack')));
+    await tester.pumpAndSettle();
+    expect(templateTreeEntries, findsWidgets);
+
+    await tester.tap(find.byKey(const Key('mobilePaneForward')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('mobilePaneForward')));
     await tester.pumpAndSettle();
     expect(find.text('Задачи'), findsOneWidget);
     expect(find.text('Удалить'), findsOneWidget);
+    expect(find.text('Создать новый шаблон'), findsOneWidget);
     expect(find.byKey(const Key('mobilePaneBack')), findsOneWidget);
+
+    await tester.tap(find.text('Создать новый шаблон'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byKey(const Key('templateEditorSurface'))),
+      const Size(360, 800),
+    );
+    expect(find.byKey(const Key('templateBoundIcon')), findsOneWidget);
+    expect(find.byKey(const Key('templateUndoButton')), findsOneWidget);
+    expect(find.byKey(const Key('templateSaveButton')), findsOneWidget);
+    expect(find.byKey(const Key('templateCloseButton')), findsOneWidget);
     expect(tester.takeException(), isNull);
     debugDefaultTargetPlatformOverride = null;
     await tester.binding.setSurfaceSize(null);
@@ -560,6 +951,34 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('inactivity warning locks the vault instead of closing the app',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(720, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(find.byType(VaultShell));
+    state.showInactivityWarning();
+    await tester.pump();
+
+    expect(find.text('Предупреждение'), findsOneWidget);
+    expect(
+      find.text('Хранилище будет заблокировано через 30 секунд'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('inactivityContinueButton')), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('passwordInput')), findsOneWidget);
+    expect(find.byType(VaultShell), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('new vault dialog never reuses the current password',
       (tester) async {
     await tester.pumpWidget(const ActitPassApp());
@@ -577,6 +996,11 @@ void main() {
     expect(find.byKey(const Key('newVaultPath')), findsOneWidget);
     expect(find.byKey(const Key('browseNewVaultPath')), findsOneWidget);
     expect(find.byKey(const Key('newVaultName')), findsOneWidget);
+    expect(
+      find.byKey(const Key('newVaultPasswordStrength')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('newVaultPasswordHint')), findsOneWidget);
     final confirmButton = find.byKey(const Key('confirmCreateVault'));
     final cancelButton = find.byKey(const Key('cancelCreateVault'));
     expect(
@@ -603,6 +1027,20 @@ void main() {
     );
     expect(newPassword.controller!.text, isEmpty);
     expect(repeatedPassword.controller!.text, isEmpty);
+  });
+
+  testWidgets('login password hint is shown from the yellow button',
+      (tester) async {
+    await tester.pumpWidget(const ActitPassApp());
+    await tester.pump();
+
+    expect(find.byKey(const Key('loginPasswordHintButton')), findsOneWidget);
+    expect(find.byKey(const Key('loginPasswordHint')), findsNothing);
+    await tester.tap(find.byKey(const Key('loginPasswordHintButton')));
+    await tester.pump();
+    expect(find.byKey(const Key('loginPasswordHint')), findsOneWidget);
+    expect(find.text('Подсказка не задана.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('login error is shown below all action buttons', (tester) async {

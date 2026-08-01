@@ -7,10 +7,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+final _demoFixture = File('../.tmp/ActitPassStorage-demo.swl');
+final _skipManualGoldens = !_demoFixture.existsSync();
+
 void main() {
   late SpbWalletSnapshot snapshot;
 
   setUpAll(() async {
+    if (_skipManualGoldens) return;
     TestWidgetsFlutterBinding.ensureInitialized();
     final fontFile = File(r'C:\Windows\Fonts\arial.ttf');
     if (fontFile.existsSync()) {
@@ -21,7 +25,7 @@ void main() {
     }
     await loadSpb64PngIconAssets();
     final wallet = SpbWalletDatabase.open(
-      '../.tmp/ActitPassStorage-demo.swl',
+      _demoFixture.path,
       '2468',
     );
     try {
@@ -88,7 +92,7 @@ void main() {
     await tester.tap(find.text('Открыть').last);
     await tester.pumpAndSettle();
     await golden(tester, '05-card-preview');
-  });
+  }, skip: _skipManualGoldens);
 
   testWidgets('desktop templates and editor', (tester) async {
     final dynamic state = await pumpShell(tester);
@@ -108,7 +112,7 @@ void main() {
     await tester.tap(find.byKey(const Key('editTemplateContextAction')));
     await tester.pumpAndSettle();
     await golden(tester, '08-template-editor');
-  });
+  }, skip: _skipManualGoldens);
 
   testWidgets('phone cards and templates', (tester) async {
     final dynamic state = await pumpShell(
@@ -122,5 +126,5 @@ void main() {
     state.setState(() {});
     await tester.pumpAndSettle();
     await golden(tester, '12-mobile-templates');
-  });
+  }, skip: _skipManualGoldens);
 }

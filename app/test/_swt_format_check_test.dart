@@ -104,7 +104,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('template workspace opens edit, export and delete menu',
+  testWidgets('template icon menu opens create, edit, export and delete',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1280, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -127,15 +127,55 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(
+      find.byKey(const Key('createTemplateFromIconContextAction')),
+      findsOneWidget,
+    );
+    expect(find.text('Создать'), findsOneWidget);
+    expect(find.byKey(const Key('viewTemplateContextAction')), findsOneWidget);
     expect(find.byKey(const Key('editTemplateContextAction')), findsOneWidget);
     expect(
       find.byKey(const Key('exportTemplateContextAction')),
       findsOneWidget,
     );
     expect(
+      find.byKey(const Key('importTemplateFromIconContextAction')),
+      findsOneWidget,
+    );
+    expect(
       find.byKey(const Key('deleteTemplateContextAction')),
       findsOneWidget,
     );
+
+    await tester.tap(
+      find.byKey(const Key('createTemplateFromIconContextAction')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('templateEditorSurface')), findsOneWidget);
+  });
+
+  testWidgets('template opens in preview by double click', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Шаблоны'));
+    await tester.pumpAndSettle();
+    final templateIcon =
+        find.byKey(const Key('spbCentralTemplate-tpl_password'));
+    await tester.tap(templateIcon);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(templateIcon);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('templatePreviewSurface')), findsOneWidget);
+    expect(find.byKey(const Key('templatePreviewTitle')), findsOneWidget);
+    expect(find.byKey(const Key('templatePreviewCloseButton')), findsOneWidget);
+    expect(
+        find.byKey(const Key('templatePreviewField-username')), findsOneWidget);
   });
 
   testWidgets('template empty workspace opens import menu', (tester) async {
@@ -154,7 +194,96 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
+        find.byKey(const Key('createTemplateContextAction')), findsOneWidget);
+    expect(find.text('Создать'), findsOneWidget);
+    expect(
         find.byKey(const Key('importTemplateContextAction')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('createTemplateContextAction')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('templateEditorSurface')), findsOneWidget);
+    expect(find.byKey(const Key('templateNameField')), findsOneWidget);
+    expect(find.byKey(const Key('templateBoundIcon')), findsOneWidget);
+    expect(find.byKey(const Key('templateUndoButton')), findsOneWidget);
+    expect(find.byKey(const Key('templateSaveButton')), findsOneWidget);
+    expect(find.byKey(const Key('templateCloseButton')), findsOneWidget);
+  });
+
+  testWidgets('template right workspace has create context action',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Шаблоны'));
+    await tester.pumpAndSettle();
+    final rightWorkspace = find.byKey(const Key('spbTemplateRightWorkspace'));
+    expect(rightWorkspace, findsOneWidget);
+    final point = tester.getBottomRight(rightWorkspace) - const Offset(12, 12);
+    await tester.tapAt(point, buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('createTemplateRightContextAction')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('importTemplateRightContextAction')),
+      findsOneWidget,
+    );
+    expect(find.text('Создать'), findsOneWidget);
+  });
+
+  testWidgets('card menus are identical in tree and central workspace',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+    final dynamic state = tester.state(find.byType(VaultShell));
+    final template = builtInTemplates().first;
+    final item = SecretItem(
+      id: 'context-card',
+      templateId: template.id,
+      title: 'Контекстная карточка',
+      category: '',
+      colorId: template.colorId,
+      values: {template.fields.first.id: 'Значение'},
+      modifiedAt: DateTime(2026),
+    );
+    state.setState(() {
+      state.items = [item];
+      state.selectedCategoryPath = '';
+    });
+    await tester.pumpAndSettle();
+
+    Future<void> expectCardMenu(Finder target) async {
+      await tester.tap(target, buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+      for (final key in const [
+        'viewCardContextAction',
+        'createCardContextAction',
+        'editCardContextAction',
+        'copyCardContextAction',
+        'exportObjectContextAction',
+        'importCardContextAction',
+      ]) {
+        expect(find.byKey(Key(key)), findsOneWidget);
+      }
+      await tester.tapAt(const Offset(8, 8));
+      await tester.pumpAndSettle();
+    }
+
+    await expectCardMenu(find.byKey(const Key('spbTreeCard-context-card')));
+    await expectCardMenu(
+      find.byKey(const Key('spbCentralCard-context-card')),
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('card export creates password protected and passwordless SWL',

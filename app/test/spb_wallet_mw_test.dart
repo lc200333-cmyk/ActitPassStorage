@@ -117,7 +117,9 @@ void main() {
     skip: _fixtureSkip,
   );
 
-  test('built-in IconID values use explicit matching assets', () {
+  test('built-in IconID values use explicit matching assets', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    await loadSpb64PngIconAssets();
     const expected = <String, String>{
       'A74FE6691728757D': 'icons_010.png', // Visa
       '4428DBE8E0FDBEF5': 'icons_011.png', // MasterCard
@@ -141,7 +143,7 @@ void main() {
       expect(asset, endsWith(entry.value), reason: 'IconID ${entry.key}');
     }
     for (final asset in spbOriginalIconAssets.values) {
-      expect(File(asset).existsSync(), isTrue, reason: asset);
+      expect(spbPackedIconBytes(asset), isNotNull, reason: asset);
     }
     expect(spbOriginalIconAsset('7F0C2A5120A13A94'), isNull);
   });

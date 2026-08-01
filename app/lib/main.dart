@@ -12,7 +12,12 @@ import 'package:file_picker/file_picker.dart';
 import 'package:image/image.dart' as image;
 import 'package:path_provider/path_provider.dart';
 
-import 'spb_wallet/spb_wallet_database.dart';
+import 'data/spb_wallet_repository.dart';
+import 'controllers/entity_index.dart';
+import 'features/cards/field_projection.dart';
+import 'features/categories/category_path_index.dart';
+import 'features/templates/template_order.dart';
+import 'widgets/card_surface.dart';
 
 void main() {
   runApp(const ActitPassApp());
@@ -22,6 +27,7 @@ final rootScaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 const spbIconBundleAsset = 'assets/spb_icons.bundle';
 const thirdPartyIconBundleAsset =
     'assets/third_party/icons_unique_visual_studio.zip';
+const additionalThirdPartyIconBundleAsset = 'assets/third_party/icos.zip';
 List<String> spb64PngIconAssets = [];
 Future<List<String>>? spb64PngIconAssetsFuture;
 Map<String, Uint8List> spbBundledIconPngs = {};
@@ -63,20 +69,29 @@ Future<List<String>> loadSpb64PngIconAssets() {
 
 Future<List<String>> loadThirdPartyIconAssets() {
   return thirdPartyIconAssetsFuture ??= () async {
-    final data = await rootBundle.load(thirdPartyIconBundleAsset);
-    final bytes =
-        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
-    final archive = ZipDecoder().decodeBytes(bytes, verify: true);
     final packedIcons = <String, Uint8List>{};
-    for (final file in archive.files) {
-      if (!file.isFile) continue;
-      final normalizedName = file.name.replaceAll('\\', '/');
-      if (!normalizedName.startsWith('output/png/') ||
-          !normalizedName.toLowerCase().endsWith('.png')) {
-        continue;
+    for (final assetName in const [
+      thirdPartyIconBundleAsset,
+      additionalThirdPartyIconBundleAsset,
+    ]) {
+      final data = await rootBundle.load(assetName);
+      final bytes =
+          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+      for (final file in archive.files) {
+        if (!file.isFile) continue;
+        final normalizedName = file.name.replaceAll('\\', '/');
+        if (!normalizedName.toLowerCase().endsWith('.png')) continue;
+        if (assetName == thirdPartyIconBundleAsset &&
+            !normalizedName.startsWith('output/png/')) {
+          continue;
+        }
+        final catalogName = assetName == additionalThirdPartyIconBundleAsset
+            ? 'icos/$normalizedName'
+            : normalizedName;
+        packedIcons['third-party://$catalogName'] =
+            Uint8List.fromList(file.content);
       }
-      packedIcons['third-party://$normalizedName'] =
-          Uint8List.fromList(file.content);
     }
     thirdPartyIconPngs = packedIcons;
     thirdPartyIconAssets = packedIcons.keys.toList(growable: false)
@@ -307,6 +322,7 @@ class CardTemplate {
     this.embeddedIconBase64,
     this.iconFileName,
     this.spbColor,
+    this.categoryPath = '',
   });
 
   final String id;
@@ -318,6 +334,7 @@ class CardTemplate {
   final String? embeddedIconBase64;
   final String? iconFileName;
   final int? spbColor;
+  final String categoryPath;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -328,6 +345,7 @@ class CardTemplate {
         'embeddedIconBase64': embeddedIconBase64,
         'iconFileName': iconFileName,
         'spbColor': spbColor,
+        'categoryPath': categoryPath,
         'fields': fields.map((field) => field.toJson()).toList(),
       };
 
@@ -340,6 +358,7 @@ class CardTemplate {
         embeddedIconBase64: json['embeddedIconBase64'] as String?,
         iconFileName: json['iconFileName'] as String?,
         spbColor: json['spbColor'] as int?,
+        categoryPath: json['categoryPath'] as String? ?? '',
         fields: (json['fields'] as List<dynamic>)
             .map((field) =>
                 FieldDefinition.fromJson(field as Map<String, dynamic>))
@@ -361,6 +380,8 @@ class SecretItem {
     this.iconId,
     this.backgroundImageBase64,
     this.spbColor,
+    this.fieldOrder = const [],
+    this.hiddenFieldIds = const {},
   });
 
   final String id;
@@ -378,6 +399,8 @@ class SecretItem {
   // Если задан, имеет приоритет над colorId при отрисовке и сохранении, чтобы
   // не "квантовать" оригинальный цвет SPB Wallet до одного из 7 пресетов палитры.
   final int? spbColor;
+  final List<String> fieldOrder;
+  final Set<String> hiddenFieldIds;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -393,6 +416,8 @@ class SecretItem {
         'iconId': iconId,
         'backgroundImageBase64': backgroundImageBase64,
         'spbColor': spbColor,
+        'fieldOrder': fieldOrder,
+        'hiddenFieldIds': hiddenFieldIds.toList(),
       };
 
   factory SecretItem.fromJson(Map<String, dynamic> json) => SecretItem(
@@ -412,6 +437,9 @@ class SecretItem {
         iconId: json['iconId'] as String?,
         backgroundImageBase64: json['backgroundImageBase64'] as String?,
         spbColor: json['spbColor'] as int?,
+        fieldOrder: List<String>.from(json['fieldOrder'] as List? ?? const []),
+        hiddenFieldIds:
+            Set<String>.from(json['hiddenFieldIds'] as List? ?? const []),
       );
 }
 
@@ -597,11 +625,19 @@ class SecretAttachment {
 }
 
 class CategoryTreeNode {
-  CategoryTreeNode(this.name, {this.path = '', this.iconId});
+  CategoryTreeNode(
+    this.name, {
+    this.path = '',
+    this.iconId,
+    this.colorId,
+    this.id,
+  });
 
   final String name;
   final String path;
   final String? iconId;
+  final String? colorId;
+  final String? id;
   final Map<String, CategoryTreeNode> children = {};
   final List<SecretItem> cards = [];
 
@@ -726,6 +762,9 @@ class SpbWalletSession implements VaultSession {
         iconId:
             item.iconId == null ? null : syntheticSpbIconIdForUi(item.iconId!),
         backgroundImageBase64: item.backgroundImageBase64,
+        fieldOrder: item.fieldOrder,
+        hiddenFieldIds: item.hiddenFieldIds,
+        modifiedAt: item.modifiedAt,
       ),
     );
     await load();
@@ -1503,6 +1542,30 @@ TemplateIcon iconById(String id) => templateIcons.firstWhere(
 IconData templateIconGlyph(String id) =>
     templateIconGlyphs[id] ?? Icons.vpn_key_outlined;
 
+Color templatePictogramColor(String colorId) {
+  return pictogramColorForBackground(colorById(colorId).bg);
+}
+
+Color pictogramColorForBackground(Color background) {
+  return Color.lerp(background, Colors.black, 0.20)!;
+}
+
+Color categoryPictogramColor(String? colorId) => pictogramColorForBackground(
+      colorById(colorId == null || colorId.isEmpty ? 'template_gray' : colorId)
+          .bg,
+    );
+
+Color itemPictogramColor(SecretItem item, CardTemplate template) =>
+    pictogramColorForBackground(itemDisplayColor(item, template).bg);
+
+Color templateDisplayBackground(CardTemplate template) =>
+    template.spbColor == null
+        ? colorById(template.colorId).bg
+        : Color(0xff000000 | (template.spbColor! & 0x00ffffff));
+
+Color templateDisplayPictogramColor(CardTemplate template) =>
+    pictogramColorForBackground(templateDisplayBackground(template));
+
 Widget templateIconWidget(String id, {double size = 20, Color? color}) {
   final embeddedBytes = spbEmbeddedIconPngs[id.toUpperCase()];
   if (embeddedBytes != null) {
@@ -1536,11 +1599,124 @@ Widget templateIconWidget(String id, {double size = 20, Color? color}) {
   return Icon(templateIconGlyph(id), size: size, color: color);
 }
 
-Widget templateMenuIconLabel(String iconId, String text) {
+String registerEmbeddedIcon(Uint8List bytes) {
+  final id = SpbWalletDatabase.makeId();
+  spbEmbeddedIconPngs[id.toUpperCase()] = bytes;
+  return id;
+}
+
+Future<({Uint8List bytes, String fileName})?> pickUserIconFile(
+  BuildContext context,
+) async {
+  final picked = await FilePicker.platform.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: const ['png', 'ico'],
+    withData: true,
+  );
+  final file = picked?.files.single;
+  if (file == null) return null;
+  Uint8List? bytes = file.bytes;
+  if (bytes == null && file.path != null) {
+    bytes = await File(file.path!).readAsBytes();
+  }
+  if (bytes == null || bytes.isEmpty) return null;
+  image.Image? decoded;
+  try {
+    decoded = image.IcoDecoder().decodeImageLargest(bytes);
+  } catch (_) {
+    // The selected file can be PNG rather than ICO.
+  }
+  decoded ??= image.decodeImage(bytes);
+  if (decoded == null) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось прочитать файл иконки.')),
+      );
+    }
+    return null;
+  }
+  final pngBytes = Uint8List.fromList(image.encodePng(decoded));
+  final pngFileName = file.name.toLowerCase().endsWith('.png')
+      ? file.name
+      : '${file.name.replaceAll(RegExp(r'\.ico$', caseSensitive: false), '')}.png';
+  return (bytes: pngBytes, fileName: pngFileName);
+}
+
+String attachmentMimeType(String fileName) {
+  final lower = fileName.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.bmp')) return 'image/bmp';
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.txt') ||
+      lower.endsWith('.log') ||
+      lower.endsWith('.csv') ||
+      lower.endsWith('.json') ||
+      lower.endsWith('.xml')) {
+    return 'text/plain';
+  }
+  if (lower.endsWith('.mp3')) return 'audio/mpeg';
+  if (lower.endsWith('.wav')) return 'audio/wav';
+  if (lower.endsWith('.ogg')) return 'audio/ogg';
+  if (lower.endsWith('.m4a')) return 'audio/mp4';
+  if (lower.endsWith('.mp4')) return 'video/mp4';
+  if (lower.endsWith('.webm')) return 'video/webm';
+  return 'application/octet-stream';
+}
+
+Future<void> openAttachmentBytesWithSystem(
+  String fileName,
+  Uint8List bytes,
+) async {
+  final directory = await getTemporaryDirectory();
+  final safeName = fileName
+      .replaceAll(RegExp(r'[\\/:*?<>|]'), '_')
+      .replaceAll(String.fromCharCode(34), '_');
+  final file = File(
+    '${directory.path}${Platform.pathSeparator}actitpass_$safeName',
+  );
+  await file.writeAsBytes(bytes, flush: true);
+  if (Platform.isAndroid) {
+    await spbWalletChannel.invokeMethod<bool>('openFile', {
+      'path': file.path,
+      'mimeType': attachmentMimeType(fileName),
+    });
+    return;
+  }
+  if (Platform.isWindows) {
+    await Process.start(
+      'cmd',
+      ['/c', 'start', '', file.path],
+      runInShell: true,
+    );
+  } else if (Platform.isMacOS) {
+    await Process.start('open', [file.path]);
+  } else {
+    await Process.start('xdg-open', [file.path]);
+  }
+}
+
+Widget templateMenuIconLabel(
+  String iconId,
+  String text, {
+  double iconScale = 1,
+}) {
+  final icon = templateIconWidget(iconId, size: 18);
   return Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      templateIconWidget(iconId, size: 18),
+      if (iconScale == 1)
+        icon
+      else
+        SizedBox(
+          width: 32,
+          height: 32,
+          child: Center(
+            child: Transform.scale(scale: iconScale, child: icon),
+          ),
+        ),
       const SizedBox(width: 8),
       Flexible(child: Text(text, overflow: TextOverflow.ellipsis)),
     ],
@@ -1815,10 +1991,25 @@ const spbFolderIconAssetsByName = <String, String>{
 };
 
 String spbFolderIconAsset(String path, String iconId) {
+  final normalizedIconId = iconId.toUpperCase();
+  if (spbEmbeddedIconPngs.containsKey(normalizedIconId)) {
+    return normalizedIconId;
+  }
+  final selectedUiIcon = uiIconIdFromSyntheticSpbIcon(normalizedIconId);
+  if (selectedUiIcon != null) return selectedUiIcon;
+  final storedFolderIcon = spbFolderIconAssetsById[normalizedIconId];
+  if (storedFolderIcon != null) return storedFolderIcon;
+  final originalIcon = spbOriginalIconAsset(normalizedIconId);
+  if (originalIcon != null) return originalIcon;
   final name = path.split(RegExp(r'\s*/\s*')).last.trim().toLowerCase();
-  return spbFolderIconAssetsByName[name] ??
-      spbFolderIconAssetsById[iconId.toUpperCase()] ??
-      spbDefaultOriginalIconAsset;
+  return spbFolderIconAssetsByName[name] ?? spbDefaultOriginalIconAsset;
+}
+
+String formatCardModifiedAt(DateTime value) {
+  final local = value.toLocal();
+  String twoDigits(int number) => number.toString().padLeft(2, '0');
+  return '${twoDigits(local.day)}.${twoDigits(local.month)}.${local.year} '
+      '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
 }
 
 String spbTemplateIconForUi(SpbWalletTemplateRecord template) {
@@ -1971,6 +2162,33 @@ Map<String, String> spbCardValuesForUi(
   return values;
 }
 
+List<FieldDefinition> fieldsForItem(
+  CardTemplate template,
+  SecretItem item, {
+  bool includeHidden = false,
+}) {
+  final byId = <String, FieldDefinition>{
+    for (final field in template.fields) field.id: field,
+  };
+  for (final id in item.values.keys) {
+    byId.putIfAbsent(
+      id,
+      () => FieldDefinition(
+        id: id,
+        label: 'Сохранённое поле ${id.length > 8 ? id.substring(0, 8) : id}',
+        type: 'text',
+      ),
+    );
+  }
+  final visibleIds = projectVisibleFieldIds(
+    definedIds: template.fields.map((field) => field.id),
+    valueIds: item.values.keys,
+    preferredOrder: item.fieldOrder,
+    hiddenIds: includeHidden ? const {} : item.hiddenFieldIds,
+  );
+  return [for (final id in visibleIds) byId[id]!];
+}
+
 int spbFieldTypeId(FieldDefinition field) {
   if (fieldTypeIsSecret(field.type)) {
     return 4;
@@ -2064,6 +2282,139 @@ bool createInitialSwlVaultFile(Map<String, dynamic> payload) {
   }
 }
 
+bool cloneSwlVaultWithPassword(Map<String, dynamic> payload) {
+  final path = payload['path'] as String;
+  final password = payload['password'] as String;
+  final sourcePassword = payload['sourcePassword'] as String;
+  final passwordHint = payload['passwordHint'] as String? ?? '';
+  final baseBytes = Uint8List.fromList(payload['baseBytes'] as List<int>);
+  final sourcePath = '$path.${DateTime.now().microsecondsSinceEpoch}.base';
+  SpbWalletDatabase? source;
+  SpbWalletDatabase? target;
+  try {
+    File(sourcePath).writeAsBytesSync(baseBytes, flush: true);
+    source = SpbWalletDatabase.open(sourcePath, sourcePassword);
+    final snapshot = source.loadSnapshot();
+    target = SpbWalletDatabase.create(path, password);
+    final categoriesById = {
+      for (final category in snapshot.categories) category.id: category,
+    };
+    String categoryPath(SpbWalletCategoryRecord category) {
+      final names = <String>[];
+      var current = category;
+      var guard = 0;
+      while (guard++ < 64) {
+        if (current.name.isNotEmpty) names.add(current.name);
+        final parent = categoriesById[current.parentId];
+        if (parent == null) break;
+        current = parent;
+      }
+      return names.reversed.join(' / ');
+    }
+
+    final orderedCategories = [...snapshot.categories]..sort((a, b) =>
+        categoryPath(a)
+            .split(' / ')
+            .length
+            .compareTo(categoryPath(b).split(' / ').length));
+    for (final category in orderedCategories) {
+      target.createCategory(
+        categoryPath(category),
+        category.iconId,
+        iconBytes: snapshot.embeddedIconPngs[category.iconId.toUpperCase()],
+        colorId: category.colorId,
+      );
+    }
+    for (final template in snapshot.templates) {
+      target.saveTemplate(
+        SpbWalletTemplateDraft(
+          id: template.id,
+          name: template.name,
+          fields: template.fields,
+          iconId: template.iconId,
+          iconBytes: snapshot.embeddedIconPngs[template.iconId.toUpperCase()],
+          cardColor: template.cardColor,
+          categoryPath: template.categoryPath,
+        ),
+      );
+    }
+    for (final card in snapshot.cards) {
+      target.saveCard(
+        SpbWalletCardDraft(
+          id: card.id,
+          title: card.title,
+          description: card.description,
+          categoryPath: card.categoryPath,
+          templateId: card.templateId,
+          fieldValues: card.fieldValues,
+          iconId: card.iconId,
+          iconBytes: snapshot.embeddedIconPngs[card.iconId.toUpperCase()],
+          cardColor: card.cardColor,
+          backgroundImageBase64: card.backgroundImageBase64,
+          fieldOrder: card.fieldOrder,
+          hiddenFieldIds: card.hiddenFieldIds,
+          modifiedAt: card.modifiedAt,
+        ),
+      );
+      for (final attachment in card.attachments) {
+        target.saveAttachment(
+          cardId: card.id,
+          attachmentId: attachment.id,
+          fileName: attachment.fileName,
+          bytes: source.readAttachmentBytes(attachment.id),
+        );
+      }
+    }
+    target.savePasswordHint(passwordHint);
+    target.close();
+    target = null;
+    source.close(flush: false);
+    source = null;
+    File(sourcePath).deleteSync();
+    return true;
+  } catch (_) {
+    try {
+      target?.close();
+    } catch (_) {}
+    try {
+      source?.close(flush: false);
+    } catch (_) {}
+    try {
+      final sourceFile = File(sourcePath);
+      if (sourceFile.existsSync()) sourceFile.deleteSync();
+    } catch (_) {}
+    try {
+      final targetFile = File(path);
+      if (targetFile.existsSync()) targetFile.deleteSync();
+    } catch (_) {}
+    rethrow;
+  }
+}
+
+bool createSwlVaultFromBaseFile(Map<String, dynamic> payload) =>
+    cloneSwlVaultWithPassword({
+      ...payload,
+      'sourcePassword': '0000',
+    });
+
+int passwordStrengthScore(String password) {
+  if (password.isEmpty) {
+    return 0;
+  }
+  var score = 1;
+  if (password.length >= 8) score++;
+  if (password.length >= 12) score++;
+  if (RegExp(r'[a-zа-я]').hasMatch(password) &&
+      RegExp(r'[A-ZА-Я]').hasMatch(password)) {
+    score++;
+  }
+  if (RegExp(r'\d').hasMatch(password) &&
+      RegExp(r'[^A-Za-zА-Яа-я0-9]').hasMatch(password)) {
+    score++;
+  }
+  return score.clamp(0, 5);
+}
+
 String normalizeUrlInput(String value) {
   final trimmed = value.trim();
   if (trimmed.isEmpty ||
@@ -2154,6 +2505,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   EntryMode entryMode = EntryMode.openSwl;
   bool showPassword = false;
   bool showConfirm = false;
+  bool loginHintVisible = false;
+  String loginPasswordHint = '';
   bool unlocked = false;
   bool? menuOpenOverride;
   bool creatingVault = false;
@@ -2179,6 +2532,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   String? selectedItemId;
   final List<String> recentlyOpenedItemIds = [];
   String selectedCategoryPath = '';
+  String? selectedCategoryId;
   bool mobileTemplatesOpen = false;
   String? selectedTemplateId;
   int mobilePane = 0;
@@ -2206,10 +2560,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   List<CardTemplate> templates = builtInTemplates();
   List<SecretItem> items = [];
+  Map<String, CardTemplate> templatesById = {};
+  Map<String, SecretItem> itemsById = {};
   List<ConflictRecord> conflicts = [];
   List<ExistingVault> recentVaults = [];
   final Map<String, String> spbIconIdByUiIcon = {};
   Map<String, String> categoryIconsByPath = {};
+  Map<String, String> categoryColorsByPath = {};
+  Map<String, String> categoryIdsByPath = {};
+  Map<String, String> categoryPathsById = {};
   Set<String> categoryPaths = {};
   final Set<String> revealed = {};
   final Map<String, String> syncConfig = {};
@@ -2286,7 +2645,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (!Platform.isWindows) return;
     final desiredMode = unlocked
         ? 'main'
-        : message == null
+        : message == null && !loginHintVisible
             ? 'login'
             : 'loginExpanded';
     final mainTitle = unlocked ? selectedVaultTitle : null;
@@ -2619,6 +2978,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     passwordController.clear();
     confirmController.clear();
     revealed.clear();
+    loginHintVisible = false;
+    loginPasswordHint = '';
     if (!mounted) return;
     setState(() {
       unlocked = false;
@@ -2767,6 +3128,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   Future<void> createSwlVault(
     String password, {
+    String passwordHint = '',
     File? targetFile,
     bool rememberLocalFile = true,
     bool unlockAfterCreate = true,
@@ -2776,60 +3138,18 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       throw StateError(
           'База "${file.uri.pathSegments.last}" уже есть. Выберите другое название или откройте существующую базу.');
     }
-    final sourceTemplates = builtInTemplates();
-    final templateMap = <String, CardTemplate>{};
-    final preparedTemplates = <CardTemplate>[];
-    final preparedItems = <SecretItem>[];
-    for (final template in sourceTemplates) {
-      final prepared = prepareSpbTemplate(template, true);
-      templateMap[template.id] = prepared;
-      preparedTemplates.add(prepared);
-    }
-
-    for (final item in demoItems()) {
-      final template = templateMap[item.templateId];
-      if (template == null) continue;
-      final original =
-          sourceTemplates.firstWhere((entry) => entry.id == item.templateId);
-      final fieldMap = <String, String>{};
-      for (var i = 0;
-          i < original.fields.length && i < template.fields.length;
-          i++) {
-        fieldMap[original.fields[i].id] = template.fields[i].id;
-      }
-      preparedItems.add(
-        SecretItem(
-          id: SpbWalletDatabase.makeId(),
-          templateId: template.id,
-          title: item.title,
-          category: item.category,
-          colorId: item.colorId,
-          values: {
-            for (final entry in item.values.entries)
-              if (fieldMap[entry.key] != null)
-                fieldMap[entry.key]!: entry.value,
-          },
-          modifiedAt: item.modifiedAt,
-          iconId: item.iconId,
-          backgroundImageBase64: item.backgroundImageBase64,
-        ),
-      );
-    }
-
+    final baseData = await rootBundle.load('assets/base_wallet/MyWallet.swl');
     final payload = <String, dynamic>{
       'path': file.path,
       'password': password,
-      'templates':
-          preparedTemplates.map((template) => template.toJson()).toList(),
-      'items': preparedItems.map((item) {
-        final json = item.toJson();
-        json['cardColor'] = paletteColorToSpb(item.colorId);
-        return json;
-      }).toList(),
-      'categoryIcons': demoCategoryIcons(),
+      'passwordHint': passwordHint,
+      'baseBytes': baseData.buffer.asUint8List(
+        baseData.offsetInBytes,
+        baseData.lengthInBytes,
+      ),
     };
     await compute<Map<String, dynamic>, bool>(
-      createInitialSwlVaultFile,
+      createSwlVaultFromBaseFile,
       payload,
     );
 
@@ -2874,6 +3194,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     final nameController = TextEditingController(text: 'Новая база');
     final newPasswordController = TextEditingController();
     final repeatPasswordController = TextEditingController();
+    final hintController = TextEditingController();
     var showNewPassword = false;
     var showRepeatedPassword = false;
     var isCreating = false;
@@ -2976,6 +3297,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                       onToggle: () => setDialogState(
                         () => showNewPassword = !showNewPassword,
                       ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    const SizedBox(height: 8),
+                    PasswordStrengthBar(
+                      key: const Key('newVaultPasswordStrength'),
+                      password: newPasswordController.text,
                     ),
                     const SizedBox(height: 12),
                     PasswordField(
@@ -2985,6 +3312,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                       visible: showRepeatedPassword,
                       onToggle: () => setDialogState(
                         () => showRepeatedPassword = !showRepeatedPassword,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      key: const Key('newVaultPasswordHint'),
+                      controller: hintController,
+                      decoration: const InputDecoration(
+                        labelText: 'Подсказка',
+                        border: OutlineInputBorder(),
                       ),
                     ),
                     if (dialogError != null) ...[
@@ -3070,6 +3406,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                           );
                           await createSwlVault(
                             newPassword,
+                            passwordHint: hintController.text,
                             targetFile: targetFile,
                             rememberLocalFile: false,
                             unlockAfterCreate: false,
@@ -3101,6 +3438,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                           );
                           await createSwlVault(
                             newPassword,
+                            passwordHint: hintController.text,
                             targetFile: targetFile,
                             unlockAfterCreate: false,
                           );
@@ -3153,8 +3491,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     nameController.dispose();
     newPasswordController.clear();
     repeatPasswordController.clear();
+    hintController.clear();
     newPasswordController.dispose();
     repeatPasswordController.dispose();
+    hintController.dispose();
     if (!mounted) return;
     if (createdVault) {
       passwordController.clear();
@@ -3167,6 +3507,249 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     } else if (!unlocked) {
       passwordFocusNode.requestFocus();
     }
+  }
+
+  Future<void> replaceCurrentWalletPassword({
+    required String oldPassword,
+    required String newPassword,
+    required String passwordHint,
+  }) async {
+    final wallet = spbWallet;
+    final path = spbWalletPath;
+    if (wallet == null || path == null || path.isEmpty) {
+      throw StateError('Кошелек не открыт.');
+    }
+    wallet.saveRecentlyOpenedCardIds(recentlyOpenedItemIds);
+    wallet.flushToDisk();
+    final sourceFile = File(path);
+    final suffix = DateTime.now().microsecondsSinceEpoch;
+    final temporaryFile = File('$path.password-change-$suffix.tmp');
+    final backupFile = File('$path.password-change-$suffix.backup');
+    await compute<Map<String, dynamic>, bool>(
+      cloneSwlVaultWithPassword,
+      <String, dynamic>{
+        'path': temporaryFile.path,
+        'password': newPassword,
+        'sourcePassword': oldPassword,
+        'passwordHint': passwordHint,
+        'baseBytes': await sourceFile.readAsBytes(),
+      },
+    );
+    final verification = SpbWalletDatabase.open(
+      temporaryFile.path,
+      newPassword,
+    );
+    verification.close(flush: false);
+
+    clearSessionUndoHistory();
+    wallet.close(flush: false);
+    spbWallet = null;
+    try {
+      await sourceFile.rename(backupFile.path);
+      await temporaryFile.rename(sourceFile.path);
+      final reopened = SpbWalletDatabase.open(path, newPassword);
+      final snapshot = reopened.loadSnapshot();
+      spbWallet = reopened;
+      vaultDirty = false;
+      setState(() => applySpbSnapshot(snapshot));
+      final written = await writeBackSpbWallet(force: true);
+      if (!written) {
+        throw StateError('Не удалось записать базу в исходное хранилище.');
+      }
+      if (backupFile.existsSync()) await backupFile.delete();
+    } catch (_) {
+      spbWallet?.close(flush: false);
+      spbWallet = null;
+      if (sourceFile.existsSync()) await sourceFile.delete();
+      if (backupFile.existsSync()) await backupFile.rename(sourceFile.path);
+      spbWallet = SpbWalletDatabase.open(path, oldPassword);
+      if (temporaryFile.existsSync()) await temporaryFile.delete();
+      rethrow;
+    }
+  }
+
+  Future<void> openChangePasswordDialog() async {
+    final oldController = TextEditingController();
+    final newController = TextEditingController();
+    final repeatController = TextEditingController();
+    final hintController = TextEditingController(
+      text: spbWallet?.loadPasswordHint() ?? '',
+    );
+    var showOld = false;
+    var showNew = false;
+    var showRepeat = false;
+    var saving = false;
+    String? errorText;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xffececec),
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+          titlePadding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
+          title: GestureDetector(
+            key: const Key('changePasswordDialogDragHandle'),
+            behavior: HitTestBehavior.opaque,
+            onPanStart: (_) {
+              unawaited(startLoginWindowDrag());
+            },
+            child: const SizedBox(
+              height: 38,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Изменить пароль'),
+              ),
+            ),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  PasswordField(
+                    key: const Key('changePasswordOld'),
+                    controller: oldController,
+                    label: 'Старый пароль',
+                    visible: showOld,
+                    onToggle: () => setDialogState(() => showOld = !showOld),
+                  ),
+                  const SizedBox(height: 12),
+                  PasswordField(
+                    key: const Key('changePasswordNew'),
+                    controller: newController,
+                    label: 'Новый пароль',
+                    visible: showNew,
+                    onChanged: (_) => setDialogState(() {}),
+                    onToggle: () => setDialogState(() => showNew = !showNew),
+                  ),
+                  const SizedBox(height: 8),
+                  PasswordStrengthBar(
+                    key: const Key('changePasswordStrength'),
+                    password: newController.text,
+                  ),
+                  const SizedBox(height: 12),
+                  PasswordField(
+                    key: const Key('changePasswordRepeat'),
+                    controller: repeatController,
+                    label: 'Повторите новый пароль',
+                    visible: showRepeat,
+                    onToggle: () =>
+                        setDialogState(() => showRepeat = !showRepeat),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: const Key('changePasswordHint'),
+                    controller: hintController,
+                    decoration: const InputDecoration(
+                      labelText: 'Подсказка',
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  if (errorText != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorText!,
+                      key: const Key('changePasswordError'),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+          actions: [
+            SizedBox(
+              width: 124,
+              child: IgnorePointer(
+                ignoring: saving,
+                child: Opacity(
+                  opacity: saving ? 0.6 : 1,
+                  child: passwordKey(
+                    key: const Key('cancelChangePassword'),
+                    label: 'Отмена',
+                    height: 40,
+                    fontSize: 17,
+                    top: const Color(0xffff5a5f),
+                    bottom: const Color(0xffa90000),
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 124,
+              child: IgnorePointer(
+                ignoring: saving,
+                child: Opacity(
+                  opacity: saving ? 0.6 : 1,
+                  child: passwordKey(
+                    key: const Key('confirmChangePassword'),
+                    label: saving ? 'Сохранение…' : 'Сохранить',
+                    height: 40,
+                    fontSize: saving ? 14 : 17,
+                    top: const Color(0xff5bc96d),
+                    bottom: const Color(0xff08772f),
+                    onPressed: () async {
+                      if (oldController.text.isEmpty) {
+                        setDialogState(
+                            () => errorText = 'Введите старый пароль.');
+                        return;
+                      }
+                      if (newController.text.isEmpty) {
+                        setDialogState(
+                            () => errorText = 'Введите новый пароль.');
+                        return;
+                      }
+                      if (newController.text != repeatController.text) {
+                        setDialogState(
+                            () => errorText = 'Новые пароли не совпадают.');
+                        return;
+                      }
+                      setDialogState(() {
+                        saving = true;
+                        errorText = null;
+                      });
+                      try {
+                        await replaceCurrentWalletPassword(
+                          oldPassword: oldController.text,
+                          newPassword: newController.text,
+                          passwordHint: hintController.text,
+                        );
+                        if (dialogContext.mounted) {
+                          Navigator.of(dialogContext).pop();
+                        }
+                        showSpbOperationMessage('Пароль кошелька изменен.');
+                      } catch (_) {
+                        if (dialogContext.mounted) {
+                          setDialogState(() {
+                            saving = false;
+                            errorText =
+                                'Не удалось изменить пароль. Проверьте старый пароль.';
+                          });
+                        }
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    oldController.dispose();
+    newController.dispose();
+    repeatController.dispose();
+    hintController.dispose();
   }
 
   Map<String, String> demoCategoryIcons() => const {
@@ -3747,6 +4330,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         iconId: iconId,
         colorId: spbTemplateColorToPaletteId(template.cardColor),
         spbColor: template.cardColor,
+        categoryPath: template.categoryPath,
         fields: fields,
       );
     }).toList();
@@ -3791,7 +4375,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         ),
       );
     }
+    loadedTemplates
+        .sort((a, b) => compareNamedEntities(a.name, a.id, b.name, b.id));
     templates = loadedTemplates;
+    templatesById = indexEntitiesById(templates, (template) => template.id);
     items = spbCardsToUi(snapshot.cards)
         .where(
           (item) =>
@@ -3803,8 +4390,23 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     templates = loadedTemplates
         .where((template) => !sessionTrashTemplateIds.contains(template.id))
         .toList();
+    templatesById = indexEntitiesById(templates, (template) => template.id);
+    itemsById = indexEntitiesById(items, (item) => item.id);
     categoryIconsByPath = spbCategoryIconsToUi(snapshot.categories)
       ..removeWhere((path, _) => isPathInSessionTrash(path));
+    categoryColorsByPath = spbCategoryColorsToUi(snapshot.categories)
+      ..removeWhere((path, _) => isPathInSessionTrash(path));
+    categoryIdsByPath = spbCategoryIdsToUi(snapshot.categories)
+      ..removeWhere((path, _) => isPathInSessionTrash(path));
+    categoryPathsById = {
+      for (final entry in categoryIdsByPath.entries) entry.value: entry.key,
+    };
+    if (selectedCategoryId != null) {
+      selectedCategoryPath = categoryPathsById[selectedCategoryId] ?? '';
+      if (selectedCategoryPath.isEmpty) selectedCategoryId = null;
+    } else if (selectedCategoryPath.isNotEmpty) {
+      selectedCategoryId = categoryIdsByPath[selectedCategoryPath];
+    }
     categoryPaths = spbCategoryPathsToUi(snapshot.categories)
       ..removeWhere(isPathInSessionTrash);
     final validIds = items.map((item) => item.id).toSet();
@@ -3841,10 +4443,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               ),
             )
             .toList(),
-        modifiedAt: DateTime.now(),
+        modifiedAt: card.modifiedAt ??
+            DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
         hitCount: card.hitCount,
         backgroundImageBase64: card.backgroundImageBase64,
         spbColor: card.cardColor,
+        fieldOrder: card.fieldOrder,
+        hiddenFieldIds: card.hiddenFieldIds,
       );
     }).toList();
   }
@@ -3912,6 +4517,41 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       result[path] = iconId;
     }
     return result;
+  }
+
+  Map<String, String> spbCategoryColorsToUi(
+      List<SpbWalletCategoryRecord> categories) {
+    final byId = {for (final category in categories) category.id: category};
+    final result = <String, String>{};
+    for (final category in categories) {
+      if (category.colorId.isEmpty) continue;
+      final names = <String>[];
+      var current = category;
+      var guard = 0;
+      while (guard++ < 64) {
+        if (current.name.isNotEmpty) names.add(current.name);
+        final parent = byId[current.parentId];
+        if (parent == null) break;
+        current = parent;
+      }
+      final path = names.reversed.join(' / ');
+      if (path.isNotEmpty) result[path] = category.colorId;
+    }
+    return result;
+  }
+
+  Map<String, String> spbCategoryIdsToUi(
+      List<SpbWalletCategoryRecord> categories) {
+    final pathsById = buildCategoryPathsById(
+      categories,
+      idOf: (category) => category.id,
+      parentIdOf: (category) => category.parentId,
+      nameOf: (category) => category.name,
+    );
+    return {
+      for (final entry in pathsById.entries)
+        if (entry.value.isNotEmpty) entry.value: entry.key,
+    };
   }
 
   Set<String> spbCategoryPathsToUi(List<SpbWalletCategoryRecord> categories) {
@@ -4697,15 +5337,18 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   Widget buildSpbMobileShell() {
-    final paneTitle = switch (mobilePane) {
-      1 => mobileTemplatesOpen
-          ? 'Задачи'
-          : selectedCategoryPath.isEmpty
-              ? selectedVaultTitle
-              : categoryParts(selectedCategoryPath).last,
-      2 => 'Задачи',
-      _ => mobileTemplatesOpen ? 'Шаблоны' : 'Мои карточки',
-    };
+    final paneTitle = mobileTemplatesOpen
+        ? switch (mobilePane) {
+            2 => 'Задачи',
+            _ => 'Шаблоны',
+          }
+        : switch (mobilePane) {
+            1 => selectedCategoryPath.isEmpty
+                ? selectedVaultTitle
+                : categoryParts(selectedCategoryPath).last,
+            2 => 'Задачи',
+            _ => 'Мои карточки',
+          };
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -4743,15 +5386,18 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     ? null
                     : () => setState(() {
                           selectedCategoryPath = '';
+                          selectedCategoryId = null;
                           mobilePane = 1;
                         }),
                 child: spbSectionHeader(paneTitle, height: 42),
               ),
             Expanded(
               child: mobileTemplatesOpen
-                  ? mobilePane == 0
-                      ? buildSpbTemplateWorkspace(showHeader: false)
-                      : buildSpbActionsPanel()
+                  ? switch (mobilePane) {
+                      1 => buildSpbTemplateWorkspace(showHeader: false),
+                      2 => buildSpbActionsPanel(),
+                      _ => buildSpbTemplateTree(),
+                    }
                   : switch (mobilePane) {
                       1 => buildSpbFolderGrid(),
                       2 => buildSpbActionsPanel(),
@@ -4771,46 +5417,41 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 selected: mobileTemplatesOpen,
                 onTap: showSpbTemplatesMode,
               ),
-              if (mobileTemplatesOpen)
-                _Spb3dArrowButton(
-                  key: const Key('mobileTemplateTasksForward'),
-                  icon: Icons.arrow_forward,
-                  onPressed: () => setState(() => mobilePane = 1),
-                ),
-            ] else
-              buildSpbMobileArrows(allowForward: !mobileTemplatesOpen),
+            ],
+            buildSpbMobileArrows(
+              allowBack: mobilePane > 0,
+              allowForward: mobilePane < 2,
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget buildSpbMobileArrows({bool allowForward = true}) {
+  Widget buildSpbMobileArrows({
+    required bool allowBack,
+    required bool allowForward,
+  }) {
     return Container(
-      height: 52,
+      height: 46,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       decoration: const BoxDecoration(
-        color: Color(0xffe8f1f8),
+        color: Color(0xfff4f4f4),
         border: Border(top: BorderSide(color: _spbBorder)),
       ),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(
-            child: _Spb3dArrowButton(
-              key: const Key('mobilePaneBack'),
-              icon: Icons.arrow_back,
-              onPressed: () => setState(() => mobilePane--),
-            ),
+          _Spb3dArrowButton(
+            key: const Key('mobilePaneBack'),
+            icon: Icons.arrow_left,
+            onPressed: allowBack ? () => setState(() => mobilePane--) : null,
           ),
-          if (allowForward && mobilePane == 1) ...[
-            const VerticalDivider(width: 1),
-            Expanded(
-              child: _Spb3dArrowButton(
-                key: const Key('mobilePaneForward'),
-                icon: Icons.arrow_forward,
-                onPressed: () => setState(() => mobilePane = 2),
-              ),
-            ),
-          ],
+          _Spb3dArrowButton(
+            key: const Key('mobilePaneForward'),
+            icon: Icons.arrow_right,
+            onPressed: allowForward ? () => setState(() => mobilePane++) : null,
+          ),
         ],
       ),
     );
@@ -4823,6 +5464,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         : size.width < 700;
     setState(() {
       selectedCategoryPath = path;
+      selectedCategoryId = categoryIdsByPath[path];
       if (mobile) mobilePane = 1;
     });
   }
@@ -4860,6 +5502,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               setState(() {
                 spbSubmittedSearchQuery = '';
                 selectedCategoryPath = '';
+                selectedCategoryId = null;
               });
             },
             child: spbSectionHeader(selectedVaultTitle),
@@ -4974,7 +5617,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               initiallyExpanded: true,
               onExpansionChanged: (expanded) => setState(() {
                 rootTreeExpanded = expanded;
-                if (expanded) selectedCategoryPath = '';
+                if (expanded) {
+                  selectedCategoryPath = '';
+                  selectedCategoryId = null;
+                }
               }),
               tilePadding: const EdgeInsets.symmetric(horizontal: 4),
               childrenPadding: EdgeInsets.zero,
@@ -5046,6 +5692,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     if (expanded) {
                       expandedCategoryPaths.add(folder.path);
                       selectedCategoryPath = folder.path;
+                      selectedCategoryId = folder.id;
                     } else {
                       expandedCategoryPaths.remove(folder.path);
                     }
@@ -5074,6 +5721,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                           folder.iconId ??
                               defaultIconForCategoryPath(folder.path),
                           40,
+                          fallbackColor: categoryPictogramColor(folder.colorId),
                         ),
                       ],
                     ),
@@ -5120,6 +5768,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         Padding(
           padding: EdgeInsets.only(left: 34 + depth * 20.0),
           child: GestureDetector(
+            key: ValueKey('spbTreeCard-${item.id}'),
             onSecondaryTapDown: (details) =>
                 showSpbCardMenu(item, details.globalPosition),
             onLongPressStart: (details) =>
@@ -5129,7 +5778,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               visualDensity: const VisualDensity(vertical: -3),
               minTileHeight: compactRows ? 27 : null,
               contentPadding: const EdgeInsets.symmetric(horizontal: 5),
-              leading: spbSizedDataIcon(itemIconId(item, template), 40),
+              leading: spbSizedDataIcon(
+                itemIconId(item, template),
+                40,
+                fallbackColor: itemPictogramColor(item, template),
+              ),
               title: Text(item.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -5157,6 +5810,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         final template = visible[index];
         return GestureDetector(
           key: ValueKey('spbTemplate-${template.id}'),
+          onDoubleTap: () => openTemplatePreview(template),
           onSecondaryTapDown: (details) =>
               showSpbTemplateMenu(template, details.globalPosition),
           onLongPressStart: (details) =>
@@ -5166,7 +5820,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             minTileHeight: compactRows ? 36 : null,
             selected: selectedTemplateId == template.id,
             selectedTileColor: const Color(0xffdbeaf5),
-            leading: spbSizedDataIcon(template.iconId, 40),
+            leading: spbSizedDataIcon(
+              template.iconId,
+              40,
+              fallbackColor: templateDisplayPictogramColor(template),
+            ),
             title: Text(template.name,
                 style: const TextStyle(fontSize: 16),
                 maxLines: 1,
@@ -5192,6 +5850,16 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       ),
       items: const [
         PopupMenuItem(
+          key: Key('createTemplateFromIconContextAction'),
+          value: 'create',
+          child: Text('Создать'),
+        ),
+        PopupMenuItem(
+          key: Key('viewTemplateContextAction'),
+          value: 'view',
+          child: Text('Просмотр'),
+        ),
+        PopupMenuItem(
           key: Key('editTemplateContextAction'),
           value: 'edit',
           child: Text('Редактировать'),
@@ -5207,6 +5875,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           child: Text('Экспортировать'),
         ),
         PopupMenuItem(
+          key: Key('importTemplateFromIconContextAction'),
+          value: 'import',
+          child: Text('Импортировать'),
+        ),
+        PopupMenuItem(
           key: Key('deleteTemplateContextAction'),
           value: 'delete',
           child: Text('Удалить'),
@@ -5214,12 +5887,18 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       ],
     );
     if (!mounted || selected == null) return;
-    if (selected == 'edit') {
+    if (selected == 'create') {
+      await openTemplateDialog();
+    } else if (selected == 'view') {
+      await openTemplatePreview(template);
+    } else if (selected == 'edit') {
       await openTemplateDialog(template: template);
     } else if (selected == 'copy') {
       await cloneSpbTemplate(template);
     } else if (selected == 'export') {
       await exportSelectedSpbTemplate();
+    } else if (selected == 'import') {
+      await importSpbTemplate();
     } else if (selected == 'delete') {
       await deleteTemplateWithConfirmation(template);
     }
@@ -5239,6 +5918,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       iconId: template.iconId,
       colorId: template.colorId,
       spbColor: template.spbColor,
+      categoryPath: template.categoryPath,
       fields: [
         for (final field in template.fields)
           FieldDefinition(
@@ -5294,9 +5974,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   key: ValueKey('spbCentralTemplate-${template.id}'),
                   child: buildSpbGridEntry(
                     label: template.name,
-                    icon: spbSizedDataIcon(template.iconId, 50.25),
+                    icon: spbSizedDataIcon(
+                      template.iconId,
+                      50.25,
+                      fallbackColor: templateDisplayPictogramColor(template),
+                    ),
                     onTap: () =>
                         setState(() => selectedTemplateId = template.id),
+                    onDoubleTap: () => openTemplatePreview(template),
                     onContextMenu: (position) =>
                         showSpbTemplateMenu(template, position),
                     selected: selectedTemplateId == template.id,
@@ -5321,13 +6006,21 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       ),
       items: const [
         PopupMenuItem(
+          key: Key('createTemplateContextAction'),
+          value: 'create',
+          child: Text('Создать'),
+        ),
+        PopupMenuItem(
           key: Key('importTemplateContextAction'),
           value: 'import',
           child: Text('Импортировать'),
         ),
       ],
     );
-    if (selected == 'import' && mounted) {
+    if (!mounted) return;
+    if (selected == 'create') {
+      await openTemplateDialog();
+    } else if (selected == 'import') {
       await importSpbTemplate();
     }
   }
@@ -5477,45 +6170,61 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     ),
                   ),
         Expanded(
-          child: GestureDetector(
-            key: const Key('spbCentralWorkspace'),
-            behavior: HitTestBehavior.translucent,
-            onSecondaryTapDown: (details) =>
-                showSpbCreationMenu(details.globalPosition),
-            onLongPressStart: (details) =>
-                showSpbCreationMenu(details.globalPosition),
-            child: GridView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 112,
-                mainAxisExtent: 105,
-                crossAxisSpacing: 5,
-                mainAxisSpacing: 8,
-              ),
-              itemCount: folders.length + cards.length,
-              itemBuilder: (context, index) {
-                if (index < folders.length) {
-                  final folder = folders[index];
-                  return buildSpbGridEntry(
-                    label: folder.name,
-                    icon: spbSizedDataIcon(
-                      folder.iconId ?? defaultIconForCategoryPath(folder.path),
-                      50.25,
+          child: ColoredBox(
+            color: selectedCategoryPath.isEmpty ||
+                    categoryColorsByPath[selectedCategoryPath] == null
+                ? Colors.transparent
+                : colorById(categoryColorsByPath[selectedCategoryPath]!).bg,
+            child: GestureDetector(
+              key: const Key('spbCentralWorkspace'),
+              behavior: HitTestBehavior.translucent,
+              onSecondaryTapDown: (details) =>
+                  showSpbCreationMenu(details.globalPosition),
+              onLongPressStart: (details) =>
+                  showSpbCreationMenu(details.globalPosition),
+              child: GridView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 112,
+                  mainAxisExtent: 105,
+                  crossAxisSpacing: 5,
+                  mainAxisSpacing: 8,
+                ),
+                itemCount: folders.length + cards.length,
+                itemBuilder: (context, index) {
+                  if (index < folders.length) {
+                    final folder = folders[index];
+                    return buildSpbGridEntry(
+                      label: folder.name,
+                      icon: spbSizedDataIcon(
+                        folder.iconId ??
+                            defaultIconForCategoryPath(folder.path),
+                        50.25,
+                        fallbackColor: categoryPictogramColor(folder.colorId),
+                      ),
+                      onTap: () => openSpbFolder(folder.path),
+                      onContextMenu: (position) =>
+                          showSpbFolderMenu(folder, position),
+                    );
+                  }
+                  final item = cards[index - folders.length];
+                  final template = templateFor(item.templateId);
+                  return KeyedSubtree(
+                    key: ValueKey('spbCentralCard-${item.id}'),
+                    child: buildSpbGridEntry(
+                      label: item.title,
+                      icon: spbSizedDataIcon(
+                        itemIconId(item, template),
+                        50.25,
+                        fallbackColor: itemPictogramColor(item, template),
+                      ),
+                      onTap: () => openCardPreviewDialog(item),
+                      onContextMenu: (position) =>
+                          showSpbCardMenu(item, position),
                     ),
-                    onTap: () => openSpbFolder(folder.path),
-                    onContextMenu: (position) =>
-                        showSpbFolderMenu(folder, position),
                   );
-                }
-                final item = cards[index - folders.length];
-                final template = templateFor(item.templateId);
-                return buildSpbGridEntry(
-                  label: item.title,
-                  icon: spbSizedDataIcon(itemIconId(item, template), 50.25),
-                  onTap: () => openCardPreviewDialog(item),
-                  onContextMenu: (position) => showSpbCardMenu(item, position),
-                );
-              },
+                },
+              ),
             ),
           ),
         ),
@@ -5664,14 +6373,48 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   Future<void> showSpbFolderMenu(
       CategoryTreeNode folder, Offset globalPosition) async {
-    final selected = await showSpbObjectMenu(
-      globalPosition,
-      allowExport: true,
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(
+          key: Key('viewFolderContextAction'),
+          value: 'view',
+          child: Text('Просмотр'),
+        ),
+        PopupMenuItem(
+          key: Key('createInFolderContextAction'),
+          value: 'create',
+          child: Text('Создать'),
+        ),
+        PopupMenuItem(
+          key: Key('editFolderContextAction'),
+          value: 'edit',
+          child: Text('Редактировать'),
+        ),
+        PopupMenuItem(
+          key: Key('exportFolderContextAction'),
+          value: 'export',
+          child: Text('Экспортировать'),
+        ),
+        PopupMenuItem(
+          key: Key('importFolderContextAction'),
+          value: 'import',
+          child: Text('Импортировать'),
+        ),
+      ],
     );
     if (!mounted || selected == null) return;
     switch (selected) {
-      case 'open':
+      case 'view':
         openSpbFolder(folder.path);
+        break;
+      case 'create':
+        await openItemDialog(initialCategory: folder.path);
         break;
       case 'edit':
         await openCategoryEditorDialog(folder: folder);
@@ -5687,23 +6430,60 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           categoryPath: folder.path,
         );
         break;
-      case 'delete':
-        await deleteCategoryWithConfirmation(folder);
+      case 'import':
+        await importSpbWalletCards();
         break;
     }
   }
 
   Future<void> showSpbCardMenu(SecretItem item, Offset globalPosition) async {
-    final selected = await showSpbObjectMenu(
-      globalPosition,
-      allowExport: true,
-      allowCopy: true,
-      allowShare: Platform.isAndroid,
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(
+          key: Key('viewCardContextAction'),
+          value: 'view',
+          child: Text('Просмотр'),
+        ),
+        PopupMenuItem(
+          key: Key('createCardContextAction'),
+          value: 'create',
+          child: Text('Создать'),
+        ),
+        PopupMenuItem(
+          key: Key('editCardContextAction'),
+          value: 'edit',
+          child: Text('Редактировать'),
+        ),
+        PopupMenuItem(
+          key: Key('copyCardContextAction'),
+          value: 'copy',
+          child: Text('Копировать'),
+        ),
+        PopupMenuItem(
+          key: Key('exportObjectContextAction'),
+          value: 'export',
+          child: Text('Экспортировать'),
+        ),
+        PopupMenuItem(
+          key: Key('importCardContextAction'),
+          value: 'import',
+          child: Text('Импортировать'),
+        ),
+      ],
     );
     if (!mounted || selected == null) return;
     switch (selected) {
-      case 'open':
+      case 'view':
         await openCardPreviewDialog(item);
+        break;
+      case 'create':
+        await openItemDialog(initialCategory: item.category);
         break;
       case 'edit':
         await openItemDialog(item: item);
@@ -5714,11 +6494,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       case 'copy':
         await cloneSpbCard(item);
         break;
-      case 'share':
-        await shareSpbCard(item);
-        break;
-      case 'delete':
-        await deleteItemWithConfirmation(item);
+      case 'import':
+        await importSpbWalletCards();
         break;
     }
   }
@@ -5727,6 +6504,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     required String label,
     required Widget icon,
     required VoidCallback onTap,
+    VoidCallback? onDoubleTap,
     required ValueChanged<Offset> onContextMenu,
     bool selected = false,
   }) {
@@ -5737,6 +6515,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           openSpbObjectContextMenu(onContextMenu, details.globalPosition),
       child: InkWell(
         onTap: onTap,
+        onDoubleTap: onDoubleTap,
         child: Container(
           decoration: selected
               ? const BoxDecoration(
@@ -6040,11 +6819,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         category: item.category,
         colorId: item.colorId,
         values: Map<String, String>.from(item.values),
-        modifiedAt: DateTime.now(),
+        modifiedAt: DateTime.now().toUtc(),
         attachments: clonedAttachments,
         iconId: item.iconId,
         backgroundImageBase64: item.backgroundImageBase64,
         spbColor: item.spbColor,
+        fieldOrder: item.fieldOrder,
+        hiddenFieldIds: item.hiddenFieldIds,
       );
       final savedId = await persistItem(clone);
       if (savedId != null) {
@@ -6244,7 +7025,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       return [
         (
           spbResourceIcon('icon_add.png', 40),
-          'Создать новый',
+          'Создать новый шаблон',
           () => openTemplateDialog()
         ),
         (
@@ -6286,6 +7067,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         pickSpbWalletFile
       ),
       (
+        const Icon(
+          Icons.password_outlined,
+          size: 36,
+          color: Color(0xff33434f),
+        ),
+        'Изменить пароль',
+        openChangePasswordDialog
+      ),
+      (
         spbResourceIcon('icon_add_card.png', 40),
         'Создать новую карточку',
         () => openItemDialog(initialCategory: selectedCategoryPath)
@@ -6319,7 +7109,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     final foundCount = matchingFolders.length + matchingCards.length;
     final maximizeFound = spbFrequentExpanded == false && spbFoundExpanded;
     if (desktop) {
-      return Material(
+      return wrapSpbTemplateRightContextMenu(Material(
         color: Colors.white,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -6373,6 +7163,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                         spbSizedDataIcon(
                           itemIconId(item, templateFor(item.templateId)),
                           40,
+                          fallbackColor: itemPictogramColor(
+                            item,
+                            templateFor(item.templateId),
+                          ),
                         ),
                         item.title,
                         () => openCardPreviewDialog(item)
@@ -6397,9 +7191,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               ),
           ],
         ),
-      );
+      ));
     }
-    return Container(
+    return wrapSpbTemplateRightContextMenu(Container(
       color: _spbRightPanel,
       padding: const EdgeInsets.all(10),
       child: Column(
@@ -6419,6 +7213,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     spbSizedDataIcon(
                       itemIconId(item, templateFor(item.templateId)),
                       40,
+                      fallbackColor: itemPictogramColor(
+                        item,
+                        templateFor(item.templateId),
+                      ),
                     ),
                     item.title,
                     () => openCardPreviewDialog(item)
@@ -6429,7 +7227,50 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           ),
         ],
       ),
+    ));
+  }
+
+  Widget wrapSpbTemplateRightContextMenu(Widget child) {
+    if (!mobileTemplatesOpen) return child;
+    return GestureDetector(
+      key: const Key('spbTemplateRightWorkspace'),
+      behavior: HitTestBehavior.translucent,
+      onSecondaryTapDown: (details) =>
+          showSpbTemplateRightMenu(details.globalPosition),
+      onLongPressStart: (details) =>
+          showSpbTemplateRightMenu(details.globalPosition),
+      child: child,
     );
+  }
+
+  Future<void> showSpbTemplateRightMenu(Offset globalPosition) async {
+    if (spbObjectMenuPointerActive) return;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(
+          key: Key('createTemplateRightContextAction'),
+          value: 'create',
+          child: Text('Создать'),
+        ),
+        PopupMenuItem(
+          key: Key('importTemplateRightContextAction'),
+          value: 'import',
+          child: Text('Импортировать'),
+        ),
+      ],
+    );
+    if (!mounted) return;
+    if (selected == 'create') {
+      await openTemplateDialog();
+    } else if (selected == 'import') {
+      await importSpbTemplate();
+    }
   }
 
   Widget buildSpbSearchResults(
@@ -6460,6 +7301,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             icon: spbSizedDataIcon(
               categoryIconsByPath[path] ?? defaultIconForCategoryPath(path),
               36,
+              fallbackColor: categoryPictogramColor(
+                categoryColorsByPath[path],
+              ),
             ),
             title: categoryParts(path).last,
             subtitle: 'Папка',
@@ -6470,6 +7314,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             icon: spbSizedDataIcon(
               itemIconId(item, templateFor(item.templateId)),
               36,
+              fallbackColor: itemPictogramColor(
+                item,
+                templateFor(item.templateId),
+              ),
             ),
             title: item.title,
             subtitle: item.category.trim().isEmpty
@@ -6901,6 +7749,21 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     passwordFocusNode.requestFocus();
   }
 
+  void toggleLoginPasswordHint() {
+    if (loginHintVisible) {
+      setState(() => loginHintVisible = false);
+      return;
+    }
+    final path = spbWalletPath;
+    final hint = path == null || path.isEmpty
+        ? ''
+        : SpbWalletDatabase.readPasswordHint(path);
+    setState(() {
+      loginPasswordHint = hint.trim().isEmpty ? 'Подсказка не задана.' : hint;
+      loginHintVisible = true;
+    });
+  }
+
   Future<void> exitApplication() async {
     purgeSessionTrashFromDatabase();
     persistVaultState();
@@ -6945,9 +7808,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   Future<void> showInactivityWarning() async {
     if (!mounted || inactivityWarningVisible || closingForInactivity) return;
+    inactivityTimer?.cancel();
+    inactivityTimer = null;
     inactivityWarningVisible = true;
     inactivitySecondsRemaining = 30;
-    inactivityTimer = null;
     StateSetter? updateDialog;
     inactivityCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       inactivitySecondsRemaining--;
@@ -6965,21 +7829,78 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
           updateDialog = setDialogState;
-          return AlertDialog(
-            title: const Text('Предупреждение'),
-            content: Text(
-              'Программа выключится через '
-              '$inactivitySecondsRemaining секунд',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 20),
+          return Dialog(
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.zero,
+              side: BorderSide(color: Color(0xff7f8d98)),
             ),
-            actionsAlignment: MainAxisAlignment.center,
-            actions: [
-              FilledButton(
-                onPressed: () => Navigator.of(dialogContext).pop(true),
-                child: const Text('Продолжить'),
+            child: SizedBox(
+              width: 440,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    height: 48,
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+                      ),
+                      border: Border(
+                        bottom: BorderSide(color: Color(0xff7f8d98)),
+                      ),
+                    ),
+                    child: const Text(
+                      'Предупреждение',
+                      style: TextStyle(fontSize: 18),
+                    ),
+                  ),
+                  Container(
+                    width: double.infinity,
+                    color: const Color(0xfff4f4f4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 22,
+                      vertical: 24,
+                    ),
+                    child: Text(
+                      'Хранилище будет заблокировано через '
+                      '$inactivitySecondsRemaining секунд',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 20),
+                    ),
+                  ),
+                  Container(
+                    height: 50,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    decoration: const BoxDecoration(
+                      color: Color(0xffdce8f1),
+                      border: Border(
+                        top: BorderSide(color: Color(0xff7f8d98)),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        SpbGradientActionButton(
+                          key: const Key('inactivityContinueButton'),
+                          icon: Icons.play_arrow,
+                          tooltip: 'Продолжить работу',
+                          colors: const [
+                            Color(0xff5bc96d),
+                            Color(0xff08772f),
+                          ],
+                          onTap: () => Navigator.of(dialogContext).pop(true),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           );
         },
       ),
@@ -7010,11 +7931,24 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     spbWallet?.close(flush: vaultDirty);
     spbWallet = null;
     vaultDirty = false;
-    if (Platform.isAndroid || Platform.isIOS) {
-      await SystemNavigator.pop();
-    } else {
-      exit(0);
-    }
+    spbWritePending = false;
+    passwordController.clear();
+    confirmController.clear();
+    revealed.clear();
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true)
+        .popUntil((route) => route.isFirst);
+    setState(() {
+      unlocked = false;
+      entryMode = EntryMode.openSwl;
+      activeView = 'cards';
+      mobilePane = 0;
+      message = null;
+      closingForInactivity = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) passwordFocusNode.requestFocus();
+    });
   }
 
   Widget passwordKey({
@@ -7307,7 +8241,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           child: SingleChildScrollView(
             child: SizedBox(
               width: min(MediaQuery.sizeOf(context).width, 562),
-              height: message == null ? 590 : 650,
+              height: message == null && !loginHintVisible ? 590 : 650,
               child: LayoutBuilder(
                 builder: (context, constraints) => SingleChildScrollView(
                   padding: EdgeInsets.zero,
@@ -7363,35 +8297,82 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                 FractionallySizedBox(
                                   widthFactor: 2 / 3,
                                   alignment: Alignment.centerLeft,
-                                  child: TextSelectionTheme(
-                                    data: const TextSelectionThemeData(
-                                      cursorColor: Colors.black,
-                                      selectionColor: Colors.transparent,
-                                      selectionHandleColor: Colors.transparent,
-                                    ),
-                                    child: TextField(
-                                      key: const Key('passwordInput'),
-                                      controller: passwordController,
-                                      focusNode: passwordFocusNode,
-                                      autofocus: true,
-                                      obscureText: true,
-                                      enableSuggestions: false,
-                                      autocorrect: false,
-                                      keyboardType:
-                                          TextInputType.visiblePassword,
-                                      textInputAction: TextInputAction.done,
-                                      onSubmitted: (_) => unlock(),
-                                      decoration: const InputDecoration(
-                                        isDense: true,
-                                        filled: true,
-                                        fillColor: Colors.white,
-                                        border: OutlineInputBorder(
-                                          borderRadius: BorderRadius.zero,
+                                  child: SizedBox(
+                                    height: 48,
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        Expanded(
+                                          child: TextSelectionTheme(
+                                            data: const TextSelectionThemeData(
+                                              cursorColor: Colors.black,
+                                              selectionColor:
+                                                  Colors.transparent,
+                                              selectionHandleColor:
+                                                  Colors.transparent,
+                                            ),
+                                            child: TextField(
+                                              key: const Key('passwordInput'),
+                                              controller: passwordController,
+                                              focusNode: passwordFocusNode,
+                                              autofocus: true,
+                                              obscureText: true,
+                                              enableSuggestions: false,
+                                              autocorrect: false,
+                                              keyboardType:
+                                                  TextInputType.visiblePassword,
+                                              textInputAction:
+                                                  TextInputAction.done,
+                                              onSubmitted: (_) => unlock(),
+                                              decoration: const InputDecoration(
+                                                isDense: true,
+                                                filled: true,
+                                                fillColor: Colors.white,
+                                                border: OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.zero,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
                                         ),
-                                      ),
+                                        const SizedBox(width: 6),
+                                        SizedBox.square(
+                                          dimension: 48,
+                                          child: passwordKey(
+                                            key: const Key(
+                                                'loginPasswordHintButton'),
+                                            label: 'Подсказка пароля',
+                                            height: 48,
+                                            top: const Color(0xffffdc58),
+                                            bottom: const Color(0xffc58a00),
+                                            onPressed: toggleLoginPasswordHint,
+                                            child: const Icon(
+                                              Icons.question_mark,
+                                              color: Colors.white,
+                                              size: 28,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
+                                if (loginHintVisible) ...[
+                                  const SizedBox(height: 8),
+                                  Container(
+                                    key: const Key('loginPasswordHint'),
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xfffff4bc),
+                                      border: Border.all(
+                                        color: const Color(0xffb18b00),
+                                      ),
+                                    ),
+                                    child: Text(loginPasswordHint),
+                                  ),
+                                ],
                                 const SizedBox(height: 20),
                                 buildPasswordKeyboard(
                                   redTop: redTop,
@@ -7965,7 +8946,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           .name
           .compareTo(templateFor(b.templateId).name));
     } else {
-      filtered.sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
+      filtered.sort((a, b) {
+        final byDate = b.modifiedAt.compareTo(a.modifiedAt);
+        if (byDate != 0) return byDate;
+        final byTitle = a.title.toLowerCase().compareTo(b.title.toLowerCase());
+        return byTitle == 0 ? a.id.compareTo(b.id) : byTitle;
+      });
     }
     return filtered;
   }
@@ -8037,6 +9023,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (includeAllCategories) {
       paths.addAll(categoryPaths);
       paths.addAll(categoryIconsByPath.keys);
+      paths.addAll(categoryColorsByPath.keys);
     }
     for (final path in paths) {
       ensureCategoryTreeNode(root, path);
@@ -8060,6 +9047,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           part,
           path: currentPath,
           iconId: categoryIconsByPath[currentPath],
+          colorId: categoryColorsByPath[currentPath],
+          id: categoryIdsByPath[currentPath],
         ),
       );
     }
@@ -8078,6 +9067,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     final categories = {
       ...categoryPaths,
       ...categoryIconsByPath.keys,
+      ...categoryColorsByPath.keys,
       for (final item in items)
         if (item.category.trim().isNotEmpty) item.category.trim(),
     }.toList();
@@ -8097,7 +9087,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           child: ExpansionTile(
             initiallyExpanded: true,
             leading: categoryFolderIcon(
-                folder.iconId ?? defaultIconForCategoryPath(folder.path)),
+              folder.iconId ?? defaultIconForCategoryPath(folder.path),
+              folder.colorId,
+            ),
             title: Row(
               children: [
                 Expanded(
@@ -8136,7 +9128,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           child: ListTile(
             dense: true,
             selected: selectedItemId == item.id,
-            leading: templateIconWidget(itemIconId(item, template)),
+            leading: templateIconWidget(
+              itemIconId(item, template),
+              color: itemPictogramColor(item, template),
+            ),
             title:
                 Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
             subtitle: Text(template.name,
@@ -8152,7 +9147,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     return children;
   }
 
-  Widget categoryFolderIcon(String iconId) {
+  Widget categoryFolderIcon(String iconId, String? colorId) {
     return SizedBox(
       width: 38,
       height: 38,
@@ -8160,7 +9155,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         child: templateIconWidget(
           iconId.isEmpty ? 'folder' : iconId,
           size: 30,
-          color: Theme.of(context).colorScheme.primary,
+          color: categoryPictogramColor(colorId),
         ),
       ),
     );
@@ -8178,101 +9173,16 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
     if (!ensureSpbWalletWritable()) return;
     final editing = folder != null;
-    final nameController = TextEditingController(text: folder?.name ?? '');
-    var iconId = folder?.iconId ?? defaultIconForCategoryPath(parentPath);
-    final saved = await showDialog<({String name, String iconId})>(
+    final saved =
+        await showDialog<({String name, String iconId, String colorId})>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(editing ? 'Изменить папку' : 'Создать папку'),
-          content: SizedBox(
-            width: min(MediaQuery.of(context).size.width - 48, 420),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameController,
-                  autofocus: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Название папки',
-                    border: OutlineInputBorder(),
-                  ),
-                  onSubmitted: (_) {
-                    final name = nameController.text.trim();
-                    if (name.isNotEmpty && !name.contains('/')) {
-                      Navigator.pop(context, (name: name, iconId: iconId));
-                    }
-                  },
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    key: const Key('spbFolderIconPicker'),
-                    icon: spbPackedImage(
-                      spbPngIconAsset(iconId) ?? spbDefaultOriginalIconAsset,
-                      width: 30,
-                      height: 30,
-                      fit: BoxFit.contain,
-                      fallback: const Icon(Icons.folder_outlined, size: 30),
-                    ),
-                    label: const Text('Иконка папки (SPB Wallet)'),
-                    onPressed: () async {
-                      final picked = await showSpbOriginalIconPickerDialog(
-                        context,
-                        iconId,
-                      );
-                      if (picked != null) {
-                        setDialogState(() => iconId = picked);
-                      }
-                    },
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    icon: templateIconWidget(iconId),
-                    label: const Text('Пиктограмма папки'),
-                    onPressed: () async {
-                      final picked =
-                          await showIconPickerDialog(context, iconId);
-                      if (picked != null) {
-                        setDialogState(() => iconId = picked);
-                      }
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            if (editing)
-              TextButton.icon(
-                onPressed: () => Navigator.pop(
-                    context, (name: '__delete__', iconId: iconId)),
-                icon: const Icon(Icons.delete_outline),
-                label: const Text('Удалить'),
-              ),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final name = nameController.text.trim();
-                if (name.isEmpty || name.contains('/')) return;
-                Navigator.pop(context, (name: name, iconId: iconId));
-              },
-              child: const Text('Сохранить'),
-            ),
-          ],
-        ),
+      builder: (context) => CategoryEditorDialog(
+        editing: editing,
+        initialName: folder?.name ?? '',
+        initialIconId: folder?.iconId ?? defaultIconForCategoryPath(parentPath),
+        initialColorId: folder?.colorId ?? 'template_gray',
       ),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      nameController.dispose();
-    });
     if (saved == null) return;
     if (editing && saved.name == '__delete__') {
       await Future<void>.delayed(Duration.zero);
@@ -8319,7 +9229,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (editing &&
         saved.name == folder.name &&
         saved.iconId ==
-            (folder.iconId ?? defaultIconForCategoryPath(folder.path))) {
+            (folder.iconId ?? defaultIconForCategoryPath(folder.path)) &&
+        saved.colorId == folder.colorId) {
       return;
     }
     SessionUndoEntry? undoEntry;
@@ -8332,10 +9243,22 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       );
       final spbIconId = spbIconIdForUi(saved.iconId, 'folder') ??
           syntheticSpbIconIdForUi(saved.iconId);
+      final iconBytes = spbEmbeddedIconPngs[saved.iconId.toUpperCase()];
       if (editing) {
-        wallet.renameCategory(folder.path, saved.name, spbIconId);
+        wallet.renameCategory(
+          folder.path,
+          saved.name,
+          spbIconId,
+          iconBytes: iconBytes,
+          colorId: saved.colorId,
+        );
       } else {
-        wallet.createCategory(fullPath, spbIconId);
+        wallet.createCategory(
+          fullPath,
+          spbIconId,
+          iconBytes: iconBytes,
+          colorId: saved.colorId,
+        );
       }
       markVaultDirty();
       final written = await writeBackSpbWallet();
@@ -8403,6 +9326,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         if (selectedCategoryPath == folder.path ||
             selectedCategoryPath.startsWith('${folder.path} / ')) {
           selectedCategoryPath = parentPath;
+          selectedCategoryId = categoryIdsByPath[parentPath];
         }
         if (selectedItemId != null &&
             !items.any((entry) => entry.id == selectedItemId)) {
@@ -8465,7 +9389,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 final template = templateFor(item.templateId);
                 return ListTile(
                   dense: true,
-                  leading: templateIconWidget(itemIconId(item, template)),
+                  leading: templateIconWidget(
+                    itemIconId(item, template),
+                    color: itemPictogramColor(item, template),
+                  ),
                   title: Text(item.title,
                       maxLines: 2, overflow: TextOverflow.ellipsis),
                   onTap: () => openCardPreviewDialog(item),
@@ -8519,6 +9446,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   iconId: entry.iconId,
                   backgroundImageBase64: entry.backgroundImageBase64,
                   spbColor: entry.spbColor,
+                  fieldOrder: entry.fieldOrder,
+                  hiddenFieldIds: entry.hiddenFieldIds,
                 )
               : entry,
       ];
@@ -8532,52 +9461,57 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   Future<void> openCardPreviewDialog(SecretItem item) async {
     await selectItem(item);
     if (!mounted) return;
+    final currentItem = items.firstWhere(
+      (entry) => entry.id == item.id,
+      orElse: () => item,
+    );
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, dialogSetState) {
-          final currentItem = items.firstWhere(
-            (entry) => entry.id == item.id,
-            orElse: () => item,
-          );
-          return Dialog(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            insetPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: min(MediaQuery.of(context).size.width - 24, 520),
-                maxHeight: MediaQuery.of(context).size.height - 40,
-              ),
-              child: itemCard(
-                currentItem,
-                onClose: () => Navigator.pop(dialogContext),
-                showFooterActions: true,
-                showNotesAction: true,
-                attachmentsReadOnly: true,
-                onEdit: (editedItem) async {
-                  final updated = await openItemDialog(item: editedItem);
-                  if (updated == null || !mounted) return;
-                  dialogSetState(() {});
-                },
-                onDelete: (deletedItem) async {
-                  final deleted = await deleteItemWithConfirmation(deletedItem);
-                  if (deleted && dialogContext.mounted) {
-                    Navigator.pop(dialogContext);
-                  }
-                  return deleted;
-                },
-                onStateChange: (action) {
-                  setState(action);
-                  dialogSetState(() {});
-                },
-              ),
-            ),
-          );
-        },
+      builder: (context) => CardPreviewDialog(
+        item: currentItem,
+        template: templateFor(currentItem.templateId),
+        loadAttachmentBytes: spbWallet == null
+            ? null
+            : (attachmentId) async =>
+                spbWallet!.readAttachmentBytes(attachmentId),
+        onAddAttachment: spbWallet == null ? null : addAttachmentFromPreview,
       ),
     );
+  }
+
+  Future<SecretItem?> addAttachmentFromPreview(SecretItem item) async {
+    final picked = await FilePicker.platform.pickFiles(withData: true);
+    final file = picked?.files.single;
+    if (file == null) return null;
+    final bytes = file.bytes ??
+        (file.path == null ? null : await File(file.path!).readAsBytes());
+    if (bytes == null) return null;
+    final updated = SecretItem(
+      id: item.id,
+      templateId: item.templateId,
+      title: item.title,
+      category: item.category,
+      colorId: item.colorId,
+      values: item.values,
+      attachments: [
+        ...item.attachments,
+        SecretAttachment(
+          id: '',
+          fileName: file.name,
+          size: bytes.length,
+          pendingBytes: bytes,
+        ),
+      ],
+      modifiedAt: DateTime.now().toUtc(),
+      hitCount: item.hitCount,
+      iconId: item.iconId,
+      backgroundImageBase64: item.backgroundImageBase64,
+      spbColor: item.spbColor,
+      fieldOrder: item.fieldOrder,
+      hiddenFieldIds: item.hiddenFieldIds,
+    );
+    final savedId = await persistItem(updated);
+    return savedId == null ? null : itemById(savedId);
   }
 
   void updateItemCardState(
@@ -8607,12 +9541,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         category: item.category,
         colorId: item.colorId,
         values: {...item.values, fieldId: saved},
-        modifiedAt: DateTime.now(),
+        modifiedAt: DateTime.now().toUtc(),
         attachments: item.attachments,
         hitCount: item.hitCount,
         iconId: item.iconId,
         backgroundImageBase64: item.backgroundImageBase64,
         spbColor: item.spbColor,
+        fieldOrder: item.fieldOrder,
+        hiddenFieldIds: item.hiddenFieldIds,
       ),
     );
   }
@@ -8629,7 +9565,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           child: TextField(
             controller: controller,
             minLines: 8,
-            maxLines: 14,
+            maxLines: null,
             decoration: const InputDecoration(
                 border: OutlineInputBorder(), labelText: 'Заметка'),
           ),
@@ -8665,7 +9601,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         return Card(
           elevation: 0,
           child: ListTile(
-            leading: templateIconWidget(itemIconId(item, template), size: 24),
+            leading: templateIconWidget(
+              itemIconId(item, template),
+              size: 24,
+              color: itemPictogramColor(item, template),
+            ),
             title: Text(item.title),
             subtitle: Text('${template.name} · открытий: ${item.hitCount}'),
             trailing: const Icon(Icons.chevron_right),
@@ -8718,7 +9658,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               children: [
                 Row(
                   children: [
-                    templateIconWidget(itemIconId(item, template), size: 28),
+                    templateIconWidget(
+                      itemIconId(item, template),
+                      size: 28,
+                      color: itemPictogramColor(item, template),
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
@@ -8750,7 +9694,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 Expanded(
                   child: CardFieldValuesList(
                     key: ValueKey('card-fields-${item.id}'),
-                    fields: template.fields,
+                    fields: fieldsForItem(template, item),
                     item: item,
                     foreground: color.fg,
                     revealed: revealed,
@@ -9162,17 +10106,20 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           const Center(child: Text('Шаблоны не найдены'))
         else
           ...visibleTemplates.map((template) {
-            final color = colorById('neutral');
+            final backgroundColor = templateDisplayBackground(template);
+            final pictogramColor = templateDisplayPictogramColor(template);
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Card(
                 elevation: 0,
                 child: ListTile(
                   leading: CircleAvatar(
-                      backgroundColor: color.bg,
-                      foregroundColor: color.fg,
-                      child:
-                          templateIconWidget(template.iconId, color: color.fg)),
+                      backgroundColor: backgroundColor,
+                      foregroundColor: pictogramColor,
+                      child: templateIconWidget(
+                        template.iconId,
+                        color: pictogramColor,
+                      )),
                   title: Text(template.name),
                   subtitle: Text(
                     template.fields
@@ -9207,6 +10154,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       iconId: template.iconId,
       colorId: template.colorId,
       spbColor: template.spbColor,
+      categoryPath: template.categoryPath,
       builtIn: false,
       fields: [
         for (final field in template.fields)
@@ -9239,20 +10187,44 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     );
   }
 
-  CardTemplate templateFor(String id) => templates.firstWhere(
-        (template) => template.id == id,
-        orElse: () => templates.first,
-      );
+  CardTemplate templateFor(String id) {
+    final indexed = templatesById[id];
+    if (indexed != null &&
+        templates.any((entry) => identical(entry, indexed))) {
+      return indexed;
+    }
+    for (final template in templates) {
+      if (template.id == id) {
+        templatesById[id] = template;
+        return template;
+      }
+    }
+    return templates.isEmpty ? builtInTemplates().first : templates.first;
+  }
 
   SecretItem? itemById(String id) {
+    final indexed = itemsById[id];
+    if (indexed != null && items.any((entry) => identical(entry, indexed))) {
+      return indexed;
+    }
     for (final item in items) {
-      if (item.id == id) return item;
+      if (item.id == id) {
+        itemsById[id] = item;
+        return item;
+      }
     }
     return null;
   }
 
   Future<SecretItem?> openItemDialog(
       {SecretItem? item, String? initialCategory}) async {
+    if (templates.isEmpty) {
+      if (mounted) {
+        setState(() => message =
+            'В базе нет шаблонов. Сначала создайте или импортируйте шаблон.');
+      }
+      return null;
+    }
     final saved = await showDialog<SecretItem>(
       context: context,
       builder: (context) => ItemEditorDialog(
@@ -9291,6 +10263,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         first.backgroundImageBase64 != second.backgroundImageBase64 ||
         first.spbColor != second.spbColor ||
         !mapEquals(first.values, second.values) ||
+        !listEquals(first.fieldOrder, second.fieldOrder) ||
+        !setEquals(first.hiddenFieldIds, second.hiddenFieldIds) ||
         first.attachments.length != second.attachments.length) {
       return false;
     }
@@ -9316,6 +10290,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         first.iconId != second.iconId ||
         first.colorId != second.colorId ||
         first.spbColor != second.spbColor ||
+        first.categoryPath != second.categoryPath ||
         first.fields.length != second.fields.length) {
       return false;
     }
@@ -9342,6 +10317,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (existing != null && spbItemsHaveSameStoredContent(existing, saved)) {
       return existing.id;
     }
+    final hasAttachmentChanges = saved.attachments.any(
+      (attachment) => attachment.deleted || attachment.pendingBytes != null,
+    );
+    final needsStructuralReload = existing == null ||
+        hasAttachmentChanges ||
+        (saved.category.trim().isNotEmpty &&
+            !categoryIdsByPath.containsKey(saved.category));
     final template = templateFor(saved.templateId);
     SessionUndoEntry? undoEntry;
     try {
@@ -9367,14 +10349,24 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             itemIconId(saved, template),
             template.iconId,
           ),
+          iconBytes: saved.iconId == null
+              ? null
+              : spbEmbeddedIconPngs[saved.iconId!.toUpperCase()],
           backgroundImageBase64: saved.backgroundImageBase64,
+          fieldOrder: saved.fieldOrder,
+          hiddenFieldIds: saved.hiddenFieldIds,
+          modifiedAt: saved.modifiedAt,
         ),
       );
       markVaultDirty();
       for (final attachment in saved.attachments) {
-        if (attachment.deleted && attachment.id.isNotEmpty) {
-          wallet.deleteAttachment(attachment.id);
-        } else if (attachment.pendingBytes != null) {
+        if (attachment.deleted) {
+          if (attachment.id.isNotEmpty) {
+            wallet.deleteAttachment(attachment.id);
+          }
+          continue;
+        }
+        if (attachment.pendingBytes != null) {
           wallet.saveAttachment(
             cardId: cardId,
             attachmentId: attachment.id.isEmpty ? null : attachment.id,
@@ -9384,9 +10376,32 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         }
       }
       final written = await writeBackSpbWallet();
-      final snapshot = wallet.loadSnapshot();
       setState(() {
-        applySpbSnapshot(snapshot);
+        if (needsStructuralReload) {
+          applySpbSnapshot(wallet.loadSnapshot());
+        } else {
+          final persisted = SecretItem(
+            id: cardId,
+            templateId: saved.templateId,
+            title: saved.title,
+            category: saved.category,
+            colorId: saved.colorId,
+            values: Map<String, String>.from(saved.values),
+            modifiedAt: saved.modifiedAt,
+            attachments: List<SecretAttachment>.from(saved.attachments),
+            hitCount: existing.hitCount,
+            iconId: saved.iconId,
+            backgroundImageBase64: saved.backgroundImageBase64,
+            spbColor: saved.spbColor,
+            fieldOrder: List<String>.from(saved.fieldOrder),
+            hiddenFieldIds: Set<String>.from(saved.hiddenFieldIds),
+          );
+          items = [
+            for (final item in items)
+              if (item.id == cardId) persisted else item,
+          ];
+          itemsById[cardId] = persisted;
+        }
         selectedItemId = cardId;
         if (written) message = null;
       });
@@ -9500,6 +10515,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     await saveSpbTemplateDefinition(saved, isNew: template == null);
   }
 
+  Future<void> openTemplatePreview(CardTemplate template) async {
+    setState(() => selectedTemplateId = template.id);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => TemplatePreviewDialog(template: template),
+    );
+  }
+
   Future<bool> saveSpbTemplateDefinition(
     CardTemplate saved, {
     required bool isNew,
@@ -9534,6 +10557,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             name: prepared.name,
             iconId: spbIconIdForUi(prepared.iconId, prepared.iconId),
             cardColor: prepared.spbColor ?? paletteColorToSpb(prepared.colorId),
+            categoryPath: prepared.categoryPath,
             iconBytes: prepared.embeddedIconBase64 == null
                 ? null
                 : base64Decode(prepared.embeddedIconBase64!),
@@ -9580,6 +10604,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       embeddedIconBase64: template.embeddedIconBase64,
       iconFileName: template.iconFileName,
       spbColor: template.spbColor,
+      categoryPath: template.categoryPath,
       fields: template.fields
           .where((field) => field.id != spbDescriptionFieldId)
           .map((field) => FieldDefinition(
@@ -9638,58 +10663,101 @@ class _Spb3dArrowButton extends StatelessWidget {
   });
 
   final IconData icon;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+    return Opacity(
+      opacity: onPressed == null ? 0.42 : 1,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: onPressed,
           borderRadius: BorderRadius.circular(3),
           child: Ink(
+            width: 38,
+            height: 34,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(3),
-              border: Border.all(color: const Color(0xff087bc7)),
+              border: Border.all(color: const Color(0xff676767)),
               gradient: const LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xff20b8fa),
-                  Color(0xff078ce7),
-                  Color(0xff0062ce),
-                ],
-                stops: [0, .52, 1],
+                colors: [Color(0xfff4f4f4), Color(0xff8d8d8d)],
               ),
               boxShadow: const [
                 BoxShadow(
-                  color: Color(0x66003887),
-                  offset: Offset(0, 3),
-                  blurRadius: 1,
+                  color: Colors.white,
+                  offset: Offset(-1, -1),
+                  blurRadius: 0.5,
                 ),
                 BoxShadow(
-                  color: Color(0x99ffffff),
-                  offset: Offset(0, 1),
+                  color: Color(0x66000000),
+                  offset: Offset(1, 1),
                   blurRadius: 1,
                 ),
               ],
             ),
-            child: Center(
-              child: Icon(
-                icon,
-                size: 34,
-                color: Colors.white,
-                shadows: const [
-                  Shadow(color: Color(0x99004488), offset: Offset(0, 2)),
-                  Shadow(color: Colors.white70, offset: Offset(0, -1)),
-                ],
-              ),
+            child: Icon(
+              icon,
+              size: 30,
+              color: const Color(0xff303030),
+              shadows: const [
+                Shadow(color: Colors.white70, offset: Offset(0, -1)),
+                Shadow(color: Color(0x66000000), offset: Offset(0, 1)),
+              ],
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class PasswordStrengthBar extends StatelessWidget {
+  const PasswordStrengthBar({required this.password, super.key});
+
+  final String password;
+
+  @override
+  Widget build(BuildContext context) {
+    final score = passwordStrengthScore(password);
+    const colors = <Color>[
+      Color(0xffb71c1c),
+      Color(0xffd32f2f),
+      Color(0xfff57c00),
+      Color(0xfffbc02d),
+      Color(0xff7cb342),
+      Color(0xff2e7d32),
+    ];
+    const labels = <String>[
+      'не задан',
+      'очень слабый',
+      'слабый',
+      'средний',
+      'надежный',
+      'очень надежный',
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Text('Надежность пароля'),
+            const Spacer(),
+            Text(labels[score]),
+          ],
+        ),
+        const SizedBox(height: 4),
+        ClipRect(
+          child: LinearProgressIndicator(
+            minHeight: 8,
+            value: score == 0 ? 0 : score / 5,
+            backgroundColor: const Color(0xffc8c8c8),
+            valueColor: AlwaysStoppedAnimation<Color>(colors[score]),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -10332,6 +11400,884 @@ Future<String?> showThirdPartyIconPickerDialog(BuildContext context) async {
   );
 }
 
+class SpbGrayPickerButton extends StatelessWidget {
+  const SpbGrayPickerButton({
+    required this.label,
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    super.key,
+  });
+
+  final String label;
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Opacity(
+        opacity: onTap == null ? 0.48 : 1,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(5),
+            child: Ink(
+              height: 48,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xfff4f4f4), Color(0xff969696)],
+                ),
+                border: Border.all(color: const Color(0xff676767)),
+                borderRadius: BorderRadius.circular(5),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.white,
+                    offset: Offset(-1, -1),
+                    blurRadius: 0.5,
+                  ),
+                  BoxShadow(
+                    color: Color(0x66000000),
+                    offset: Offset(1, 1),
+                    blurRadius: 1,
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 18, color: const Color(0xff303030)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xff303030),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class CategoryEditorDialog extends StatefulWidget {
+  const CategoryEditorDialog({
+    required this.editing,
+    required this.initialName,
+    required this.initialIconId,
+    this.initialColorId = 'template_gray',
+    super.key,
+  });
+
+  final bool editing;
+  final String initialName;
+  final String initialIconId;
+  final String initialColorId;
+
+  @override
+  State<CategoryEditorDialog> createState() => _CategoryEditorDialogState();
+}
+
+class _CategoryEditorDialogState extends State<CategoryEditorDialog> {
+  late final TextEditingController name;
+  late String iconId;
+  late String colorId;
+  bool invalidName = false;
+
+  @override
+  void initState() {
+    super.initState();
+    name = TextEditingController(text: widget.initialName);
+    iconId = widget.initialIconId;
+    colorId = widget.initialColorId;
+  }
+
+  @override
+  void dispose() {
+    name.dispose();
+    super.dispose();
+  }
+
+  void save() {
+    final value = name.text.trim();
+    if (value.isEmpty || value.contains('/')) {
+      setState(() => invalidName = true);
+      return;
+    }
+    Navigator.pop(context, (name: value, iconId: iconId, colorId: colorId));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.sizeOf(context);
+    final fullScreen = Platform.isAndroid || media.width < 700;
+    return Align(
+      alignment: Alignment.center,
+      child: Material(
+        color: const Color(0xfff4f4f4),
+        elevation: 24,
+        clipBehavior: Clip.antiAlias,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.zero,
+          side: BorderSide(color: Color(0xff7f8d98)),
+        ),
+        child: SizedBox(
+          key: const Key('categoryEditorSurface'),
+          width: fullScreen ? media.width : min(media.width - 24, 720),
+          height: fullScreen ? media.height : min(media.height - 24, 620),
+          child: Column(
+            children: [
+              Container(
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+                  ),
+                  border: Border(
+                    bottom: BorderSide(color: Color(0xff7f8d98)),
+                  ),
+                ),
+                child: TextField(
+                  key: const Key('categoryNameField'),
+                  controller: name,
+                  autofocus: true,
+                  onChanged: (_) {
+                    if (invalidName) setState(() => invalidName = false);
+                  },
+                  onSubmitted: (_) => save(),
+                  style: const TextStyle(fontSize: 18),
+                  decoration: InputDecoration(
+                    hintText: widget.editing ? 'Название папки' : 'Новая папка',
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: ColoredBox(
+                  color: colorById(colorId).bg,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Container(
+                              key: const Key('categoryBoundIcon'),
+                              width: 112,
+                              height: 112,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                border: Border.all(
+                                  color: const Color(0xff82929d),
+                                  width: 2,
+                                ),
+                                borderRadius: BorderRadius.circular(5),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Color(0x26000000),
+                                    offset: Offset(1, 2),
+                                    blurRadius: 5,
+                                  ),
+                                ],
+                              ),
+                              child: templateIconWidget(
+                                iconId.isEmpty ? 'folder' : iconId,
+                                size: 88,
+                                color: templatePictogramColor(colorId),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  const Text(
+                                    'Выбрать иконку',
+                                    style:
+                                        TextStyle(fontWeight: FontWeight.w600),
+                                  ),
+                                  const SizedBox(height: 7),
+                                  LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final buttons = [
+                                        SpbGrayPickerButton(
+                                          key: const Key(
+                                            'spbFolderIconPicker',
+                                          ),
+                                          label: 'SPB',
+                                          icon: Icons.photo_library_outlined,
+                                          tooltip: 'Иконки из базы SPB',
+                                          onTap: pickSpbIcon,
+                                        ),
+                                        SpbGrayPickerButton(
+                                          key: const Key(
+                                            'categoryPictogramPicker',
+                                          ),
+                                          label: 'пиктограммы',
+                                          icon: Icons.category_outlined,
+                                          tooltip: 'Выбрать пиктограмму',
+                                          onTap: pickPictogram,
+                                        ),
+                                        SpbGrayPickerButton(
+                                          key: const Key(
+                                            'categoryThirdPartyPicker',
+                                          ),
+                                          label: 'сторонние',
+                                          icon: Icons.public_outlined,
+                                          tooltip: 'Иконки Visual Studio',
+                                          onTap: pickThirdPartyIcon,
+                                        ),
+                                        SpbGrayPickerButton(
+                                          key: const Key(
+                                            'categoryUploadIconButton',
+                                          ),
+                                          label: 'загрузить иконку',
+                                          icon: Icons.upload_file_outlined,
+                                          tooltip: 'Загрузить файл PNG или ICO',
+                                          onTap: pickCustomIconFile,
+                                        ),
+                                      ];
+                                      if (constraints.maxWidth >= 420) {
+                                        return Row(
+                                          children: [
+                                            for (var index = 0;
+                                                index < buttons.length;
+                                                index++) ...[
+                                              if (index > 0)
+                                                const SizedBox(width: 7),
+                                              Expanded(child: buttons[index]),
+                                            ],
+                                          ],
+                                        );
+                                      }
+                                      final width =
+                                          (constraints.maxWidth - 7) / 2;
+                                      return Wrap(
+                                        spacing: 7,
+                                        runSpacing: 7,
+                                        children: [
+                                          for (final button in buttons)
+                                            SizedBox(
+                                              width: width,
+                                              child: button,
+                                            ),
+                                        ],
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        ColorPicker(
+                          value: colorId,
+                          label: 'Цвет папки',
+                          keyPrefix: 'categoryColor',
+                          onChanged: (value) => setState(() => colorId = value),
+                        ),
+                        if (invalidName) ...[
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Введите название папки без символа «/».',
+                            style: TextStyle(color: Color(0xffa90000)),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Container(
+                height: 50,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: const BoxDecoration(
+                  color: Color(0xffdce8f1),
+                  border: Border(
+                    top: BorderSide(color: Color(0xff7f8d98)),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (widget.editing) ...[
+                      SpbGradientActionButton(
+                        key: const Key('categoryDeleteButton'),
+                        icon: Icons.delete_outline,
+                        tooltip: 'Удалить папку',
+                        colors: const [
+                          Color(0xffffdc58),
+                          Color(0xffc58a00),
+                        ],
+                        onTap: () => Navigator.pop(
+                          context,
+                          (
+                            name: '__delete__',
+                            iconId: iconId,
+                            colorId: colorId,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    SpbGradientActionButton(
+                      key: const Key('categorySaveButton'),
+                      icon: Icons.check,
+                      tooltip: 'Сохранить папку',
+                      colors: const [Color(0xff5bc96d), Color(0xff08772f)],
+                      onTap: save,
+                    ),
+                    const SizedBox(width: 6),
+                    SpbGradientActionButton(
+                      key: const Key('categoryCloseButton'),
+                      icon: Icons.close,
+                      tooltip: 'Закрыть без сохранения',
+                      colors: const [Color(0xffff5a5f), Color(0xffa90000)],
+                      onTap: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> pickSpbIcon() async {
+    final picked = await showSpbOriginalIconPickerDialog(context, iconId);
+    if (picked != null && mounted) setState(() => iconId = picked);
+  }
+
+  Future<void> pickPictogram() async {
+    final picked = await showIconPickerDialog(context, iconId);
+    if (picked != null && mounted) setState(() => iconId = picked);
+  }
+
+  Future<void> pickThirdPartyIcon() async {
+    final picked = await showThirdPartyIconPickerDialog(context);
+    if (picked == null || !mounted) return;
+    final bytes = thirdPartyIconPngs[picked];
+    if (bytes == null) return;
+    setState(() => iconId = registerEmbeddedIcon(bytes));
+  }
+
+  Future<void> pickCustomIconFile() async {
+    final picked = await pickUserIconFile(context);
+    if (picked == null || !mounted) return;
+    setState(() => iconId = registerEmbeddedIcon(picked.bytes));
+  }
+}
+
+class CardPreviewDialog extends StatefulWidget {
+  const CardPreviewDialog({
+    required this.item,
+    required this.template,
+    this.loadAttachmentBytes,
+    this.onAddAttachment,
+    super.key,
+  });
+
+  final SecretItem item;
+  final CardTemplate template;
+  final Future<List<int>> Function(String attachmentId)? loadAttachmentBytes;
+  final Future<SecretItem?> Function(SecretItem item)? onAddAttachment;
+
+  @override
+  State<CardPreviewDialog> createState() => _CardPreviewDialogState();
+}
+
+class _CardPreviewDialogState extends State<CardPreviewDialog> {
+  final Set<String> revealedFields = {};
+  late SecretItem currentItem;
+
+  ImageProvider? get backgroundImage {
+    final encoded = currentItem.backgroundImageBase64;
+    if (encoded == null || encoded.isEmpty) return null;
+    try {
+      return MemoryImage(base64Decode(encoded));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    currentItem = widget.item;
+  }
+
+  String allCardText() {
+    final lines = <String>[
+      'Название: ${currentItem.title}',
+      if (currentItem.category.trim().isNotEmpty)
+        'Категория: ${currentItem.category}',
+    ];
+    for (final field in fieldsForItem(widget.template, currentItem)) {
+      final value = currentItem.values[field.id]?.trim() ?? '';
+      if (value.isNotEmpty) lines.add('${field.label}: $value');
+    }
+    return lines.join('\n');
+  }
+
+  Future<void> showCopyAllMenu(Offset globalPosition) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(
+          key: Key('copyAllCardFieldsAction'),
+          value: 'copyAll',
+          child: Text('Скопировать всё'),
+        ),
+      ],
+    );
+    if (!mounted || selected != 'copyAll') return;
+    await Clipboard.setData(ClipboardData(text: allCardText()));
+  }
+
+  List<SecretAttachment> get availableAttachments => currentItem.attachments
+      .where(
+          (attachment) => !attachment.deleted && attachment.decodeError == null)
+      .toList(growable: false);
+
+  Future<Uint8List> attachmentBytes(SecretAttachment attachment) async {
+    if (attachment.pendingBytes != null) {
+      return Uint8List.fromList(attachment.pendingBytes!);
+    }
+    final loader = widget.loadAttachmentBytes;
+    if (loader == null || attachment.id.isEmpty) return Uint8List(0);
+    return Uint8List.fromList(await loader(attachment.id));
+  }
+
+  Future<void> previewAttachment(SecretAttachment attachment) async {
+    try {
+      final bytes = await attachmentBytes(attachment);
+      if (bytes.isEmpty) return;
+      await openAttachmentBytesWithSystem(attachment.fileName, bytes);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось открыть вложение: $error')),
+      );
+    }
+  }
+
+  Future<void> saveAttachment(SecretAttachment attachment) async {
+    try {
+      final bytes = await attachmentBytes(attachment);
+      if (bytes.isEmpty) return;
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Сохранить вложение',
+        fileName: attachment.fileName,
+        bytes: bytes,
+      );
+      if (path != null && !Platform.isAndroid && !Platform.isIOS) {
+        final file = File(path);
+        if (!file.existsSync() || file.lengthSync() != bytes.length) {
+          await file.writeAsBytes(bytes, flush: true);
+        }
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить вложение: $error')),
+      );
+    }
+  }
+
+  Future<void> chooseAttachmentToSave() async {
+    final source = availableAttachments;
+    if (source.isEmpty) return;
+    if (source.length == 1) {
+      await saveAttachment(source.single);
+      return;
+    }
+    final selected = await showDialog<SecretAttachment>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Сохранить вложение'),
+        children: [
+          for (final attachment in source)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, attachment),
+              child: Text(attachment.fileName),
+            ),
+        ],
+      ),
+    );
+    if (selected != null) await saveAttachment(selected);
+  }
+
+  Future<void> addAttachment() async {
+    final callback = widget.onAddAttachment;
+    if (callback == null) return;
+    final updated = await callback(currentItem);
+    if (updated != null && mounted) setState(() => currentItem = updated);
+  }
+
+  Widget previewAttachmentNames() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        for (final attachment in availableAttachments)
+          GestureDetector(
+            key: ValueKey('cardPreviewAttachment-${attachment.fileName}'),
+            behavior: HitTestBehavior.opaque,
+            onSecondaryTapDown: (_) => previewAttachment(attachment),
+            onLongPress: () => previewAttachment(attachment),
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Text(
+                attachment.fileName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.sizeOf(context);
+    final fullScreen = Platform.isAndroid || media.width < 700;
+    final color = itemDisplayColor(currentItem, widget.template);
+    final visibleFields = fieldsForItem(widget.template, currentItem).where(
+      (field) => (currentItem.values[field.id] ?? '').trim().isNotEmpty,
+    );
+    return Align(
+      alignment: Alignment.center,
+      child: Material(
+        color: const Color(0xfff4f4f4),
+        elevation: 24,
+        clipBehavior: Clip.antiAlias,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.zero,
+          side: BorderSide(color: Color(0xff7f8d98)),
+        ),
+        child: SizedBox(
+          key: const Key('cardPreviewSurface'),
+          width: fullScreen ? media.width : min(media.width - 24, 720),
+          height: fullScreen ? media.height : min(media.height - 24, 760),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onSecondaryTapDown: (details) =>
+                showCopyAllMenu(details.globalPosition),
+            onLongPressStart: (details) =>
+                showCopyAllMenu(details.globalPosition),
+            child: Column(
+              children: [
+                Container(
+                  height: 48,
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+                    ),
+                    border: Border(
+                      bottom: BorderSide(color: Color(0xff7f8d98)),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          currentItem.title,
+                          key: const Key('cardPreviewTitle'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 18),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        formatCardModifiedAt(currentItem.modifiedAt),
+                        key: const Key('cardPreviewModifiedAt'),
+                        maxLines: 1,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: DecoratedBox(
+                    decoration: cardSurfaceDecoration(
+                      color: color.bg,
+                      backgroundImage: backgroundImage,
+                    ),
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Center(
+                            child: Container(
+                              key: const Key('cardPreviewIcon'),
+                              width: 112,
+                              height: 112,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                border: Border.all(
+                                  color: const Color(0xff82929d),
+                                  width: 2,
+                                ),
+                                borderRadius: BorderRadius.circular(5),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Color(0x26000000),
+                                    offset: Offset(1, 2),
+                                    blurRadius: 5,
+                                  ),
+                                ],
+                              ),
+                              child: templateIconWidget(
+                                itemIconId(currentItem, widget.template),
+                                size: 88,
+                                color: pictogramColorForBackground(color.bg),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          for (final field in visibleFields)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: TextFormField(
+                                key: ValueKey('cardPreviewField-${field.id}'),
+                                initialValue:
+                                    currentItem.values[field.id] ?? '',
+                                readOnly: true,
+                                obscureText: fieldDefinitionIsSecret(field) &&
+                                    !revealedFields.contains(field.id),
+                                minLines:
+                                    field.type == 'multiline_note' ? 3 : 1,
+                                maxLines:
+                                    field.type == 'multiline_note' ? null : 1,
+                                decoration: InputDecoration(
+                                  labelText: field.label,
+                                  border: const OutlineInputBorder(),
+                                  filled: true,
+                                  fillColor: color.bg,
+                                  suffixIcon: fieldDefinitionIsSecret(field)
+                                      ? IconButton(
+                                          tooltip:
+                                              revealedFields.contains(field.id)
+                                                  ? 'Скрыть'
+                                                  : 'Показать',
+                                          icon: Icon(
+                                            revealedFields.contains(field.id)
+                                                ? Icons.visibility_off
+                                                : Icons.visibility,
+                                          ),
+                                          onPressed: () => setState(() {
+                                            revealedFields.contains(field.id)
+                                                ? revealedFields
+                                                    .remove(field.id)
+                                                : revealedFields.add(field.id);
+                                          }),
+                                        )
+                                      : null,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
+                  decoration: const BoxDecoration(
+                    color: Color(0xffdce8f1),
+                    border: Border(
+                      top: BorderSide(color: Color(0xff7f8d98)),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (availableAttachments.isNotEmpty) ...[
+                        previewAttachmentNames(),
+                        const SizedBox(height: 4),
+                      ],
+                      Row(
+                        children: [
+                          if (widget.onAddAttachment != null &&
+                              availableAttachments.isNotEmpty)
+                            SpbGradientActionButton(
+                              key: const Key(
+                                'cardPreviewAddAttachmentButton',
+                              ),
+                              icon: Icons.add,
+                              tooltip: 'Загрузить вложение',
+                              colors: const [
+                                Color(0xff5b9dff),
+                                Color(0xff0752b5),
+                              ],
+                              onTap: addAttachment,
+                            ),
+                          const Spacer(),
+                          if (availableAttachments.isNotEmpty) ...[
+                            SpbGradientActionButton(
+                              key: const Key(
+                                'cardPreviewSaveAttachmentButton',
+                              ),
+                              icon: Icons.folder_outlined,
+                              tooltip: 'Сохранить вложение',
+                              colors: const [
+                                Color(0xff5b9dff),
+                                Color(0xff0752b5),
+                              ],
+                              onTap: chooseAttachmentToSave,
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          SpbGradientActionButton(
+                            key: const Key('cardPreviewCloseButton'),
+                            icon: Icons.close,
+                            tooltip: 'Закрыть',
+                            colors: const [
+                              Color(0xffff5a5f),
+                              Color(0xffa90000),
+                            ],
+                            onTap: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SpbGradientActionButton extends StatelessWidget {
+  const SpbGradientActionButton({
+    required this.icon,
+    required this.tooltip,
+    required this.colors,
+    required this.onTap,
+    super.key,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final List<Color> colors;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Opacity(
+        opacity: onTap == null ? 0.55 : 1,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            child: Ink(
+              width: 38,
+              height: 34,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: colors,
+                ),
+                border: Border.all(color: const Color(0xff56636c)),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Icon(icon, color: Colors.white, size: 22),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class CardEditorSnapshot {
+  const CardEditorSnapshot({
+    required this.templateId,
+    required this.colorId,
+    required this.categorySelection,
+    required this.iconId,
+    required this.title,
+    required this.category,
+    required this.values,
+    required this.fieldOrder,
+    required this.hiddenFieldIds,
+    required this.attachments,
+    this.backgroundImageBase64,
+    this.spbColor,
+  });
+
+  final String templateId;
+  final String colorId;
+  final String categorySelection;
+  final String iconId;
+  final String title;
+  final String category;
+  final Map<String, String> values;
+  final List<String> fieldOrder;
+  final Set<String> hiddenFieldIds;
+  final List<SecretAttachment> attachments;
+  final String? backgroundImageBase64;
+  final int? spbColor;
+
+  String get signature => [
+        templateId,
+        colorId,
+        categorySelection,
+        iconId,
+        title,
+        category,
+        backgroundImageBase64 ?? '',
+        spbColor?.toString() ?? '',
+        fieldOrder.join('\u0001'),
+        (hiddenFieldIds.toList()..sort()).join('\u0001'),
+        for (final entry in values.entries) '${entry.key}\u0001${entry.value}',
+        for (final entry in attachments)
+          '${entry.id}\u0001${entry.fileName}\u0001${entry.size}\u0001${entry.deleted}',
+      ].join('\u0002');
+}
+
 class ItemEditorDialog extends StatefulWidget {
   const ItemEditorDialog({
     required this.templates,
@@ -10362,20 +12308,54 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
   late String colorId;
   late String categorySelection;
   late String iconId;
+  late final DateTime editorOpenedAt;
   late final TextEditingController title;
   late final TextEditingController category;
   late final Map<String, TextEditingController> values;
+  late List<String> fieldOrder;
+  late Set<String> hiddenFieldIds;
   late List<SecretAttachment> attachments;
   String? backgroundImageBase64;
   int? spbColor;
   final Set<String> visibleSecrets = {};
+  final List<CardEditorSnapshot> undoHistory = [];
+
+  Color get editorBackgroundColor => spbColor == null
+      ? colorById(colorId).bg
+      : Color(0xff000000 | (spbColor! & 0x00ffffff));
+
+  ImageProvider? get editorBackgroundImage {
+    final encoded = backgroundImageBase64;
+    if (encoded == null || encoded.isEmpty) return null;
+    try {
+      return MemoryImage(base64Decode(encoded));
+    } catch (_) {
+      return null;
+    }
+  }
 
   CardTemplate get template =>
       widget.templates.firstWhere((entry) => entry.id == templateId);
 
+  List<FieldDefinition> get allCardFields {
+    final result = <FieldDefinition>[...template.fields];
+    final known = result.map((field) => field.id).toSet();
+    for (final id in widget.initial?.values.keys ?? const <String>[]) {
+      if (known.add(id)) {
+        result.add(FieldDefinition(
+          id: id,
+          label: 'Сохранённое поле ${id.length > 8 ? id.substring(0, 8) : id}',
+          type: 'text',
+        ));
+      }
+    }
+    return result;
+  }
+
   @override
   void initState() {
     super.initState();
+    editorOpenedAt = DateTime.now();
     templateId = widget.initial?.templateId ?? widget.templates.first.id;
     colorId = widget.initial?.colorId ?? template.colorId;
     iconId = widget.initial?.iconId ?? template.iconId;
@@ -10389,10 +12369,20 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
             ? initialCategory
             : newCategoryValue;
     values = {
-      for (final field in template.fields)
+      for (final field in allCardFields)
         field.id:
             TextEditingController(text: widget.initial?.values[field.id] ?? ''),
     };
+    hiddenFieldIds = {...?widget.initial?.hiddenFieldIds};
+    final availableIds = allCardFields.map((field) => field.id).toSet();
+    fieldOrder = [
+      for (final id in widget.initial?.fieldOrder ?? const <String>[])
+        if (availableIds.contains(id) && !hiddenFieldIds.contains(id)) id,
+      for (final field in allCardFields)
+        if (!(widget.initial?.fieldOrder.contains(field.id) ?? false) &&
+            !hiddenFieldIds.contains(field.id))
+          field.id,
+    ];
     attachments = [...?widget.initial?.attachments];
     backgroundImageBase64 = widget.initial?.backgroundImageBase64;
     spbColor = widget.initial?.spbColor;
@@ -10408,280 +12398,634 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
     super.dispose();
   }
 
+  CardEditorSnapshot currentSnapshot() => CardEditorSnapshot(
+        templateId: templateId,
+        colorId: colorId,
+        categorySelection: categorySelection,
+        iconId: iconId,
+        title: title.text,
+        category: category.text,
+        values: {
+          for (final entry in values.entries) entry.key: entry.value.text,
+        },
+        fieldOrder: [...fieldOrder],
+        hiddenFieldIds: {...hiddenFieldIds},
+        attachments: [...attachments],
+        backgroundImageBase64: backgroundImageBase64,
+        spbColor: spbColor,
+      );
+
+  void rememberCurrentAction() {
+    final snapshot = currentSnapshot();
+    if (undoHistory.isNotEmpty &&
+        undoHistory.last.signature == snapshot.signature) {
+      return;
+    }
+    setState(() {
+      undoHistory.add(snapshot);
+      if (undoHistory.length > 100) undoHistory.removeAt(0);
+    });
+  }
+
+  void undoLastAction() {
+    if (undoHistory.isEmpty) return;
+    final snapshot = undoHistory.removeLast();
+    setState(() {
+      templateId = snapshot.templateId;
+      colorId = snapshot.colorId;
+      categorySelection = snapshot.categorySelection;
+      iconId = snapshot.iconId;
+      title.text = snapshot.title;
+      category.text = snapshot.category;
+      for (final entry in values.entries) {
+        entry.value.text = snapshot.values[entry.key] ?? '';
+      }
+      for (final entry in snapshot.values.entries) {
+        values.putIfAbsent(
+          entry.key,
+          () => TextEditingController(text: entry.value),
+        );
+      }
+      fieldOrder = [...snapshot.fieldOrder];
+      hiddenFieldIds = {...snapshot.hiddenFieldIds};
+      attachments = [...snapshot.attachments];
+      backgroundImageBase64 = snapshot.backgroundImageBase64;
+      spbColor = snapshot.spbColor;
+    });
+  }
+
   Widget cardIconPickers() {
-    final originalAsset =
-        spbPngIconAsset(iconId) ?? spbDefaultOriginalIconAsset;
+    final buttons = [
+      SpbGrayPickerButton(
+        key: const Key('spbCardIconPicker'),
+        label: 'SPB',
+        icon: Icons.photo_library_outlined,
+        tooltip: 'Иконки из базы SPB',
+        onTap: pickSpbCardIcon,
+      ),
+      SpbGrayPickerButton(
+        key: const Key('cardPictogramPicker'),
+        label: 'пиктограммы',
+        icon: Icons.category_outlined,
+        tooltip: 'Выбрать пиктограмму',
+        onTap: pickCardPictogram,
+      ),
+      SpbGrayPickerButton(
+        key: const Key('cardThirdPartyPicker'),
+        label: 'сторонние',
+        icon: Icons.public_outlined,
+        tooltip: 'Иконки Visual Studio',
+        onTap: pickCardThirdPartyIcon,
+      ),
+      SpbGrayPickerButton(
+        key: const Key('cardUploadIconButton'),
+        label: 'загрузить иконку',
+        icon: Icons.upload_file_outlined,
+        tooltip: 'Загрузить файл PNG или ICO',
+        onTap: pickCardCustomIconFile,
+      ),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 420) {
+          return Row(
+            children: [
+              for (var index = 0; index < buttons.length; index++) ...[
+                if (index > 0) const SizedBox(width: 7),
+                Expanded(child: buttons[index]),
+              ],
+            ],
+          );
+        }
+        final width = (constraints.maxWidth - 7) / 2;
+        return Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: [
+            for (final button in buttons) SizedBox(width: width, child: button),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> pickSpbCardIcon() async {
+    final picked = await showSpbOriginalIconPickerDialog(context, iconId);
+    if (picked == null || !mounted) return;
+    rememberCurrentAction();
+    setState(() => iconId = picked);
+  }
+
+  Future<void> pickCardPictogram() async {
+    final picked = await showIconPickerDialog(context, iconId);
+    if (picked == null || !mounted) return;
+    rememberCurrentAction();
+    setState(() => iconId = picked);
+  }
+
+  Future<void> pickCardThirdPartyIcon() async {
+    final picked = await showThirdPartyIconPickerDialog(context);
+    if (picked == null || !mounted) return;
+    final bytes = thirdPartyIconPngs[picked];
+    if (bytes == null) return;
+    rememberCurrentAction();
+    setState(() => iconId = registerEmbeddedIcon(bytes));
+  }
+
+  Future<void> pickCardCustomIconFile() async {
+    final picked = await pickUserIconFile(context);
+    if (picked == null || !mounted) return;
+    rememberCurrentAction();
+    setState(() => iconId = registerEmbeddedIcon(picked.bytes));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.sizeOf(context);
+    final fullScreen = Platform.isAndroid || media.width < 700;
+    return Align(
+      alignment: Alignment.center,
+      child: Material(
+        color: const Color(0xfff4f4f4),
+        elevation: 24,
+        clipBehavior: Clip.antiAlias,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.zero,
+          side: BorderSide(color: Color(0xff7f8d98)),
+        ),
+        child: SizedBox(
+          key: const Key('cardEditorSurface'),
+          width: fullScreen ? media.width : min(media.width - 24, 720),
+          height: fullScreen ? media.height : min(media.height - 24, 760),
+          child: Column(
+            children: [
+              Container(
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+                  ),
+                  border: Border(
+                    bottom: BorderSide(color: Color(0xff7f8d98)),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title.text.trim().isEmpty
+                            ? (widget.initial == null
+                                ? 'Новая карточка'
+                                : 'Редактировать карточку')
+                            : title.text,
+                        key: const Key('cardWindowTitle'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      formatCardModifiedAt(
+                        widget.initial?.modifiedAt ?? editorOpenedAt,
+                      ),
+                      key: const Key('cardEditorModifiedAt'),
+                      maxLines: 1,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: DecoratedBox(
+                  decoration: cardSurfaceDecoration(
+                    color: editorBackgroundColor,
+                    backgroundImage: editorBackgroundImage,
+                  ),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
+                    child: buildCardEditorContent(),
+                  ),
+                ),
+              ),
+              Container(
+                height: 50,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: const BoxDecoration(
+                  color: Color(0xffdce8f1),
+                  border: Border(
+                    top: BorderSide(color: Color(0xff7f8d98)),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    if (widget.supportsAttachments) ...[
+                      if (activeAttachments.isNotEmpty) ...[
+                        SpbGradientActionButton(
+                          key: const Key('cardEditorSaveAttachmentButton'),
+                          icon: Icons.folder_outlined,
+                          tooltip: 'Сохранить вложение',
+                          colors: const [
+                            Color(0xff555555),
+                            Color(0xff050505),
+                          ],
+                          onTap: chooseAttachmentToExport,
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      SpbGradientActionButton(
+                        key: const Key('cardEditorAddAttachmentButton'),
+                        icon: Icons.add,
+                        tooltip: 'Загрузить вложение',
+                        colors: const [
+                          Color(0xff5b9dff),
+                          Color(0xff0752b5),
+                        ],
+                        onTap: addAttachment,
+                      ),
+                      if (activeAttachments.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        SpbGradientActionButton(
+                          key: const Key('cardEditorDeleteAttachmentButton'),
+                          icon: Icons.close,
+                          tooltip: 'Удалить вложение',
+                          colors: const [
+                            Color(0xffff5a5f),
+                            Color(0xffa90000),
+                          ],
+                          onTap: chooseAttachmentToDelete,
+                        ),
+                      ],
+                    ],
+                    const Spacer(),
+                    SpbGradientActionButton(
+                      key: const Key('cardUndoButton'),
+                      icon: Icons.undo,
+                      tooltip: 'Отменить последнее действие',
+                      colors: const [Color(0xffffdc58), Color(0xffc58a00)],
+                      onTap: undoHistory.isEmpty ? null : undoLastAction,
+                    ),
+                    const SizedBox(width: 6),
+                    SpbGradientActionButton(
+                      key: const Key('cardSaveButton'),
+                      icon: Icons.check,
+                      tooltip: 'Сохранить карточку',
+                      colors: const [Color(0xff5bc96d), Color(0xff08772f)],
+                      onTap: saveCard,
+                    ),
+                    const SizedBox(width: 6),
+                    SpbGradientActionButton(
+                      key: const Key('cardCloseButton'),
+                      icon: Icons.close,
+                      tooltip: 'Закрыть без сохранения',
+                      colors: const [Color(0xffff5a5f), Color(0xffa90000)],
+                      onTap: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget buildCardEditorContent() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              key: const Key('cardBoundIcon'),
+              width: 112,
+              height: 112,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: const Color(0xff82929d), width: 2),
+                borderRadius: BorderRadius.circular(5),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x26000000),
+                    offset: Offset(1, 2),
+                    blurRadius: 5,
+                  ),
+                ],
+              ),
+              child: templateIconWidget(
+                iconId,
+                size: 88,
+                color: pictogramColorForBackground(editorBackgroundColor),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(child: cardIconPickers()),
+          ],
+        ),
+        const SizedBox(height: 12),
+        ColorPicker(
+          value: colorId,
+          onChanged: (value) {
+            if (value == colorId) return;
+            rememberCurrentAction();
+            setState(() {
+              colorId = value;
+              spbColor = paletteColorToSpb(value);
+            });
+          },
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          key: const Key('cardTitleField'),
+          controller: title,
+          onTap: rememberCurrentAction,
+          onChanged: (_) => setState(() {}),
+          decoration: const InputDecoration(
+            labelText: 'Название карточки',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 10),
+        DropdownButtonFormField<String>(
+          key: const Key('cardTemplateField'),
+          isExpanded: true,
+          initialValue: templateId,
+          decoration: const InputDecoration(
+            labelText: 'Название шаблона',
+            border: OutlineInputBorder(),
+          ),
+          items: widget.templates
+              .map(
+                (entry) => DropdownMenuItem(
+                  value: entry.id,
+                  child: cardTemplateMenuLabel(entry),
+                ),
+              )
+              .toList(),
+          onChanged: (value) {
+            if (value == null || value == templateId) return;
+            rememberCurrentAction();
+            setState(() {
+              templateId = value;
+              if (widget.initial == null || widget.initial?.iconId == null) {
+                iconId = template.iconId;
+              }
+              for (final field in template.fields) {
+                values.putIfAbsent(
+                  field.id,
+                  () => TextEditingController(
+                    text: widget.initial?.values[field.id] ?? '',
+                  ),
+                );
+              }
+              hiddenFieldIds = {};
+              fieldOrder = [
+                for (final field in template.fields) field.id,
+              ];
+            });
+          },
+        ),
+        const SizedBox(height: 10),
+        categoryEditor(),
+        const SizedBox(height: 10),
+        for (final field in orderedCardFields)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: buildCardValueField(field),
+          ),
+        if (widget.supportsAttachments) buildCardAttachmentsEditor(),
+      ],
+    );
+  }
+
+  List<FieldDefinition> get orderedCardFields => [
+        for (final id in fieldOrder)
+          for (final field in allCardFields)
+            if (field.id == id) field,
+      ];
+
+  Widget cardTemplateMenuLabel(CardTemplate entry) {
     return Row(
       children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            key: const Key('spbCardIconPicker'),
-            onPressed: () async {
-              final picked =
-                  await showSpbOriginalIconPickerDialog(context, iconId);
-              if (picked != null) setState(() => iconId = picked);
-            },
-            icon: spbPackedImage(
-              originalAsset,
-              width: 30,
-              height: 30,
-              fit: BoxFit.contain,
-              fallback: const Icon(Icons.credit_card_outlined, size: 30),
-            ),
-            label: const Text(
-              'Иконка карточки',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12),
-            ),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 54),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
+        Container(
+          key: ValueKey('cardTemplateIcon-${entry.id}'),
+          width: 42,
+          height: 42,
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: const Color(0xff82929d)),
+          ),
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: SizedBox(
+              width: 64,
+              height: 64,
+              child: Center(
+                child: templateIconWidget(
+                  entry.iconId,
+                  size: 60,
+                  color: templateDisplayPictogramColor(entry),
+                ),
+              ),
             ),
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
-          child: OutlinedButton.icon(
-            key: const Key('cardPictogramPicker'),
-            onPressed: () async {
-              final picked = await showIconPickerDialog(context, iconId);
-              if (picked != null) setState(() => iconId = picked);
-            },
-            icon: Icon(templateIconGlyph(iconId), size: 24),
-            label: const Text(
-              'Пиктограмма карточки',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12),
-            ),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 54),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-            ),
+          child: Text(
+            entry.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final dialogWidth = max(
-      260.0,
-      min(MediaQuery.of(context).size.width - 96, 680.0),
-    );
-    return AlertDialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      title: Text(
-          widget.initial == null ? 'Новая карточка' : 'Редактировать карточку'),
-      content: SizedBox(
-        width: dialogWidth,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<String>(
-                isExpanded: true,
-                initialValue: templateId,
-                decoration: const InputDecoration(
-                    labelText: 'Шаблон', border: OutlineInputBorder()),
-                items: widget.templates
-                    .map((template) => DropdownMenuItem(
-                        value: template.id,
-                        child: templateMenuIconLabel(
-                            template.iconId, template.name)))
-                    .toList(),
-                onChanged: (value) => setState(() {
-                  templateId = value ?? templateId;
-                  if (widget.initial == null ||
-                      widget.initial?.iconId == null) {
-                    iconId = template.iconId;
-                  }
-                  for (final field in template.fields) {
-                    values.putIfAbsent(field.id, () => TextEditingController());
-                  }
-                }),
+  Widget buildCardValueField(FieldDefinition field) {
+    final controller =
+        values.putIfAbsent(field.id, () => TextEditingController());
+    final visible = visibleSecrets.contains(field.id);
+    final index = fieldOrder.indexOf(field.id);
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: TextField(
+              key: ValueKey('cardField-${field.id}'),
+              controller: controller,
+              onTap: rememberCurrentAction,
+              obscureText: fieldDefinitionIsSecret(field) && !visible,
+              keyboardType: keyboardTypeForField(field),
+              inputFormatters: inputFormattersForField(field),
+              minLines: field.type == 'multiline_note' ? 2 : 1,
+              maxLines: field.type == 'multiline_note' ? null : 1,
+              decoration: InputDecoration(
+                labelText: '${field.label}${field.required ? ' *' : ''}',
+                hintText: hintTextForField(field),
+                border: const OutlineInputBorder(),
+                filled: true,
+                fillColor: editorBackgroundColor,
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                suffixIcon: fieldSuffixIcon(field, controller, visible),
               ),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: title,
-                  decoration: const InputDecoration(
-                      labelText: 'Название', border: OutlineInputBorder())),
-              const SizedBox(height: 10),
-              categoryEditor(),
-              const SizedBox(height: 10),
-              cardIconPickers(),
-              const SizedBox(height: 10),
-              ColorPicker(
-                  value: colorId,
-                  onChanged: (value) => setState(() {
-                        colorId = value;
-                        // Пользователь явно выбрал новый цвет - заменяем
-                        // точный RGB из SPB Wallet на цвет выбранного пресета.
-                        spbColor = paletteColorToSpb(value);
-                      })),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.start,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: pickBackgroundImage,
-                    icon: const Icon(Icons.image_outlined),
-                    label: Text(backgroundImageBase64 == null
-                        ? 'Добавить фон'
-                        : 'Заменить фон'),
-                  ),
-                  if (backgroundImageBase64 != null)
-                    IconButton(
-                      tooltip: 'Убрать фон',
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: () =>
-                          setState(() => backgroundImageBase64 = null),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              ...template.fields
-                  .where((field) => field.id != spbDescriptionFieldId)
-                  .map((field) {
-                final controller =
-                    values.putIfAbsent(field.id, () => TextEditingController());
-                final visible = visibleSecrets.contains(field.id);
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: TextField(
-                    controller: controller,
-                    obscureText: fieldDefinitionIsSecret(field) && !visible,
-                    keyboardType: keyboardTypeForField(field),
-                    inputFormatters: inputFormattersForField(field),
-                    onEditingComplete: () {
-                      if (field.type == 'url') {
-                        controller.text = normalizeUrlInput(controller.text);
-                        controller.selection = TextSelection.collapsed(
-                            offset: controller.text.length);
-                      }
-                    },
-                    minLines: field.type == 'multiline_note' ? 3 : 1,
-                    maxLines: field.type == 'multiline_note' ? 5 : 1,
-                    decoration: InputDecoration(
-                      labelText: '${field.label}${field.required ? ' *' : ''}',
-                      hintText: hintTextForField(field),
-                      border: const OutlineInputBorder(),
-                      suffixIcon: fieldSuffixIcon(field, controller, visible),
-                    ),
-                  ),
-                );
-              }),
-              if (widget.supportsAttachments) ...[
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('Вложения .swl',
-                      style: Theme.of(context).textTheme.titleSmall),
+            ),
+          ),
+          const SizedBox(width: 5),
+          SizedBox(
+            width: 34,
+            child: Column(
+              children: [
+                fieldOrderButton(
+                  key: ValueKey('cardFieldUp-${field.id}'),
+                  icon: Icons.keyboard_arrow_up,
+                  tooltip: 'Переместить поле вверх',
+                  onTap: index > 0 ? () => moveCardField(field.id, -1) : null,
+                  expanded: true,
                 ),
-                const SizedBox(height: 8),
-                ...attachments
-                    .where((attachment) => !attachment.deleted)
-                    .map((attachment) {
-                  final subtitle = attachment.decodeError != null
-                      ? 'Ошибка чтения: ${attachment.decodeError}'
-                      : attachment.pendingBytes != null
-                          ? 'Будет записано: ${attachment.pendingBytes!.length} байт'
-                          : attachment.size >= 0
-                              ? '${attachment.size} байт'
-                              : 'Размер неизвестен';
-                  return Card(
-                    elevation: 0,
-                    child: ListTile(
-                      leading: const Icon(Icons.attach_file),
-                      title: Text(attachment.fileName),
-                      subtitle: Text(subtitle,
-                          maxLines: 2, overflow: TextOverflow.ellipsis),
-                      trailing: Wrap(
-                        spacing: 4,
-                        children: [
-                          if (attachment.id.isNotEmpty &&
-                              attachment.decodeError == null)
-                            IconButton(
-                              tooltip: 'Сохранить вложение',
-                              icon: const Icon(Icons.download_outlined),
-                              onPressed: () => exportAttachment(attachment),
-                            ),
-                          IconButton(
-                            tooltip: 'Заменить файл',
-                            icon: const Icon(Icons.drive_file_move_outline),
-                            onPressed: () => replaceAttachment(attachment),
-                          ),
-                          IconButton(
-                            tooltip: 'Удалить вложение',
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () => setState(() {
-                              attachments = attachments
-                                  .map((entry) => entry.id == attachment.id
-                                      ? entry.copyWith(deleted: true)
-                                      : entry)
-                                  .toList();
-                            }),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton.icon(
-                    onPressed: addAttachment,
-                    icon: const Icon(Icons.add),
-                    label: const Text('Добавить вложение'),
-                  ),
+                const SizedBox(height: 3),
+                fieldOrderButton(
+                  key: ValueKey('cardFieldDown-${field.id}'),
+                  icon: Icons.keyboard_arrow_down,
+                  tooltip: 'Переместить поле вниз',
+                  onTap: index >= 0 && index < fieldOrder.length - 1
+                      ? () => moveCardField(field.id, 1)
+                      : null,
+                  expanded: true,
                 ),
               ],
-            ],
+            ),
+          ),
+          const SizedBox(width: 5),
+          SizedBox(
+            width: 38,
+            child: fieldOrderButton(
+              key: ValueKey('cardFieldDelete-${field.id}'),
+              icon: Icons.delete_outline,
+              tooltip: 'Удалить поле из списка',
+              onTap: () => removeCardField(field.id),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget fieldOrderButton({
+    required Key key,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onTap,
+    bool expanded = false,
+  }) {
+    final button = Tooltip(
+      message: tooltip,
+      child: Opacity(
+        opacity: onTap == null ? 0.45 : 1,
+        child: Material(
+          key: key,
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            child: Ink(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xfff4f4f4), Color(0xff969696)],
+                ),
+                border: Border.all(color: const Color(0xff676767)),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Center(
+                child: Icon(icon, size: 19, color: const Color(0xff303030)),
+              ),
+            ),
           ),
         ),
       ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена')),
-        FilledButton(
-          onPressed: () {
-            Navigator.pop(
-              context,
-              SecretItem(
-                id: widget.initial?.id ?? makeId('item'),
-                templateId: templateId,
-                title: title.text.trim().isEmpty
-                    ? template.name
-                    : title.text.trim(),
-                category: category.text.trim(),
-                colorId: colorId,
-                values: {
-                  for (final field in widget.templates
-                      .firstWhere((entry) => entry.id == templateId)
-                      .fields)
-                    field.id: field.type == 'url'
-                        ? normalizeUrlInput((values[field.id]?.text ?? ''))
-                        : (values[field.id]?.text.trim() ?? ''),
-                },
-                attachments: attachments,
-                modifiedAt: DateTime.now(),
-                hitCount: widget.initial?.hitCount ?? 0,
-                iconId: iconId,
-                backgroundImageBase64: backgroundImageBase64,
-                spbColor: spbColor,
+    );
+    return expanded ? Expanded(child: button) : button;
+  }
+
+  void moveCardField(String fieldId, int offset) {
+    final oldIndex = fieldOrder.indexOf(fieldId);
+    final newIndex = oldIndex + offset;
+    if (oldIndex < 0 || newIndex < 0 || newIndex >= fieldOrder.length) return;
+    rememberCurrentAction();
+    setState(() {
+      fieldOrder.removeAt(oldIndex);
+      fieldOrder.insert(newIndex, fieldId);
+    });
+  }
+
+  void removeCardField(String fieldId) {
+    if (!fieldOrder.contains(fieldId)) return;
+    rememberCurrentAction();
+    setState(() {
+      fieldOrder.remove(fieldId);
+      hiddenFieldIds.add(fieldId);
+    });
+  }
+
+  Widget buildCardAttachmentsEditor() {
+    final active = activeAttachments;
+    if (active.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final attachment in active)
+          GestureDetector(
+            key: ValueKey('cardEditorAttachment-${attachment.fileName}'),
+            behavior: HitTestBehavior.opaque,
+            onSecondaryTapDown: (_) => previewEditorAttachment(attachment),
+            onLongPress: () => previewEditorAttachment(attachment),
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                attachment.fileName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-            );
-          },
-          child: const Text('Сохранить'),
-        ),
+            ),
+          ),
       ],
+    );
+  }
+
+  void saveCard() {
+    Navigator.pop(
+      context,
+      SecretItem(
+        id: widget.initial?.id ?? makeId('item'),
+        templateId: templateId,
+        title: title.text.trim().isEmpty ? template.name : title.text.trim(),
+        category: category.text.trim(),
+        colorId: colorId,
+        values: {
+          for (final field in allCardFields)
+            field.id: field.type == 'url'
+                ? normalizeUrlInput(values[field.id]?.text ?? '')
+                : (values[field.id]?.text.trim() ?? ''),
+        },
+        attachments: attachments,
+        modifiedAt: DateTime.now().toUtc(),
+        hitCount: widget.initial?.hitCount ?? 0,
+        iconId: iconId,
+        backgroundImageBase64: backgroundImageBase64,
+        spbColor: spbColor,
+        fieldOrder: fieldOrder,
+        hiddenFieldIds: hiddenFieldIds,
+      ),
     );
   }
 
@@ -10700,7 +13044,8 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
           isExpanded: true,
           initialValue: selectedValue,
           decoration: const InputDecoration(
-            labelText: 'Категория',
+            labelText: 'Папка / каталог',
+            hintText: 'Место размещения карточки',
             border: OutlineInputBorder(),
           ),
           items: [
@@ -10716,21 +13061,25 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
               child: Text('Создать новую категорию'),
             ),
           ],
-          onChanged: (value) => setState(() {
-            categorySelection = value ?? emptyCategoryValue;
-            if (categorySelection == emptyCategoryValue) {
-              category.clear();
-            } else if (categorySelection != newCategoryValue) {
-              category.text = categorySelection;
-            }
-          }),
+          onChanged: (value) {
+            rememberCurrentAction();
+            setState(() {
+              categorySelection = value ?? emptyCategoryValue;
+              if (categorySelection == emptyCategoryValue) {
+                category.clear();
+              } else if (categorySelection != newCategoryValue) {
+                category.text = categorySelection;
+              }
+            });
+          },
         ),
         if (selectedValue == newCategoryValue) ...[
           const SizedBox(height: 10),
           TextField(
             controller: category,
+            onTap: rememberCurrentAction,
             decoration: const InputDecoration(
-              labelText: 'Новая категория',
+              labelText: 'Новая папка / каталог',
               hintText: 'Например: Финансы / Банк',
               border: OutlineInputBorder(),
             ),
@@ -10804,7 +13153,76 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
       lastDate: DateTime(2200),
     );
     if (picked == null) return;
+    rememberCurrentAction();
     setState(() => controller.text = formatDateInput(picked));
+  }
+
+  List<SecretAttachment> get activeAttachments => attachments
+      .where(
+          (attachment) => !attachment.deleted && attachment.decodeError == null)
+      .toList(growable: false);
+
+  Future<Uint8List> editorAttachmentBytes(
+    SecretAttachment attachment,
+  ) async {
+    if (attachment.pendingBytes != null) {
+      return Uint8List.fromList(attachment.pendingBytes!);
+    }
+    final loader = widget.loadAttachmentBytes;
+    if (loader == null || attachment.id.isEmpty) return Uint8List(0);
+    return Uint8List.fromList(await loader(attachment.id));
+  }
+
+  Future<void> previewEditorAttachment(SecretAttachment attachment) async {
+    try {
+      final bytes = await editorAttachmentBytes(attachment);
+      if (bytes.isEmpty) return;
+      await openAttachmentBytesWithSystem(attachment.fileName, bytes);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось открыть вложение: $error')),
+      );
+    }
+  }
+
+  Future<SecretAttachment?> chooseEditorAttachment(String titleText) async {
+    final source = activeAttachments;
+    if (source.isEmpty) return null;
+    if (source.length == 1) return source.single;
+    return showDialog<SecretAttachment>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text(titleText),
+        children: [
+          for (final attachment in source)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, attachment),
+              child: Text(attachment.fileName),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> chooseAttachmentToExport() async {
+    final selected = await chooseEditorAttachment('Сохранить вложение');
+    if (selected != null) await exportAttachment(selected);
+  }
+
+  Future<void> chooseAttachmentToDelete() async {
+    final selected = await chooseEditorAttachment('Удалить вложение');
+    if (selected == null || !mounted) return;
+    rememberCurrentAction();
+    setState(() {
+      attachments = [
+        for (final attachment in attachments)
+          if (identical(attachment, selected))
+            attachment.copyWith(deleted: true)
+          else
+            attachment,
+      ];
+    });
   }
 
   Future<void> addAttachment() async {
@@ -10814,6 +13232,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
     final bytes = file.bytes ??
         (file.path == null ? null : await File(file.path!).readAsBytes());
     if (bytes == null) return;
+    rememberCurrentAction();
     setState(() {
       attachments = [
         ...attachments,
@@ -10837,6 +13256,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
     final bytes = file.bytes ??
         (file.path == null ? null : await File(file.path!).readAsBytes());
     if (bytes == null) return;
+    rememberCurrentAction();
     setState(() => backgroundImageBase64 = base64Encode(bytes));
   }
 
@@ -10847,6 +13267,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
     final bytes = file.bytes ??
         (file.path == null ? null : await File(file.path!).readAsBytes());
     if (bytes == null) return;
+    rememberCurrentAction();
     setState(() {
       attachments = attachments
           .map((entry) => entry.id == attachment.id
@@ -10862,11 +13283,9 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
   }
 
   Future<void> exportAttachment(SecretAttachment attachment) async {
-    final loader = widget.loadAttachmentBytes;
-    if (loader == null || attachment.id.isEmpty) return;
     try {
-      final bytes = await loader(attachment.id);
-      final data = Uint8List.fromList(bytes);
+      final data = await editorAttachmentBytes(attachment);
+      if (data.isEmpty) return;
       final path = await FilePicker.platform.saveFile(
         dialogTitle: 'Сохранить вложение',
         fileName: attachment.fileName,
@@ -10885,6 +13304,200 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
       );
     }
   }
+}
+
+class TemplatePreviewDialog extends StatelessWidget {
+  const TemplatePreviewDialog({required this.template, super.key});
+
+  final CardTemplate template;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.sizeOf(context);
+    final fullScreen = Platform.isAndroid || media.width < 700;
+    final backgroundColor = templateDisplayBackground(template);
+    Uint8List? customIconBytes;
+    try {
+      final encoded = template.embeddedIconBase64;
+      if (encoded != null) customIconBytes = base64Decode(encoded);
+    } catch (_) {
+      customIconBytes = null;
+    }
+    return Align(
+      alignment: Alignment.center,
+      child: Material(
+        color: const Color(0xfff4f4f4),
+        elevation: 24,
+        clipBehavior: Clip.antiAlias,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.zero,
+          side: BorderSide(color: Color(0xff7f8d98)),
+        ),
+        child: SizedBox(
+          key: const Key('templatePreviewSurface'),
+          width: fullScreen ? media.width : min(media.width - 24, 720),
+          height: fullScreen ? media.height : min(media.height - 24, 760),
+          child: Column(
+            children: [
+              Container(
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+                  ),
+                  border: Border(
+                    bottom: BorderSide(color: Color(0xff7f8d98)),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        template.name,
+                        key: const Key('templatePreviewTitle'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Tooltip(
+                      message: 'Закрыть просмотр',
+                      child: Material(
+                        key: const Key('templatePreviewCloseButton'),
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => Navigator.pop(context),
+                          child: Ink(
+                            width: 38,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [Color(0xffff5a5f), Color(0xffa90000)],
+                              ),
+                              border: Border.all(
+                                color: const Color(0xff56636c),
+                              ),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: const Icon(
+                              Icons.close,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ColoredBox(
+                  color: backgroundColor,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 112,
+                            height: 112,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              border: Border.all(
+                                color: const Color(0xff82929d),
+                                width: 2,
+                              ),
+                              borderRadius: BorderRadius.circular(5),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x26000000),
+                                  offset: Offset(1, 2),
+                                  blurRadius: 5,
+                                ),
+                              ],
+                            ),
+                            child: customIconBytes == null
+                                ? templateIconWidget(
+                                    template.iconId,
+                                    size: 88,
+                                    color: pictogramColorForBackground(
+                                      backgroundColor,
+                                    ),
+                                  )
+                                : Image.memory(
+                                    customIconBytes,
+                                    width: 88,
+                                    height: 88,
+                                    fit: BoxFit.contain,
+                                    filterQuality: FilterQuality.medium,
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        for (final field in template.fields)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: TextFormField(
+                              key: ValueKey('templatePreviewField-${field.id}'),
+                              initialValue: '',
+                              readOnly: true,
+                              minLines: field.type == 'multiline_note' ? 3 : 1,
+                              maxLines: field.type == 'multiline_note' ? 5 : 1,
+                              decoration: InputDecoration(
+                                labelText: field.label,
+                                hintText: _fieldTypeLabel(field.type),
+                                prefixIcon: Icon(_fieldTypeIcon(field.type)),
+                                border: const OutlineInputBorder(),
+                                filled: true,
+                                fillColor: backgroundColor,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static IconData _fieldTypeIcon(String type) => switch (type) {
+        'password' || 'custom_secret' => Icons.lock_outline,
+        'username' => Icons.person_outline,
+        'url' => Icons.link,
+        'email' => Icons.email_outlined,
+        'phone' => Icons.phone_outlined,
+        'date' => Icons.calendar_today_outlined,
+        'number' => Icons.numbers,
+        'totp' => Icons.timer_outlined,
+        'multiline_note' => Icons.notes,
+        _ => Icons.text_fields,
+      };
+
+  static String _fieldTypeLabel(String type) => switch (type) {
+        'password' => 'Пароль',
+        'custom_secret' => 'Секрет',
+        'username' => 'Логин',
+        'url' => 'Сайт',
+        'email' => 'Email',
+        'phone' => 'Телефон',
+        'date' => 'Дата',
+        'number' => 'Число',
+        'totp' => 'TOTP',
+        'multiline_note' => 'Большая строка',
+        _ => 'Маленькая строка',
+      };
 }
 
 class TemplateEditorDialog extends StatefulWidget {
@@ -10934,6 +13547,7 @@ class TemplateEditorSnapshot {
     required this.name,
     required this.iconId,
     required this.colorId,
+    required this.categoryPath,
     this.spbColor,
     this.customIconBase64,
     this.customIconFileName,
@@ -10943,6 +13557,7 @@ class TemplateEditorSnapshot {
   final String name;
   final String iconId;
   final String colorId;
+  final String categoryPath;
   final int? spbColor;
   final String? customIconBase64;
   final String? customIconFileName;
@@ -10952,6 +13567,7 @@ class TemplateEditorSnapshot {
         name,
         iconId,
         colorId,
+        categoryPath,
         spbColor?.toString() ?? '',
         customIconBase64 ?? '',
         customIconFileName ?? '',
@@ -10964,11 +13580,19 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
   late final TextEditingController name;
   late String iconId;
   late String colorId;
+  late String categoryPath;
+  bool invalidName = false;
   int? spbColor;
   Uint8List? customIconBytes;
   String? customIconFileName;
   late final List<TemplateFieldDraft> fields;
   final List<TemplateEditorSnapshot> undoHistory = [];
+  late String observedName;
+  final Map<String, String> observedFieldLabels = {};
+
+  Color get editorBackgroundColor => spbColor == null
+      ? colorById(colorId).bg
+      : Color(0xff000000 | (spbColor! & 0x00ffffff));
 
   @override
   void initState() {
@@ -10977,6 +13601,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
     final initialIconId = widget.initial?.iconId;
     iconId = initialIconId ?? spbPasswordTemplateIconAsset;
     colorId = widget.initial?.colorId ?? 'neutral';
+    categoryPath = widget.initial?.categoryPath ?? '';
     spbColor = widget.initial?.spbColor;
     customIconBytes = widget.initial?.embeddedIconBase64 == null
         ? null
@@ -10995,6 +13620,10 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
           in sourceFields.where((field) => field.id != spbDescriptionFieldId))
         TemplateFieldDraft(field),
     ];
+    observedName = name.text;
+    for (final field in fields) {
+      observedFieldLabels[field.id] = field.label.text;
+    }
   }
 
   @override
@@ -11029,7 +13658,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
               templateTitleBar(),
               Expanded(
                 child: ColoredBox(
-                  color: colorById(colorId).bg,
+                  color: editorBackgroundColor,
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
                     child: Column(
@@ -11038,6 +13667,8 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                         templateIconPicker(),
                         const SizedBox(height: 12),
                         templateColorPicker(),
+                        const SizedBox(height: 10),
+                        templateNameField(),
                         const SizedBox(height: 10),
                         Row(
                           children: [
@@ -11078,9 +13709,10 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
         border: Border(bottom: BorderSide(color: Color(0xff7f8d98))),
       ),
       child: TextField(
-        key: const Key('templateNameField'),
+        key: const Key('templateTitleNameField'),
         controller: name,
-        onTap: rememberCurrentAction,
+        readOnly: true,
+        onChanged: rememberNameChange,
         style: const TextStyle(fontSize: 18),
         decoration: const InputDecoration(
           hintText: 'Название шаблона',
@@ -11088,6 +13720,24 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
           isDense: true,
           contentPadding: EdgeInsets.symmetric(vertical: 12),
         ),
+      ),
+    );
+  }
+
+  Widget templateNameField() {
+    return TextField(
+      key: const Key('templateNameField'),
+      controller: name,
+      onChanged: (value) {
+        rememberNameChange(value);
+        if (invalidName) setState(() => invalidName = false);
+      },
+      decoration: InputDecoration(
+        labelText: 'Название шаблона',
+        border: const OutlineInputBorder(),
+        filled: true,
+        fillColor: editorBackgroundColor,
+        errorText: invalidName ? 'Название обязательно' : null,
       ),
     );
   }
@@ -11114,7 +13764,11 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
             ],
           ),
           child: customIconBytes == null
-              ? templateIconWidget(iconId, size: 88)
+              ? templateIconWidget(
+                  iconId,
+                  size: 88,
+                  color: pictogramColorForBackground(editorBackgroundColor),
+                )
               : Image.memory(
                   customIconBytes!,
                   width: 88,
@@ -11398,7 +14052,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
     return Card(
       key: ValueKey('templateField-${field.id}'),
       elevation: 0,
-      color: colorById(colorId).bg,
+      color: editorBackgroundColor,
       surfaceTintColor: Colors.transparent,
       child: Padding(
         padding: const EdgeInsets.all(8),
@@ -11412,12 +14066,15 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                     child: TextField(
                       key: ValueKey('templateFieldName-${field.id}'),
                       controller: field.label,
-                      onTap: rememberCurrentAction,
+                      onChanged: (value) => rememberFieldLabelChange(
+                        field.id,
+                        value,
+                      ),
                       decoration: InputDecoration(
                         labelText: 'Название поля',
                         border: const OutlineInputBorder(),
                         filled: true,
-                        fillColor: colorById(colorId).bg,
+                        fillColor: editorBackgroundColor,
                         isDense: true,
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 10),
@@ -11443,7 +14100,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                         labelText: 'Тип',
                         border: const OutlineInputBorder(),
                         filled: true,
-                        fillColor: colorById(colorId).bg,
+                        fillColor: editorBackgroundColor,
                         isDense: true,
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
@@ -11568,12 +14225,11 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
   void addField() {
     rememberCurrentAction();
     setState(() {
-      fields.add(
-        TemplateFieldDraft(
-          FieldDefinition(
-              id: makeId('field'), label: 'Новое поле', type: 'text'),
-        ),
+      final field = TemplateFieldDraft(
+        FieldDefinition(id: makeId('field'), label: 'Новое поле', type: 'text'),
       );
+      fields.add(field);
+      observedFieldLabels[field.id] = field.label.text;
     });
   }
 
@@ -11581,6 +14237,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
     rememberCurrentAction();
     setState(() {
       fields.remove(field);
+      observedFieldLabels.remove(field.id);
       field.dispose();
     });
   }
@@ -11596,10 +14253,16 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
     });
   }
 
-  TemplateEditorSnapshot currentSnapshot() => TemplateEditorSnapshot(
-        name: name.text,
+  TemplateEditorSnapshot currentSnapshot({
+    String? nameOverride,
+    String? fieldIdOverride,
+    String? fieldLabelOverride,
+  }) =>
+      TemplateEditorSnapshot(
+        name: nameOverride ?? name.text,
         iconId: iconId,
         colorId: colorId,
+        categoryPath: categoryPath,
         spbColor: spbColor,
         customIconBase64:
             customIconBytes == null ? null : base64Encode(customIconBytes!),
@@ -11608,19 +14271,43 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
           for (final field in fields)
             TemplateFieldSnapshot(
               id: field.id,
-              label: field.label.text,
+              label: field.id == fieldIdOverride
+                  ? fieldLabelOverride ?? field.label.text
+                  : field.label.text,
               type: field.type,
             ),
         ],
       );
 
   void rememberCurrentAction() {
-    final snapshot = currentSnapshot();
+    rememberSnapshot(currentSnapshot());
+  }
+
+  void rememberNameChange(String value) {
+    if (value == observedName) return;
+    rememberSnapshot(currentSnapshot(nameOverride: observedName));
+    observedName = value;
+  }
+
+  void rememberFieldLabelChange(String fieldId, String value) {
+    final previous = observedFieldLabels[fieldId] ?? '';
+    if (value == previous) return;
+    rememberSnapshot(currentSnapshot(
+      fieldIdOverride: fieldId,
+      fieldLabelOverride: previous,
+    ));
+    observedFieldLabels[fieldId] = value;
+  }
+
+  void rememberSnapshot(TemplateEditorSnapshot snapshot) {
     if (undoHistory.isNotEmpty &&
         undoHistory.last.signature == snapshot.signature) {
       return;
     }
-    setState(() => undoHistory.add(snapshot));
+    setState(() {
+      undoHistory.add(snapshot);
+      if (undoHistory.length > 200) undoHistory.removeAt(0);
+    });
   }
 
   void undoLastAction() {
@@ -11630,6 +14317,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
       name.text = snapshot.name;
       iconId = snapshot.iconId;
       colorId = snapshot.colorId;
+      categoryPath = snapshot.categoryPath;
       spbColor = snapshot.spbColor;
       customIconBytes = snapshot.customIconBase64 == null
           ? null
@@ -11650,6 +14338,14 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                 secret: fieldTypeIsSecret(field.type),
               ),
             ),
+          ),
+        );
+      observedName = snapshot.name;
+      observedFieldLabels
+        ..clear()
+        ..addEntries(
+          snapshot.fields.map(
+            (field) => MapEntry(field.id, field.label),
           ),
         );
     });
@@ -11726,6 +14422,10 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
   }
 
   void saveTemplate() {
+    if (name.text.trim().isEmpty) {
+      setState(() => invalidName = true);
+      return;
+    }
     Navigator.pop(
       context,
       CardTemplate(
@@ -11733,6 +14433,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
         name: name.text.trim().isEmpty ? 'Новый шаблон' : name.text.trim(),
         iconId: iconId,
         colorId: colorId,
+        categoryPath: categoryPath,
         spbColor: spbColor,
         builtIn: widget.initial?.builtIn ?? false,
         embeddedIconBase64:
@@ -11748,47 +14449,61 @@ class ColorPicker extends StatelessWidget {
   const ColorPicker({
     required this.value,
     required this.onChanged,
+    this.label = 'Цвет карточки',
+    this.keyPrefix = 'cardColor',
     super.key,
   });
 
   final String value;
   final ValueChanged<String> onChanged;
+  final String label;
+  final String keyPrefix;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Цвет карточки'),
+        Text(label),
         const SizedBox(height: 8),
         Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: palette.map((color) {
-            final selected = color.id == value;
-            return Tooltip(
-              message: color.label,
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: () => onChanged(color.id),
-                child: Container(
-                  width: 34,
-                  height: 34,
-                  padding: const EdgeInsets.all(3),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: selected
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.transparent,
-                      width: 2,
+          spacing: 5,
+          runSpacing: 5,
+          children: [
+            for (final color in templateColorPalette)
+              Tooltip(
+                message: color.label,
+                child: InkWell(
+                  onTap: () => onChanged(color.id),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    key: ValueKey('$keyPrefix-${color.id}'),
+                    width: 30,
+                    height: 27,
+                    decoration: BoxDecoration(
+                      color: color.bg,
+                      border: Border.all(
+                        color: color.id == value
+                            ? const Color(0xff253d4c)
+                            : const Color(0xff8b969d),
+                        width: color.id == value ? 2.5 : 1,
+                      ),
+                      borderRadius: BorderRadius.circular(4),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x1f000000),
+                          offset: Offset(1, 1),
+                          blurRadius: 2,
+                        ),
+                      ],
                     ),
+                    child: color.id == value
+                        ? const Icon(Icons.check, size: 17)
+                        : null,
                   ),
-                  child: CircleAvatar(backgroundColor: color.bg),
                 ),
               ),
-            );
-          }).toList(),
+          ],
         ),
       ],
     );

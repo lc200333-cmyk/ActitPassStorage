@@ -238,8 +238,23 @@ void main() {
           'УРА': 'icons_001.png',
         };
         for (final category in snapshot.categories) {
+          final rendered = spbFolderIconAsset(category.name, category.iconId);
+          final synthetic = uiIconIdFromSyntheticSpbIcon(category.iconId);
+          if (snapshot.embeddedIconPngs.containsKey(category.iconId)) {
+            expect(rendered, category.iconId, reason: category.name);
+            continue;
+          }
+          if (synthetic != null) {
+            expect(rendered, synthetic, reason: category.name);
+            continue;
+          }
+          final original = spbOriginalIconAsset(category.iconId);
+          if (original != null) {
+            expect(rendered, original, reason: category.name);
+            continue;
+          }
           expect(
-            spbFolderIconAsset(category.name, category.iconId),
+            rendered,
             endsWith(expectedFolders[category.name]!),
             reason: category.name,
           );

@@ -43,6 +43,71 @@ void main() {
     }
   });
 
+  test('card and folder keep their embedded custom icons', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'actitpass_card_folder_icons_',
+    );
+    final path = '${directory.path}${Platform.pathSeparator}icons.swl';
+    final wallet = SpbWalletDatabase.create(path, 'icon-password');
+    final templateId = SpbWalletDatabase.makeId();
+    final cardId = SpbWalletDatabase.makeId();
+    final cardIconId = SpbWalletDatabase.makeId();
+    final folderIconId = SpbWalletDatabase.makeId();
+    final sourceIcon = image.Image(width: 16, height: 16);
+    image.fill(sourceIcon, color: image.ColorRgb8(90, 150, 210));
+    final iconBytes = image.encodePng(sourceIcon);
+    try {
+      wallet.saveTemplate(
+        SpbWalletTemplateDraft(
+          id: templateId,
+          name: 'Шаблон',
+          fields: const [],
+        ),
+      );
+      wallet.createCategory(
+        'Папка',
+        folderIconId,
+        iconBytes: iconBytes,
+      );
+      wallet.saveCard(
+        SpbWalletCardDraft(
+          id: cardId,
+          title: 'Карточка',
+          description: '',
+          categoryPath: 'Папка',
+          templateId: templateId,
+          fieldValues: const {},
+          iconId: cardIconId,
+          iconBytes: iconBytes,
+        ),
+      );
+
+      final snapshot = wallet.loadSnapshot();
+      expect(snapshot.cards.single.iconId, cardIconId);
+      expect(snapshot.categories.single.iconId, folderIconId);
+      expect(snapshot.embeddedIconPngs[cardIconId], isNotEmpty);
+      expect(snapshot.embeddedIconPngs[folderIconId], isNotEmpty);
+
+      final replacementFolderIconId = SpbWalletDatabase.makeId();
+      wallet.renameCategory(
+        'Папка',
+        'Переименованная папка',
+        replacementFolderIconId,
+        iconBytes: iconBytes,
+      );
+      final renamed = wallet.loadSnapshot();
+      expect(renamed.categories.single.name, 'Переименованная папка');
+      expect(renamed.categories.single.iconId, replacementFolderIconId);
+      expect(
+        renamed.embeddedIconPngs[replacementFolderIconId],
+        isNotEmpty,
+      );
+    } finally {
+      wallet.close();
+      await directory.delete(recursive: true);
+    }
+  });
+
   test('missing card and folder icons use original SPB Wallet icons', () async {
     final directory = await Directory.systemTemp.createTemp(
       'actitpass_icon_fallback_',

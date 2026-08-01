@@ -32,5 +32,9 @@ flutter:
     - assets/spb_icons.bundle
     # Third-party Visual Studio icon library, packed separately from SPB.
     - assets/third_party/icons_unique_visual_studio.zip
+    # Additional user-provided third-party icons from docs/icos.zip.
+    - assets/third_party/icos.zip
     # Original template library. Legacy databases refer to stable identities.
     - assets/spb_wallet_libraries/templates/
+    # Base wallet used when the user creates a new encrypted .swl database.
+    - assets/base_wallet/MyWallet.swl
