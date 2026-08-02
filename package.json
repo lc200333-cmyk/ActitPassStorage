@@ -1,6 +1,6 @@
 {
   "name": "actit-pass-storage",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "private": true,
   "description": "Локальный менеджер секретов с зашифрованными базами",
   "scripts": {
