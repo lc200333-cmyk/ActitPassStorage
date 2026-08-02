@@ -116,12 +116,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('spbMobilePaneHeader')), findsOneWidget);
-      expectInsideViewport(
-        tester,
-        find.byKey(const Key('spbClearSearchButton')),
-        viewport,
-        reason: '${profile.name}: очистка поиска',
-      );
+      expect(find.byKey(const Key('spbClearSearchButton')), findsNothing);
       expectInsideViewport(
         tester,
         find.byKey(const Key('spbSubmitSearchButton')),
@@ -163,7 +158,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('spbMobilePaneHeader')), findsOneWidget);
-      expect(find.byKey(const Key('spbClearSearchButton')), findsOneWidget);
+      expect(find.byKey(const Key('spbClearSearchButton')), findsNothing);
       expect(find.byKey(const Key('spbSubmitSearchButton')), findsOneWidget);
       expect(tester.takeException(), isNull, reason: profile.name);
     });

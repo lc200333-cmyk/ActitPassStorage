@@ -1,12 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as image;
 import 'package:sqlite3/sqlite3.dart';
 
+import '../data/legacy_swl/legacy_swl_codec.dart';
 import '../domain/card_layout.dart';
+import '../services/wallet_integrity_service.dart';
 import 'spb_wallet_attachment_codec.dart';
 import 'spb_wallet_crypto.dart';
 
@@ -48,7 +49,6 @@ class SpbWalletDatabase {
       final wallet = SpbWalletDatabase._(path, db, SpbWalletCrypto(password));
       wallet._validateSchema();
       wallet._validatePassword();
-      wallet._ensurePerformanceIndexes();
       return wallet;
     } on SpbWalletOpenException {
       db?.dispose();
@@ -67,6 +67,20 @@ class SpbWalletDatabase {
   }
 
   static String makeId() => _makeSpbId();
+
+  WalletIntegrityReport inspectIntegrity() =>
+      WalletIntegrityService.inspect(_db, attachments: attachmentCodec);
+
+  WalletIntegrityReport repairLegacyCompatibility() {
+    final report = WalletIntegrityService.repair(_db, crypto, attachmentCodec);
+    _embeddedIconCache = null;
+    return report;
+  }
+
+  bool hasTemplate(String templateId) => _db.select(
+        'SELECT 1 FROM spbwlt_Template WHERE hex(ID)=? LIMIT 1',
+        [templateId],
+      ).isNotEmpty;
 
   static SpbWalletDatabase create(String path, String password) {
     final file = File(path);
@@ -353,6 +367,12 @@ class SpbWalletDatabase {
         final templateCardViewId = templateRows.isEmpty
             ? ''
             : _string(templateRows.first['CardViewID']);
+        if (templateCardViewId.isEmpty) {
+          throw StateError(
+            'Шаблон карточки отсутствует в базе. '
+            'Сначала восстановите или сохраните шаблон.',
+          );
+        }
         final cardViewId = _copyCardView(templateCardViewId);
         _db.execute(
           'INSERT INTO spbwlt_Card (ID, Name, Description, CardViewID, HasOwnCardView, TemplateID, ParentCategoryID, IconID) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -1003,6 +1023,40 @@ CREATE TABLE spbwlt_CardViewField (
 );
 CREATE INDEX idx_CardFieldValue ON spbwlt_CardFieldValue (CardID);
 CREATE INDEX idx_TemplateField ON spbwlt_TemplateField (TemplateID);
+CREATE TRIGGER on_delete_Card AFTER DELETE ON spbwlt_Card
+BEGIN
+  DELETE FROM spbwlt_CardAttachment WHERE CardID=OLD.ID;
+  DELETE FROM spbwlt_CardFieldValue WHERE CardID=OLD.ID;
+END;
+CREATE TRIGGER on_delete_CardView BEFORE DELETE ON spbwlt_CardView
+BEGIN
+  DELETE FROM spbwlt_CardViewField WHERE CardViewID=OLD.ID;
+END;
+CREATE TRIGGER on_delete_Category BEFORE DELETE ON spbwlt_Category
+BEGIN
+  DELETE FROM spbwlt_Card WHERE ParentCategoryID=OLD.ID;
+  DELETE FROM spbwlt_Category WHERE ParentCategoryID=OLD.ID;
+END;
+CREATE TRIGGER on_delete_Icon BEFORE DELETE ON spbwlt_Icon
+BEGIN
+  UPDATE spbwlt_Card SET IconID='' WHERE IconID=OLD.ID;
+  UPDATE spbwlt_Category SET IconID='' WHERE IconID=OLD.ID;
+  UPDATE spbwlt_CardView SET IconID='' WHERE IconID=OLD.ID;
+END;
+CREATE TRIGGER on_delete_Image BEFORE DELETE ON spbwlt_Image
+BEGIN
+  UPDATE spbwlt_CardView SET ImageID='' WHERE ImageID=OLD.ID;
+END;
+CREATE TRIGGER on_delete_Template BEFORE DELETE ON spbwlt_Template
+BEGIN
+  DELETE FROM spbwlt_Card WHERE TemplateID=OLD.ID;
+  DELETE FROM spbwlt_TemplateField WHERE TemplateID=OLD.ID;
+END;
+CREATE TRIGGER on_delete_TemplateField BEFORE DELETE ON spbwlt_TemplateField
+BEGIN
+  DELETE FROM spbwlt_CardFieldValue WHERE TemplateFieldID=OLD.ID;
+  DELETE FROM spbwlt_CardViewField WHERE TemplateFieldID=OLD.ID;
+END;
 ''');
   }
 
@@ -1019,26 +1073,12 @@ CREATE INDEX IF NOT EXISTS idx_CardViewField_View ON spbwlt_CardViewField (CardV
   void _seedMeta() {
     _db.execute(
       'INSERT INTO spb_DatabaseVersion (ProductID, ProductName, VersionString, CompatibilityVersion, ProductMajorVersion, ProductMinorVersion) VALUES (?, ?, ?, ?, ?, ?)',
-      [1, 'Spb Wallet', '2.0', 2, 2, 0],
+      [1, 'SpbWallet', '1.0.0', 18, 1, 0],
     );
     _db.execute(
       'INSERT INTO spbwlt_Wallet (ID, AdvVersionInfo) VALUES (?, ?)',
-      [_idFromHex(_makeSpbId()), 0],
+      [LegacySwlCodec.makeWalletId(), -496552629],
     );
-    for (final entry in const {
-      1: 'String',
-      2: 'Password',
-      3: 'Date',
-      4: 'Memo',
-      5: 'Checkbox',
-      6: 'URL',
-      7: 'Email',
-      8: 'Phone',
-    }.entries) {
-      _db.execute(
-          'INSERT INTO spbwlt_TemplateFieldType (ID, Name) VALUES (?, ?)',
-          [entry.key, entry.value]);
-    }
   }
 
   void _validateSchema() {
@@ -1382,7 +1422,11 @@ CREATE INDEX IF NOT EXISTS idx_CardViewField_View ON spbwlt_CardViewField (CardV
         viewRows.isNotEmpty && _string(viewRows.first['ImageID']).isNotEmpty;
     _db.execute(
       'UPDATE spbwlt_CardView SET CardColor = ?, FillCardWithColor = ? WHERE hex(ID) = ?',
-      [_cardColorBlob(cardColor), hasBackgroundImage ? 0 : 1, cardViewId],
+      [
+        LegacySwlCodec.cardColor(cardColor),
+        hasBackgroundImage ? 0 : 1,
+        cardViewId,
+      ],
     );
     _db.execute('UPDATE spbwlt_Card SET HasOwnCardView = ? WHERE hex(ID) = ?',
         [1, cardId]);
@@ -1442,7 +1486,7 @@ CREATE INDEX IF NOT EXISTS idx_CardViewField_View ON spbwlt_CardViewField (CardV
     if (cardViewId.isEmpty) return;
     _db.execute(
       'UPDATE spbwlt_CardView SET CardColor = ?, FillCardWithColor = 1 WHERE hex(ID) = ?',
-      [_cardColorBlob(cardColor), cardViewId],
+      [LegacySwlCodec.cardColor(cardColor), cardViewId],
     );
   }
 
@@ -1463,8 +1507,12 @@ CREATE INDEX IF NOT EXISTS idx_CardViewField_View ON spbwlt_CardViewField (CardV
       return;
     }
     _embeddedIconCache = null;
-    final name = crypto.encryptText(fileName);
-    final data = attachmentCodec.encode(bytes);
+    final icoBytes = LegacySwlCodec.embeddedIconIco(bytes);
+    final dot = fileName.lastIndexOf('.');
+    final legacyFileName =
+        '${dot < 0 ? fileName : fileName.substring(0, dot)}.ico';
+    final name = crypto.encryptText(legacyFileName);
+    final data = attachmentCodec.encode(icoBytes);
     final exists = _db.select(
         'SELECT 1 FROM spbwlt_Icon WHERE hex(ID) = ?', [iconId]).isNotEmpty;
     if (exists) {
@@ -1577,24 +1625,17 @@ CREATE INDEX IF NOT EXISTS idx_CardViewField_View ON spbwlt_CardViewField (CardV
     return int.tryParse(value.toString().trim()) ?? 0xffffff;
   }
 
-  static Uint8List _cardColorBlob(int value) =>
-      Uint8List.fromList((value & 0xffffff).toString().codeUnits);
-
-  static Uint8List _idFromHex(String hex) {
-    if (hex.isEmpty) return Uint8List(0);
-    final result = Uint8List(hex.length ~/ 2);
-    for (var i = 0; i < result.length; i++) {
-      result[i] = int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16);
+  static Object _idFromHex(String hex) {
+    final bytes = LegacySwlCodec.idBytes(hex);
+    try {
+      return utf8.decode(bytes, allowMalformed: false);
+    } on FormatException {
+      return bytes;
     }
-    return result;
   }
 
   static String _makeSpbId() {
-    final random = Random.secure();
-    const alphabet = '0123456789abcdef';
-    return List.generate(16, (_) => alphabet[random.nextInt(alphabet.length)])
-        .join()
-        .toUpperCase();
+    return LegacySwlCodec.makeHexId();
   }
 }
 

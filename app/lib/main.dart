@@ -17,6 +17,7 @@ import 'controllers/entity_index.dart';
 import 'features/cards/field_projection.dart';
 import 'features/categories/category_path_index.dart';
 import 'features/templates/template_order.dart';
+import 'services/wallet_rekey_service.dart';
 import 'widgets/card_surface.dart';
 
 void main() {
@@ -1610,7 +1611,7 @@ Future<({Uint8List bytes, String fileName})?> pickUserIconFile(
 ) async {
   final picked = await FilePicker.platform.pickFiles(
     type: FileType.custom,
-    allowedExtensions: const ['png', 'ico'],
+    allowedExtensions: const ['png', 'ico', 'jpg', 'jpeg', 'bmp', 'gif'],
     withData: true,
   );
   final file = picked?.files.single;
@@ -1638,7 +1639,7 @@ Future<({Uint8List bytes, String fileName})?> pickUserIconFile(
   final pngBytes = Uint8List.fromList(image.encodePng(decoded));
   final pngFileName = file.name.toLowerCase().endsWith('.png')
       ? file.name
-      : '${file.name.replaceAll(RegExp(r'\.ico$', caseSensitive: false), '')}.png';
+      : '${file.name.replaceFirst(RegExp(r'\.[^.]+$'), '')}.png';
   return (bytes: pngBytes, fileName: pngFileName);
 }
 
@@ -1650,11 +1651,29 @@ String attachmentMimeType(String fileName) {
   if (lower.endsWith('.webp')) return 'image/webp';
   if (lower.endsWith('.bmp')) return 'image/bmp';
   if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.doc')) return 'application/msword';
+  if (lower.endsWith('.docx')) {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
+  if (lower.endsWith('.xls')) return 'application/vnd.ms-excel';
+  if (lower.endsWith('.xlsx')) {
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  }
+  if (lower.endsWith('.odt')) {
+    return 'application/vnd.oasis.opendocument.text';
+  }
+  if (lower.endsWith('.ods')) {
+    return 'application/vnd.oasis.opendocument.spreadsheet';
+  }
+  if (lower.endsWith('.rtf')) return 'application/rtf';
   if (lower.endsWith('.txt') ||
       lower.endsWith('.log') ||
       lower.endsWith('.csv') ||
       lower.endsWith('.json') ||
-      lower.endsWith('.xml')) {
+      lower.endsWith('.xml') ||
+      lower.endsWith('.md') ||
+      lower.endsWith('.yaml') ||
+      lower.endsWith('.yml')) {
     return 'text/plain';
   }
   if (lower.endsWith('.mp3')) return 'audio/mpeg';
@@ -2288,103 +2307,29 @@ bool cloneSwlVaultWithPassword(Map<String, dynamic> payload) {
   final sourcePassword = payload['sourcePassword'] as String;
   final passwordHint = payload['passwordHint'] as String? ?? '';
   final baseBytes = Uint8List.fromList(payload['baseBytes'] as List<int>);
-  final sourcePath = '$path.${DateTime.now().microsecondsSinceEpoch}.base';
-  SpbWalletDatabase? source;
-  SpbWalletDatabase? target;
+  final targetFile = File(path);
+  SpbWalletDatabase? verification;
   try {
-    File(sourcePath).writeAsBytesSync(baseBytes, flush: true);
-    source = SpbWalletDatabase.open(sourcePath, sourcePassword);
-    final snapshot = source.loadSnapshot();
-    target = SpbWalletDatabase.create(path, password);
-    final categoriesById = {
-      for (final category in snapshot.categories) category.id: category,
-    };
-    String categoryPath(SpbWalletCategoryRecord category) {
-      final names = <String>[];
-      var current = category;
-      var guard = 0;
-      while (guard++ < 64) {
-        if (current.name.isNotEmpty) names.add(current.name);
-        final parent = categoriesById[current.parentId];
-        if (parent == null) break;
-        current = parent;
-      }
-      return names.reversed.join(' / ');
+    if (targetFile.existsSync()) {
+      throw StateError('Файл новой базы уже существует.');
     }
-
-    final orderedCategories = [...snapshot.categories]..sort((a, b) =>
-        categoryPath(a)
-            .split(' / ')
-            .length
-            .compareTo(categoryPath(b).split(' / ').length));
-    for (final category in orderedCategories) {
-      target.createCategory(
-        categoryPath(category),
-        category.iconId,
-        iconBytes: snapshot.embeddedIconPngs[category.iconId.toUpperCase()],
-        colorId: category.colorId,
-      );
-    }
-    for (final template in snapshot.templates) {
-      target.saveTemplate(
-        SpbWalletTemplateDraft(
-          id: template.id,
-          name: template.name,
-          fields: template.fields,
-          iconId: template.iconId,
-          iconBytes: snapshot.embeddedIconPngs[template.iconId.toUpperCase()],
-          cardColor: template.cardColor,
-          categoryPath: template.categoryPath,
-        ),
-      );
-    }
-    for (final card in snapshot.cards) {
-      target.saveCard(
-        SpbWalletCardDraft(
-          id: card.id,
-          title: card.title,
-          description: card.description,
-          categoryPath: card.categoryPath,
-          templateId: card.templateId,
-          fieldValues: card.fieldValues,
-          iconId: card.iconId,
-          iconBytes: snapshot.embeddedIconPngs[card.iconId.toUpperCase()],
-          cardColor: card.cardColor,
-          backgroundImageBase64: card.backgroundImageBase64,
-          fieldOrder: card.fieldOrder,
-          hiddenFieldIds: card.hiddenFieldIds,
-          modifiedAt: card.modifiedAt,
-        ),
-      );
-      for (final attachment in card.attachments) {
-        target.saveAttachment(
-          cardId: card.id,
-          attachmentId: attachment.id,
-          fileName: attachment.fileName,
-          bytes: source.readAttachmentBytes(attachment.id),
-        );
-      }
-    }
-    target.savePasswordHint(passwordHint);
-    target.close();
-    target = null;
-    source.close(flush: false);
-    source = null;
-    File(sourcePath).deleteSync();
+    targetFile.writeAsBytesSync(baseBytes, flush: true);
+    WalletRekeyService.rekeyFile(
+      targetFile.path,
+      oldPassword: sourcePassword,
+      newPassword: password,
+    );
+    verification = SpbWalletDatabase.open(targetFile.path, password);
+    verification.savePasswordHint(passwordHint);
+    verification.flushToDisk();
+    verification.close(flush: false);
+    verification = null;
     return true;
   } catch (_) {
     try {
-      target?.close();
+      verification?.close(flush: false);
     } catch (_) {}
     try {
-      source?.close(flush: false);
-    } catch (_) {}
-    try {
-      final sourceFile = File(sourcePath);
-      if (sourceFile.existsSync()) sourceFile.deleteSync();
-    } catch (_) {}
-    try {
-      final targetFile = File(path);
       if (targetFile.existsSync()) targetFile.deleteSync();
     } catch (_) {}
     rethrow;
@@ -2552,7 +2497,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   final ScrollController spbFrequentScrollController = ScrollController();
   Timer? inactivityTimer;
   Timer? inactivityCountdownTimer;
-  int inactivitySecondsRemaining = 30;
+  int inactivitySecondsRemaining = 15;
   bool inactivityWarningVisible = false;
   Timer? lockedExitTimer;
   Timer? lockedExitCountdownTimer;
@@ -2561,6 +2506,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   Timer? passwordUnlockDebounce;
   bool automaticUnlockInProgress = false;
   bool closingForInactivity = false;
+  DateTime lastUserActivityAt = DateTime.now();
   DateTime? lastSyncAt;
 
   List<CardTemplate> templates = builtInTemplates();
@@ -2732,6 +2678,17 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         state == AppLifecycleState.detached) {
       persistVaultState();
       unawaited(writeBackSpbWallet());
+    }
+    if (state == AppLifecycleState.resumed) {
+      final idleFor = DateTime.now().difference(lastUserActivityAt);
+      if (unlocked && idleFor >= const Duration(minutes: 3)) {
+        unawaited(closeAfterInactivity());
+      } else if (unlocked &&
+          idleFor >= const Duration(minutes: 2, seconds: 45)) {
+        unawaited(showInactivityWarning());
+      } else if (!unlocked && idleFor >= const Duration(minutes: 5)) {
+        unawaited(exitApplication());
+      }
     }
   }
 
@@ -2915,6 +2872,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         spbWallet?.close(flush: vaultDirty);
         final wallet = SpbWalletDatabase.open(spbWalletPath!, password);
         final snapshot = wallet.loadSnapshot();
+        final integrityReport = wallet.inspectIntegrity();
         spbWallet = wallet;
         vaultDirty = false;
         spbIconIdByUiIcon.clear();
@@ -2924,9 +2882,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           lastSyncAt = null;
           selectedItemId = items.isEmpty ? null : items.first.id;
           unlocked = true;
+          lastUserActivityAt = DateTime.now();
           activeView = 'cards';
-          message = null;
+          message =
+              integrityReport.hasProblems ? integrityReport.userMessage : null;
         });
+        lastUserActivityAt = DateTime.now();
         passwordUnlockDebounce?.cancel();
         passwordController.clear();
         confirmController.clear();
@@ -3184,6 +3145,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       selectedItemId = items.isEmpty ? null : items.first.id;
       if (unlockAfterCreate) {
         unlocked = true;
+        lastUserActivityAt = DateTime.now();
         activeView = 'cards';
       }
       message = null;
@@ -3508,6 +3470,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       confirmController.clear();
       setState(() {
         unlocked = true;
+        lastUserActivityAt = DateTime.now();
         activeView = 'cards';
         message = null;
       });
@@ -3838,6 +3801,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       lastSyncAt = DateTime.now();
       selectedItemId = items.isEmpty ? null : items.first.id;
       unlocked = true;
+      lastUserActivityAt = DateTime.now();
       activeView = 'cards';
       message = null;
     });
@@ -4121,6 +4085,48 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     } catch (error) {
       if (!mounted) return;
       setState(() => message = 'Не удалось создать архивную копию: $error');
+    }
+  }
+
+  Future<void> repairCurrentWalletCompatibility() async {
+    final wallet = spbWallet;
+    final path = spbWalletPath;
+    if (wallet == null || path == null || !ensureSpbWalletWritable()) return;
+    final source = File(path);
+    if (!source.existsSync()) {
+      showSpbOperationMessage('Рабочая копия базы не найдена.');
+      return;
+    }
+    final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(':', '-');
+    final backup = File('$path.compatibility-$stamp.backup.swl');
+    SpbWalletUndoSnapshot? undo;
+    try {
+      wallet.flushToDisk();
+      await source.copy(backup.path);
+      undo = await wallet.createUndoSnapshot();
+      final report = wallet.repairLegacyCompatibility();
+      markVaultDirty();
+      final written = await writeBackSpbWallet(force: true);
+      if (!written) {
+        throw StateError('Исправленная база не записана в исходный файл.');
+      }
+      undo.dispose();
+      undo = null;
+      final snapshot = wallet.loadSnapshot();
+      if (!mounted) return;
+      setState(() {
+        applySpbSnapshot(snapshot);
+        message = '${report.userMessage} Резервная копия: ${backup.path}';
+      });
+      showSpbOperationMessage(report.userMessage);
+    } catch (error) {
+      if (undo != null) {
+        await wallet.restoreUndoSnapshot(undo);
+        undo.dispose();
+      }
+      showSpbOperationMessage(
+        'Восстановление отменено, исходные данные сохранены: $error',
+      );
     }
   }
 
@@ -4864,17 +4870,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   ),
                   const SizedBox(width: 4),
                   buildSpbSearchButton(
-                    key: const Key('spbClearSearchButton'),
-                    icon: Icons.close,
-                    tooltip: 'Очистить поиск',
-                    gradient: const [Color(0xff5b5b5b), Color(0xff262626)],
-                    onTap: () {
-                      searchController.clear();
-                      setState(() => spbSubmittedSearchQuery = '');
-                    },
-                  ),
-                  const SizedBox(width: 4),
-                  buildSpbSearchButton(
                     key: const Key('spbSubmitSearchButton'),
                     icon: Icons.search,
                     tooltip: 'Начать поиск',
@@ -4891,17 +4886,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                       Color(0xffc58a00),
                     ],
                     onTap: showSessionUndoMenu,
-                  ),
-                  const SizedBox(width: 4),
-                  buildSpbSearchButton(
-                    key: spbSessionTrashButtonKey,
-                    icon: Icons.delete_forever_outlined,
-                    tooltip: 'Восстановить удалённые',
-                    gradient: const [
-                      Color(0xff5bc96d),
-                      Color(0xff08772f),
-                    ],
-                    onTap: showSessionTrashMenu,
                   ),
                   const SizedBox(width: 4),
                   Transform.translate(
@@ -4949,20 +4933,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   child: Row(
                     children: [
                       buildSpbSearchButton(
-                        key: const Key('spbClearSearchButton'),
-                        icon: Icons.close,
-                        tooltip: 'Очистить поиск',
-                        gradient: const [
-                          Color(0xff5b5b5b),
-                          Color(0xff262626),
-                        ],
-                        onTap: () {
-                          searchController.clear();
-                          setState(() => spbSubmittedSearchQuery = '');
-                        },
-                      ),
-                      const SizedBox(width: 4),
-                      buildSpbSearchButton(
                         key: const Key('spbSubmitSearchButton'),
                         icon: Icons.search,
                         tooltip: 'Начать поиск',
@@ -4986,17 +4956,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                           Color(0xffc58a00),
                         ],
                         onTap: showSessionUndoMenu,
-                      ),
-                      const SizedBox(width: 4),
-                      buildSpbSearchButton(
-                        key: spbSessionTrashButtonKey,
-                        icon: Icons.delete_forever_outlined,
-                        tooltip: 'Восстановить удалённые',
-                        gradient: const [
-                          Color(0xff5bc96d),
-                          Color(0xff08772f),
-                        ],
-                        onTap: showSessionTrashMenu,
                       ),
                       const SizedBox(width: 4),
                       Transform.translate(
@@ -5471,6 +5430,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             onPressed: allowBack ? () => setState(() => mobilePane--) : null,
           ),
           _Spb3dArrowButton(
+            key: const Key('mobileFolderUp'),
+            icon: Icons.arrow_upward,
+            onPressed: !mobileTemplatesOpen &&
+                    mobilePane == 1 &&
+                    selectedCategoryPath.isNotEmpty
+                ? openParentSpbFolder
+                : null,
+          ),
+          _Spb3dArrowButton(
             key: const Key('mobilePaneForward'),
             icon: Icons.arrow_right,
             onPressed: allowForward ? () => setState(() => mobilePane++) : null,
@@ -5478,6 +5446,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         ],
       ),
     );
+  }
+
+  void openParentSpbFolder() {
+    final parts = categoryParts(selectedCategoryPath);
+    if (parts.isNotEmpty) parts.removeLast();
+    openSpbFolder(parts.join(' / '));
   }
 
   void openSpbFolder(String path) {
@@ -6054,22 +6028,42 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         items.where((item) => item.templateId == template.id).length;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Удалить шаблон?'),
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xffececec),
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(4),
+        ),
+        title: const Text('Удалить шаблон'),
         content: Text(
           linkedCards == 0
               ? 'Шаблон "${template.name}" будет перемещён во внутреннюю корзину.'
               : 'Шаблон "${template.name}" и связанные с ним карточки '
                   '($linkedCards) будут перемещены во внутреннюю корзину.',
         ),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
+          SizedBox(
+            width: 124,
+            child: passwordKey(
+              key: const Key('cancelDeleteTemplateButton'),
+              label: 'Отмена',
+              height: 40,
+              fontSize: 18,
+              onPressed: () => Navigator.pop(dialogContext, false),
+            ),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Удалить'),
+          SizedBox(
+            width: 124,
+            child: passwordKey(
+              key: const Key('confirmDeleteTemplateButton'),
+              label: 'Удалить',
+              height: 40,
+              fontSize: 18,
+              top: const Color(0xffe04b3f),
+              bottom: const Color(0xff8f1515),
+              onPressed: () => Navigator.pop(dialogContext, true),
+            ),
           ),
         ],
       ),
@@ -7139,6 +7133,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         createDatedArchiveCopy
       ),
       (
+        const Icon(
+          Icons.health_and_safety_outlined,
+          size: 36,
+          color: Color(0xff33434f),
+        ),
+        'Проверить и восстановить базу',
+        repairCurrentWalletCompatibility
+      ),
+      (
         spbResourceIcon('icon_save_enable.png', 40),
         spbWritePending ? 'Повторить сохранение' : 'Сохранить базу',
         runSync
@@ -7842,19 +7845,19 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   void ensureLockedExitTimer() {
-    if (lockedExitWarningVisible) return;
     lockedExitTimer ??= Timer(
-      const Duration(minutes: 4, seconds: 30),
-      showLockedExitWarning,
+      const Duration(minutes: 5),
+      () => unawaited(exitApplication()),
     );
   }
 
   void recordLockedUserActivity() {
-    if (unlocked || lockedExitWarningVisible) return;
+    if (unlocked) return;
+    lastUserActivityAt = DateTime.now();
     lockedExitTimer?.cancel();
     lockedExitTimer = Timer(
-      const Duration(minutes: 4, seconds: 30),
-      showLockedExitWarning,
+      const Duration(minutes: 5),
+      () => unawaited(exitApplication()),
     );
   }
 
@@ -7969,16 +7972,17 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   void ensureInactivityTimer() {
     inactivityTimer ??= Timer(
-      const Duration(minutes: 2, seconds: 30),
+      const Duration(minutes: 2, seconds: 45),
       showInactivityWarning,
     );
   }
 
   void recordUserActivity() {
     if (!unlocked || closingForInactivity || inactivityWarningVisible) return;
+    lastUserActivityAt = DateTime.now();
     inactivityTimer?.cancel();
     inactivityTimer = Timer(
-      const Duration(minutes: 2, seconds: 30),
+      const Duration(minutes: 2, seconds: 45),
       showInactivityWarning,
     );
   }
@@ -7988,7 +7992,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     inactivityTimer?.cancel();
     inactivityTimer = null;
     inactivityWarningVisible = true;
-    inactivitySecondsRemaining = 30;
+    final remaining = const Duration(minutes: 3) -
+        DateTime.now().difference(lastUserActivityAt);
+    if (remaining <= Duration.zero) {
+      inactivityWarningVisible = false;
+      await closeAfterInactivity();
+      return;
+    }
+    inactivitySecondsRemaining =
+        max(1, min(15, (remaining.inMilliseconds / 1000).ceil()));
     StateSetter? updateDialog;
     inactivityCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       inactivitySecondsRemaining--;
@@ -8123,6 +8135,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       message = null;
       closingForInactivity = false;
     });
+    lastUserActivityAt = DateTime.now();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) passwordFocusNode.requestFocus();
     });
@@ -10531,7 +10544,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     final hasAttachmentChanges = saved.attachments.any(
       (attachment) => attachment.deleted || attachment.pendingBytes != null,
     );
-    final needsStructuralReload = existing == null ||
+    var needsStructuralReload = existing == null ||
         hasAttachmentChanges ||
         (saved.category.trim().isNotEmpty &&
             !categoryIdsByPath.containsKey(saved.category));
@@ -10544,6 +10557,30 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             : 'Изменение карточки: ${saved.title}',
         itemIconId(saved, template),
       );
+      if (!wallet.hasTemplate(saved.templateId)) {
+        wallet.saveTemplate(
+          SpbWalletTemplateDraft(
+            id: template.id,
+            name: template.name == 'Неизвестный шаблон'
+                ? 'Восстановлено: ${saved.title}'
+                : template.name,
+            iconId: spbIconIdForUi(template.iconId, template.iconId),
+            cardColor: template.spbColor ?? paletteColorToSpb(template.colorId),
+            fields: template.fields
+                .where((field) => field.id != spbDescriptionFieldId)
+                .map(
+                  (field) => SpbWalletTemplateFieldRecord(
+                    id: field.id,
+                    name: field.label,
+                    templateId: template.id,
+                    fieldTypeId: spbFieldTypeId(field),
+                  ),
+                )
+                .toList(),
+          ),
+        );
+        needsStructuralReload = true;
+      }
       wallet.saveCard(
         SpbWalletCardDraft(
           id: cardId,
@@ -10600,7 +10637,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             values: Map<String, String>.from(saved.values),
             modifiedAt: saved.modifiedAt,
             attachments: List<SecretAttachment>.from(saved.attachments),
-            hitCount: existing.hitCount,
+            hitCount: existing?.hitCount ?? 0,
             iconId: saved.iconId,
             backgroundImageBase64: saved.backgroundImageBase64,
             spbColor: saved.spbColor,
@@ -12180,6 +12217,136 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
     );
   }
 
+  bool isInlineImage(String fileName) {
+    final lower = fileName.toLowerCase();
+    return const ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
+        .any(lower.endsWith);
+  }
+
+  bool isInlineText(String fileName) {
+    final lower = fileName.toLowerCase();
+    return const [
+      '.txt',
+      '.log',
+      '.csv',
+      '.json',
+      '.xml',
+      '.md',
+      '.rtf',
+      '.ini',
+      '.yaml',
+      '.yml',
+    ].any(lower.endsWith);
+  }
+
+  bool isSpreadsheet(String fileName) {
+    final lower = fileName.toLowerCase();
+    return const ['.xls', '.xlsx', '.ods', '.csv'].any(lower.endsWith);
+  }
+
+  String attachmentExtension(String fileName) {
+    final dot = fileName.lastIndexOf('.');
+    return dot < 0 ? 'ФАЙЛ' : fileName.substring(dot + 1).toUpperCase();
+  }
+
+  Widget inlineAttachmentPreview(
+    SecretAttachment attachment,
+    Color background,
+  ) {
+    return FutureBuilder<Uint8List>(
+      future: attachmentBytes(attachment),
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        Widget content;
+        if (bytes == null) {
+          content = const SizedBox(
+            height: 72,
+            child: Center(child: CircularProgressIndicator()),
+          );
+        } else if (isInlineImage(attachment.fileName)) {
+          content = ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 320),
+            child: Image.memory(
+              bytes,
+              width: double.infinity,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) =>
+                  const Center(child: Icon(Icons.broken_image_outlined)),
+            ),
+          );
+        } else if (isInlineText(attachment.fileName)) {
+          final text = utf8.decode(bytes, allowMalformed: true);
+          content = Container(
+            constraints: const BoxConstraints(maxHeight: 260),
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            color: Colors.white.withValues(alpha: 0.82),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                text.length > 12000 ? '${text.substring(0, 12000)}\n…' : text,
+              ),
+            ),
+          );
+        } else {
+          content = SizedBox(
+            height: 82,
+            child: Row(
+              children: [
+                Icon(
+                  isSpreadsheet(attachment.fileName)
+                      ? Icons.table_chart_outlined
+                      : Icons.description_outlined,
+                  size: 46,
+                  color: const Color(0xff33434f),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '${attachmentExtension(attachment.fileName)} · '
+                    'открыть системным приложением',
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+        return Padding(
+          key: ValueKey(
+            'cardPreviewInlineAttachment-${attachment.fileName}',
+          ),
+          padding: const EdgeInsets.only(top: 10),
+          child: Material(
+            color: background.withValues(alpha: 0.9),
+            shape: RoundedRectangleBorder(
+              side: const BorderSide(color: Color(0xff82929d)),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: InkWell(
+              onTap: () => previewAttachment(attachment),
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      attachment.fileName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 6),
+                    content,
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.sizeOf(context);
@@ -12324,6 +12491,8 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
                                 ),
                               ),
                             ),
+                          for (final attachment in availableAttachments)
+                            inlineAttachmentPreview(attachment, color.bg),
                         ],
                       ),
                     ),
@@ -12377,20 +12546,6 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
                             const SizedBox(width: 6),
                           ],
                           SpbGradientActionButton(
-                            key: const Key('cardPreviewBackButton'),
-                            icon: Icons.arrow_drop_up,
-                            tooltip: 'Вернуться к карточкам',
-                            colors: const [
-                              Color(0xffffdc58),
-                              Color(0xffc58a00),
-                            ],
-                            onTap: () => Navigator.pop(
-                              context,
-                              CardPreviewAction.back,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          SpbGradientActionButton(
                             key: const Key('cardPreviewEditButton'),
                             icon: Icons.edit,
                             tooltip: 'Редактировать карточку',
@@ -12406,15 +12561,29 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
                           const SizedBox(width: 6),
                           SpbGradientActionButton(
                             key: const Key('cardPreviewDeleteButton'),
-                            icon: Icons.close,
+                            icon: Icons.delete_outline,
                             tooltip: 'Удалить карточку',
+                            colors: const [
+                              Color(0xffffdc58),
+                              Color(0xffc58a00),
+                            ],
+                            onTap: () => Navigator.pop(
+                              context,
+                              CardPreviewAction.delete,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          SpbGradientActionButton(
+                            key: const Key('cardPreviewBackButton'),
+                            icon: Icons.close,
+                            tooltip: 'Выйти из просмотра',
                             colors: const [
                               Color(0xffff5a5f),
                               Color(0xffa90000),
                             ],
                             onTap: () => Navigator.pop(
                               context,
-                              CardPreviewAction.delete,
+                              CardPreviewAction.back,
                             ),
                           ),
                         ],
@@ -14626,7 +14795,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
   Future<void> pickCustomIconFile() async {
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: const ['png', 'ico'],
+      allowedExtensions: const ['png', 'ico', 'jpg', 'jpeg', 'bmp', 'gif'],
       withData: true,
     );
     final file = picked?.files.single;
@@ -14652,7 +14821,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
     final pngBytes = Uint8List.fromList(image.encodePng(decoded));
     final pngFileName = file.name.toLowerCase().endsWith('.png')
         ? file.name
-        : '${file.name.replaceAll(RegExp(r'\.ico$', caseSensitive: false), '')}.png';
+        : '${file.name.replaceFirst(RegExp(r'\.[^.]+$'), '')}.png';
     applyCustomIcon(pngBytes, pngFileName);
   }
 

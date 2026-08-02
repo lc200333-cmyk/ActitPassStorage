@@ -13,6 +13,7 @@ APP_NAME="$(sed -n 's/^name:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\
 
 cd "$APP_DIR"
 dart run flutter_launcher_icons -f branding.yaml
+dart run tool/generate_platform_icons.dart
 
 if [ -f android/app/src/main/AndroidManifest.xml ]; then
   sed -i "s/android:label=\"[^\"]*\"/android:label=\"$APP_NAME\"/" \

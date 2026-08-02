@@ -7,6 +7,8 @@ name: Pass Storage
 flutter_launcher_icons:
   android: "launcher_icon"
   image_path: ../docs/Wallet.png
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: ../docs/Wallet.png
   min_sdk_android: 21
   windows:
     generate: true

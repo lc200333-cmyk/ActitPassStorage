@@ -350,6 +350,32 @@ void main() {
     expect(find.byKey(const Key('cardPreviewEditButton')), findsOneWidget);
     expect(find.byKey(const Key('cardPreviewDeleteButton')), findsOneWidget);
     expect(
+      find.descendant(
+        of: find.byKey(const Key('cardPreviewBackButton')),
+        matching: find.byIcon(Icons.close),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('cardPreviewDeleteButton')),
+        matching: find.byIcon(Icons.delete_outline),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester.getCenter(find.byKey(const Key('cardPreviewEditButton'))).dx,
+      lessThan(
+        tester.getCenter(find.byKey(const Key('cardPreviewDeleteButton'))).dx,
+      ),
+    );
+    expect(
+      tester.getCenter(find.byKey(const Key('cardPreviewDeleteButton'))).dx,
+      lessThan(
+        tester.getCenter(find.byKey(const Key('cardPreviewBackButton'))).dx,
+      ),
+    );
+    expect(
       find.byKey(const Key('cardPreviewSaveAttachmentButton')),
       findsNothing,
     );
@@ -418,7 +444,7 @@ void main() {
         id: '',
         fileName: 'описание.txt',
         size: 4,
-        pendingBytes: [1, 2, 3, 4],
+        pendingBytes: [116, 101, 115, 116],
       ),
       const SecretAttachment(
         id: '',
@@ -506,6 +532,20 @@ void main() {
     );
     expect(previewName.onSecondaryTapDown, isNotNull);
     expect(previewName.onLongPress, isNotNull);
+    expect(
+      find.byKey(
+        const ValueKey('cardPreviewInlineAttachment-описание.txt'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('cardPreviewInlineAttachment-звук.mp3'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('test'), findsOneWidget);
+    expect(find.textContaining('MP3 ·'), findsOneWidget);
   });
 
   testWidgets('category editor uses template design and fills narrow screen',
@@ -563,24 +603,15 @@ void main() {
     final trash = find.byTooltip('Восстановить удалённые');
     final forceClose = find.byKey(const Key('spbForceCloseButton'));
     expect(undo, findsOneWidget);
-    expect(trash, findsOneWidget);
+    expect(trash, findsNothing);
     expect(forceClose, findsOneWidget);
-    expect(tester.getTopLeft(undo).dx, lessThan(tester.getTopLeft(trash).dx));
     expect(
-      tester.getTopRight(trash).dx,
-      closeTo(1023, 0.6),
-      reason:
-          'Правая граница зелёной кнопки должна совпадать с разделителем центрального и правого окон.',
+      tester.getTopLeft(undo).dx,
+      lessThan(tester.getTopLeft(forceClose).dx),
     );
-    final undoToTrashGap =
-        tester.getTopLeft(trash).dx - tester.getTopRight(undo).dx;
-    final trashToCloseGap =
-        tester.getTopLeft(forceClose).dx - tester.getTopRight(trash).dx;
-    expect(undoToTrashGap, greaterThan(0));
-    expect(trashToCloseGap, closeTo(undoToTrashGap, 0.1));
     expect(
       tester.getCenter(forceClose).dy,
-      closeTo(tester.getCenter(trash).dy, 0.1),
+      closeTo(tester.getCenter(undo).dy, 0.1),
     );
     await tester.tap(
       find.byKey(const Key('spbCentralWorkspace')),
@@ -629,7 +660,7 @@ void main() {
     expect(find.text('Задачи'), findsNothing);
     expect(find.text('−'), findsNothing);
     expect(find.byKey(const Key('spbWalletRoot')), findsNothing);
-    expect(find.byKey(const Key('spbClearSearchButton')), findsOneWidget);
+    expect(find.byKey(const Key('spbClearSearchButton')), findsNothing);
     expect(find.byKey(const Key('spbSubmitSearchButton')), findsOneWidget);
     expect(
       find.byTooltip('Отменить изменения этой сессии'),
@@ -637,6 +668,7 @@ void main() {
     );
     expect(find.byKey(const Key('spbForceCloseButton')), findsOneWidget);
     expect(find.byKey(const Key('mobilePaneBack')), findsOneWidget);
+    expect(find.byKey(const Key('mobileFolderUp')), findsOneWidget);
     expect(find.byKey(const Key('mobilePaneForward')), findsOneWidget);
     await tester.tap(find.byKey(const Key('spbMobilePaneHeader')));
     await tester.pumpAndSettle();
@@ -970,12 +1002,12 @@ void main() {
 
     expect(find.text('Предупреждение'), findsOneWidget);
     expect(
-      find.text('Хранилище будет заблокировано через 30 секунд'),
+      find.text('Хранилище будет заблокировано через 15 секунд'),
       findsOneWidget,
     );
     expect(find.byKey(const Key('inactivityContinueButton')), findsOneWidget);
 
-    await tester.pump(const Duration(seconds: 30));
+    await tester.pump(const Duration(seconds: 15));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('passwordInput')), findsOneWidget);
@@ -983,25 +1015,16 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('password window warns before the five minute exit',
+  testWidgets('password window has no warning before five minute exit',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(720, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(const ActitPassApp());
     await tester.pump();
 
-    final dynamic state = tester.state(find.byType(VaultShell));
-    state.showLockedExitWarning();
-    await tester.pump();
-
-    expect(find.text('Предупреждение'), findsOneWidget);
-    expect(
-      find.text('Программа сохранит базу и закроется через 30 секунд'),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('lockedExitContinueButton')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('lockedExitContinueButton')));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(minutes: 4, seconds: 59));
+    expect(find.byKey(const Key('lockedExitContinueButton')), findsNothing);
+    expect(find.text('Предупреждение'), findsNothing);
     expect(find.byKey(const Key('passwordInput')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
