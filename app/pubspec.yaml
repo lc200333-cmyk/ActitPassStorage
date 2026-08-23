@@ -1,7 +1,7 @@
 name: actit_pass_storage
 description: "ActitPassStorage: локальный менеджер паролей, заметок и карточек."
 publish_to: "none"
-# Application version updates are committed automatically by the Release workflow.
+# Application version updates and release builds are managed by the Release workflow.
 version: 0.2.0+26
 
 environment:
