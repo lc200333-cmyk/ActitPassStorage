@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
@@ -19,12 +20,23 @@ class MainActivity : FlutterActivity() {
     private val createRequestCode = 7402
     private var pendingPickResult: MethodChannel.Result? = null
     private var pendingCreateResult: MethodChannel.Result? = null
+    private var walletChannel: MethodChannel? = null
+    private var launchWalletConsumed = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
+        walletChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+        walletChannel!!.setMethodCallHandler { call, result ->
             when (call.method) {
                 "pickSpbWallet" -> pickSpbWallet(result)
+                "getLaunchWallet" -> {
+                    if (launchWalletConsumed) {
+                        result.success(null)
+                    } else {
+                        launchWalletConsumed = true
+                        result.success(walletFromViewIntent(intent))
+                    }
+                }
                 "createSpbWalletDocument" -> {
                     val displayName = call.argument<String>("displayName") ?: "wallet.swl"
                     createSpbWalletDocument(displayName, result)
@@ -146,6 +158,32 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val wallet = walletFromViewIntent(intent) ?: return
+        walletChannel?.invokeMethod("openWallet", wallet)
+    }
+
+    private fun walletFromViewIntent(intent: Intent?): Map<String, Any?>? {
+        if (intent?.action != Intent.ACTION_VIEW) return null
+        val uri = intent.data ?: return null
+        return try {
+            val name = displayName(uri)
+            if (!name.lowercase().endsWith(".swl") &&
+                intent.type != "application/x-spb-wallet" &&
+                intent.type != "application/vnd.spb.wallet") {
+                return null
+            }
+            val flags = intent.flags and
+                (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            val persisted = persistUriPermission(uri, flags)
+            copySpbWalletData(uri, name, uriWritable(uri, flags), persisted)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     private fun uriWritable(uri: Uri, grantedFlags: Int = 0): Boolean {
         if (uri.scheme == "file") return true
         if (grantedFlags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0) return true
@@ -162,25 +200,36 @@ class MainActivity : FlutterActivity() {
         persisted: Boolean = contentResolver.persistedUriPermissions.any { it.uri == uri }
     ) {
         try {
-            val displayName = knownDisplayName?.takeIf { it.isNotBlank() } ?: displayName(uri)
-            val local = File(cacheDir, "spbwallet_${System.currentTimeMillis()}_$displayName")
-            contentResolver.openInputStream(uri).use { input ->
-                FileOutputStream(local).use { output ->
-                    if (input == null) error("Cannot open selected SPB Wallet file")
-                    input.copyTo(output)
-                }
-            }
-            result.success(mapOf(
-                "uri" to uri.toString(),
-                "localPath" to local.absolutePath,
-                "displayName" to displayName,
-                "displayPath" to displayPath(uri, displayName),
-                "writable" to writable,
-                "persisted" to persisted
-            ))
+            result.success(copySpbWalletData(uri, knownDisplayName, writable, persisted))
         } catch (error: Throwable) {
             result.error("copy_failed", error.message, null)
         }
+    }
+
+    private fun copySpbWalletData(
+        uri: Uri,
+        knownDisplayName: String? = null,
+        writable: Boolean = uriWritable(uri),
+        persisted: Boolean = contentResolver.persistedUriPermissions.any { it.uri == uri }
+    ): Map<String, Any?> {
+        val displayName = knownDisplayName?.takeIf { it.isNotBlank() } ?: displayName(uri)
+        val local = File(cacheDir, "spbwallet_${System.currentTimeMillis()}_$displayName")
+        contentResolver.openInputStream(uri).use { input ->
+            FileOutputStream(local).use { output ->
+                if (input == null) error("Cannot open selected SPB Wallet file")
+                input.copyTo(output)
+            }
+        }
+        val sourceLastModified = lastModified(uri)
+        if (sourceLastModified > 0L) local.setLastModified(sourceLastModified)
+        return mapOf(
+            "uri" to uri.toString(),
+            "localPath" to local.absolutePath,
+            "displayName" to displayName,
+            "displayPath" to displayPath(uri, displayName),
+            "writable" to writable,
+            "persisted" to persisted
+        )
     }
 
     private fun writeSpbWallet(uriText: String, localPath: String, result: MethodChannel.Result) {
@@ -236,6 +285,9 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun displayName(uri: Uri): String {
+        if (uri.scheme == "file") {
+            return uri.path?.let { File(it).name } ?: "wallet.swl"
+        }
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null).use { cursor ->
             if (cursor != null && cursor.moveToFirst()) {
                 val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -243,6 +295,24 @@ class MainActivity : FlutterActivity() {
             }
         }
         return "wallet.swl"
+    }
+
+    private fun lastModified(uri: Uri): Long {
+        try {
+            contentResolver.query(
+                uri,
+                arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+                null,
+                null,
+                null
+            ).use { cursor ->
+                if (cursor != null && cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                    if (index >= 0 && !cursor.isNull(index)) return cursor.getLong(index)
+                }
+            }
+        } catch (_: Throwable) {}
+        return 0L
     }
 
     private fun displayPath(uri: Uri, displayName: String): String {

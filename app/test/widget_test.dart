@@ -288,6 +288,38 @@ void main() {
       lessThan(tester.getTopLeft(secondField).dy),
     );
 
+    final notesId = builtInTemplates()
+        .first
+        .fields
+        .firstWhere((field) => field.type == 'multiline_note')
+        .id;
+    final notesField = find.byKey(ValueKey('cardField-$notesId'));
+    final notesUp = find.byKey(ValueKey('cardFieldUp-$notesId'));
+    final notesDown = find.byKey(ValueKey('cardFieldDown-$notesId'));
+    final notesDelete = find.byKey(ValueKey('cardFieldDelete-$notesId'));
+    await tester.ensureVisible(notesField);
+    await tester.pumpAndSettle();
+    final longNote =
+        List.generate(80, (index) => 'Строка ${index + 1}').join('\n');
+    await tester.tap(notesField);
+    await tester.enterText(notesField, longNote);
+    await tester.pump();
+
+    final notesWidget = tester.widget<TextField>(notesField);
+    expect(notesWidget.controller!.text, longNote);
+    expect(notesWidget.keyboardType, TextInputType.multiline);
+    expect(notesWidget.textInputAction, TextInputAction.newline);
+    expect(tester.getSize(notesField).height, 180);
+    expect(tester.getSize(notesUp), const Size(34, 34));
+    expect(tester.getSize(notesDown), const Size(34, 34));
+    expect(tester.getSize(notesDelete), const Size(34, 34));
+    expect(tester.getTopLeft(notesDelete).dy, tester.getTopLeft(notesUp).dy);
+    expect(
+      tester.getBottomLeft(notesDown).dy,
+      tester.getBottomLeft(notesField).dy,
+    );
+    expect(tester.takeException(), isNull);
+
     await tester.ensureVisible(original);
     await tester.pumpAndSettle();
     await tester.tap(original);
@@ -452,6 +484,12 @@ void main() {
         size: 3,
         pendingBytes: [5, 6, 7],
       ),
+      const SecretAttachment(
+        id: '',
+        fileName: 'фото.png',
+        size: 4,
+        pendingBytes: [137, 80, 78, 71],
+      ),
     ];
     final item = SecretItem(
       id: 'attachment-card',
@@ -492,11 +530,19 @@ void main() {
       find.byKey(const Key('cardEditorDeleteAttachmentButton')),
       findsOneWidget,
     );
-    final editorName = tester.widget<GestureDetector>(
-      find.byKey(const ValueKey('cardEditorAttachment-описание.txt')),
+    final editorName = find.byKey(
+      const ValueKey('cardEditorAttachment-описание.txt'),
     );
-    expect(editorName.onSecondaryTapDown, isNotNull);
-    expect(editorName.onLongPress, isNotNull);
+    final editorNameTap = tester.widget<InkWell>(
+      find.descendant(of: editorName, matching: find.byType(InkWell)),
+    );
+    expect(editorNameTap.onTap, isNotNull);
+    expect(editorNameTap.onSecondaryTap, isNotNull);
+    expect(editorNameTap.onLongPress, isNotNull);
+    expect(
+      find.byKey(const ValueKey('cardEditorInlineAttachment-фото.png')),
+      findsOneWidget,
+    );
 
     final deleteAttachment =
         find.byKey(const Key('cardEditorDeleteAttachmentButton'));
@@ -527,25 +573,35 @@ void main() {
       find.byKey(const Key('cardPreviewAddAttachmentButton')),
       findsOneWidget,
     );
-    final previewName = tester.widget<GestureDetector>(
-      find.byKey(const ValueKey('cardPreviewAttachment-описание.txt')),
+    final previewName = find.byKey(
+      const ValueKey('cardPreviewAttachment-описание.txt'),
     );
-    expect(previewName.onSecondaryTapDown, isNotNull);
-    expect(previewName.onLongPress, isNotNull);
+    final previewNameTap = tester.widget<InkWell>(
+      find.descendant(of: previewName, matching: find.byType(InkWell)),
+    );
+    expect(previewNameTap.onTap, isNotNull);
+    expect(previewNameTap.onSecondaryTap, isNotNull);
+    expect(previewNameTap.onLongPress, isNotNull);
     expect(
       find.byKey(
         const ValueKey('cardPreviewInlineAttachment-описание.txt'),
       ),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.byKey(
         const ValueKey('cardPreviewInlineAttachment-звук.mp3'),
       ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('cardPreviewInlineAttachment-фото.png'),
+      ),
       findsOneWidget,
     );
-    expect(find.text('test'), findsOneWidget);
-    expect(find.textContaining('MP3 ·'), findsOneWidget);
+    expect(find.text('test'), findsNothing);
+    expect(find.textContaining('MP3 ·'), findsNothing);
   });
 
   testWidgets('category editor uses template design and fills narrow screen',
