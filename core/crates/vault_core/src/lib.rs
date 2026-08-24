@@ -70,7 +70,13 @@ pub fn built_in_templates() -> Vec<Template> {
             "teal",
             vec![
                 field("holder", "Владелец карты", FieldType::Text, false, false),
-                field("number", "Номер карты", FieldType::CustomSecret, true, false),
+                field(
+                    "number",
+                    "Номер карты",
+                    FieldType::CustomSecret,
+                    true,
+                    false,
+                ),
                 field("expires", "Действует до", FieldType::Date, false, false),
                 field("cvv", "CVV", FieldType::Password, false, true),
             ],
@@ -82,7 +88,13 @@ pub fn built_in_templates() -> Vec<Template> {
             "violet",
             vec![
                 field("full_name", "ФИО", FieldType::Text, true, false),
-                field("document_number", "Номер документа", FieldType::CustomSecret, true, false),
+                field(
+                    "document_number",
+                    "Номер документа",
+                    FieldType::CustomSecret,
+                    true,
+                    false,
+                ),
                 field("issued_at", "Дата выдачи", FieldType::Date, false, false),
             ],
         ),
@@ -93,15 +105,39 @@ pub fn built_in_templates() -> Vec<Template> {
             "blue",
             vec![
                 field("bank", "Банк", FieldType::Text, true, false),
-                field("account", "Номер счета", FieldType::CustomSecret, true, false),
-                field("login", "Логин интернет-банка", FieldType::Username, false, false),
-                field("password", "Пароль интернет-банка", FieldType::Password, false, true),
+                field(
+                    "account",
+                    "Номер счета",
+                    FieldType::CustomSecret,
+                    true,
+                    false,
+                ),
+                field(
+                    "login",
+                    "Логин интернет-банка",
+                    FieldType::Username,
+                    false,
+                    false,
+                ),
+                field(
+                    "password",
+                    "Пароль интернет-банка",
+                    FieldType::Password,
+                    false,
+                    true,
+                ),
             ],
         ),
     ]
 }
 
-fn template(id: &str, name: &str, icon_id: &str, color_id: &str, fields: Vec<TemplateField>) -> Template {
+fn template(
+    id: &str,
+    name: &str,
+    icon_id: &str,
+    color_id: &str,
+    fields: Vec<TemplateField>,
+) -> Template {
     Template {
         id: id.to_owned(),
         name: name.to_owned(),
@@ -112,7 +148,13 @@ fn template(id: &str, name: &str, icon_id: &str, color_id: &str, fields: Vec<Tem
     }
 }
 
-fn field(id: &str, label: &str, field_type: FieldType, required: bool, secret: bool) -> TemplateField {
+fn field(
+    id: &str,
+    label: &str,
+    field_type: FieldType,
+    required: bool,
+    secret: bool,
+) -> TemplateField {
     TemplateField {
         id: id.to_owned(),
         label: label.to_owned(),
@@ -132,7 +174,12 @@ mod tests {
             .into_iter()
             .find(|template| template.id == "tpl_payment_card")
             .expect("payment card template");
-        let secret_fields: Vec<_> = card.fields.iter().filter(|field| field.secret).map(|field| field.id.as_str()).collect();
+        let secret_fields: Vec<_> = card
+            .fields
+            .iter()
+            .filter(|field| field.secret)
+            .map(|field| field.id.as_str())
+            .collect();
         assert_eq!(secret_fields, vec!["cvv"]);
     }
 
@@ -142,8 +189,16 @@ mod tests {
             .into_iter()
             .find(|template| template.id == "tpl_bank_account")
             .expect("bank account template");
-        let number = account.fields.iter().find(|field| field.id == "account").expect("account field");
-        let password = account.fields.iter().find(|field| field.id == "password").expect("password field");
+        let number = account
+            .fields
+            .iter()
+            .find(|field| field.id == "account")
+            .expect("account field");
+        let password = account
+            .fields
+            .iter()
+            .find(|field| field.id == "password")
+            .expect("password field");
         assert!(!number.secret);
         assert!(password.secret);
     }

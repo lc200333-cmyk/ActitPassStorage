@@ -44,9 +44,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         debugShowCheckedModeBanner: false,
-        builder: (context, child) => CompactPortraitScaler(
-          child: child ?? const SizedBox.shrink(),
-        ),
+        builder: (context, child) => child ?? const SizedBox.shrink(),
         theme: ThemeData(
           useMaterial3: true,
           fontFamily: 'ManualArial',

@@ -33,11 +33,9 @@ function exists(relativePath) {
 const app = read('app/lib/main.dart');
 [
   'ActitPassStorage',
-  'Открыть .swl',
-  'Создать .swl',
-  'Выбрать .swl файл',
+  'Открыть кошелёк',
+  'Создать кошелёк',
   'Последние файлы',
-  'Файл .swl не выбран',
   'Банковская карта',
   'Номер карты',
   'CVV',
@@ -49,10 +47,8 @@ const app = read('app/lib/main.dart');
   'Создать новую категорию',
   'Все пиктограммы',
   'syntheticSpbIconIdForUi',
-  'Выбрать пиктограмму папки',
   'categoryFolderIcon',
-  'ChoiceChip',
-  'CircleAvatar(backgroundColor: color.bg)',
+  'SpbGradientActionButton',
 ].forEach((needle) => assert.ok(app.includes(needle), `Flutter app missing ${needle}`));
 
 assert.ok((app.match(/TemplateIcon\('/g) || []).length >= 100, 'Flutter app should expose at least 100 pictograms');

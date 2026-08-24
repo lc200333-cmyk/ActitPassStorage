@@ -60,18 +60,10 @@ void main() {
 
       await tester.pumpWidget(const ActitPassApp());
       await tester.pump();
-      final compactScale = find.byKey(const Key('compactPortraitScale'));
-      expect(compactScale, findsOneWidget, reason: profile.name);
-      final transform = tester.widget<Transform>(compactScale);
       expect(
-        transform.transform.storage[0],
-        closeTo(0.8, 0.0001),
-        reason: '${profile.name}: horizontal compact scale',
-      );
-      expect(
-        transform.transform.storage[5],
-        closeTo(0.8, 0.0001),
-        reason: '${profile.name}: vertical compact scale',
+        find.byKey(const Key('compactPortraitScale')),
+        findsNothing,
+        reason: '${profile.name}: portrait uses native 100% scale',
       );
       expectInsideViewport(
         tester,

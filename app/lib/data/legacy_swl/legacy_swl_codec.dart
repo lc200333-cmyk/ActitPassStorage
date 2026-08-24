@@ -64,11 +64,19 @@ abstract final class LegacySwlCodec {
   static Uint8List windowsMultiResolutionIco(List<int> bytes) {
     final decoded = image.decodeImage(Uint8List.fromList(bytes));
     if (decoded == null) {
-      throw const FormatException('Wallet.png cannot be decoded.');
+      throw const FormatException('The Windows app icon cannot be decoded.');
     }
+    final side = max(decoded.width, decoded.height);
+    final square = image.Image(width: side, height: side, numChannels: 4);
+    image.compositeImage(
+      square,
+      decoded,
+      dstX: (side - decoded.width) ~/ 2,
+      dstY: (side - decoded.height) ~/ 2,
+    );
     const sizes = [16, 24, 32, 48, 64, 128, 256];
     final first = image.copyResize(
-      decoded,
+      square,
       width: sizes.first,
       height: sizes.first,
       interpolation: image.Interpolation.cubic,
@@ -76,7 +84,7 @@ abstract final class LegacySwlCodec {
     for (final size in sizes.skip(1)) {
       first.addFrame(
         image.copyResize(
-          decoded,
+          square,
           width: size,
           height: size,
           interpolation: image.Interpolation.cubic,

@@ -8,13 +8,13 @@
 namespace {
 std::wstring Utf16FromUtf8(const std::string& value) {
   if (value.empty()) {
-    return L"Pass Storage";
+    return L"APS Wallet";
   }
   const int length = MultiByteToWideChar(
       CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
       static_cast<int>(value.size()), nullptr, 0);
   if (length <= 0) {
-    return L"Pass Storage";
+    return L"APS Wallet";
   }
   std::wstring result(length, L'\0');
   MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
@@ -104,8 +104,8 @@ void FlutterWindow::SetLoginWindowMode(bool expanded) {
   SetWindowMode(true, expanded);
 }
 
-void FlutterWindow::SetMainWindowMode(const std::wstring& title) {
-  SetWindowMode(false, false, title);
+void FlutterWindow::SetMainWindowMode(const std::wstring&) {
+  SetWindowMode(false, false, L"APS Wallet");
 }
 
 void FlutterWindow::SetWindowMode(bool login, bool expanded,

@@ -1,4 +1,4 @@
-#define MyAppName "Pass Storage"
+#define MyAppName "APS Wallet"
 #define MyAppVersion "0.2.1"
 #define MyAppPublisher "Actit"
 #define MyAppExeName "actit_pass_storage.exe"

@@ -23,6 +23,10 @@ Thumbs.db
 *.keystore
 *.jks
 key.properties
+*_Conflict.*
+**/*_Conflict.*
+app/android/upload-keystore.jks
+app/android/key.properties
 
 # Node
 node_modules/

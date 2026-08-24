@@ -86,10 +86,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      tester.getSize(find.byKey(const Key('templateEditorSurface'))),
-      const Size(360, 800),
-    );
+    final templateSurfaceSize =
+        tester.getSize(find.byKey(const Key('templateEditorSurface')));
+    expect(templateSurfaceSize.width, 360);
+    expect(templateSurfaceSize.height, greaterThanOrEqualTo(500));
     expect(find.byKey(const Key('templateNameField')), findsOneWidget);
     expect(find.byKey(const Key('templateBoundIcon')), findsOneWidget);
     expect(find.text('Выбрать иконку'), findsOneWidget);
@@ -326,6 +326,77 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Иконки SPB Wallet'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('vertical editors keep their size when keyboard opens and closes',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final template = builtInTemplates().first;
+
+    Widget templateEditor(double keyboardHeight) => MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(
+              size: const Size(360, 800),
+              viewInsets: EdgeInsets.only(bottom: keyboardHeight),
+            ),
+            child: TemplateEditorDialog(initial: template),
+          ),
+        );
+
+    await tester.pumpWidget(templateEditor(0));
+    await tester.pumpAndSettle();
+    final initialTemplateSize =
+        tester.getSize(find.byKey(const Key('templateEditorSurface')));
+    await tester.pumpWidget(templateEditor(224));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byKey(const Key('templateEditorSurface'))),
+      initialTemplateSize,
+    );
+    final lastField = find.byKey(
+      ValueKey('templateFieldName-${template.fields.last.id}'),
+    );
+    await tester.ensureVisible(lastField);
+    await tester.pumpAndSettle();
+    await tester.tap(lastField);
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(lastField).dy, lessThan(560));
+    await tester.pumpWidget(templateEditor(0));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byKey(const Key('templateEditorSurface'))),
+      initialTemplateSize,
+    );
+
+    Widget cardEditor(double keyboardHeight) => MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(
+              size: const Size(360, 800),
+              viewInsets: EdgeInsets.only(bottom: keyboardHeight),
+            ),
+            child: ItemEditorDialog(
+              templates: builtInTemplates(),
+              categories: const [],
+            ),
+          ),
+        );
+    await tester.pumpWidget(cardEditor(0));
+    await tester.pumpAndSettle();
+    final initialCardSize =
+        tester.getSize(find.byKey(const Key('cardEditorSurface')));
+    await tester.pumpWidget(cardEditor(224));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byKey(const Key('cardEditorSurface'))),
+      initialCardSize,
+    );
+    await tester.pumpWidget(cardEditor(0));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byKey(const Key('cardEditorSurface'))),
+      initialCardSize,
+    );
   });
 
   testWidgets('card preview uses template design and skips empty fields',
@@ -637,6 +708,69 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('new folder asks for a name before showing save', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: CategoryEditorDialog(
+          editing: false,
+          initialName: '',
+          initialIconId: 'folder',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final nameField = find.byKey(const Key('categoryNameField'));
+    final field = tester.widget<TextField>(nameField);
+    expect(field.autofocus, isTrue);
+    expect(field.decoration!.hintText, 'Введите имя папки');
+    expect(find.byKey(const Key('categorySaveButton')), findsNothing);
+
+    await tester.enterText(nameField, 'Архив');
+    await tester.pump();
+    expect(find.byKey(const Key('categorySaveButton')), findsOneWidget);
+  });
+
+  testWidgets('compact move picker uses folder list and standard actions',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    await tester.binding.setSurfaceSize(const Size(576, 1024));
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      tester.binding.setSurfaceSize(null);
+    });
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+    final dynamic state = tester.state(find.byType(VaultShell));
+    state.setState(() => state.categoryPaths = <String>{'Работа', 'Архив'});
+    await tester.pump();
+
+    final Future<String?> result = state.showMoveTargetDialog(
+      initialPath: '',
+    );
+    await tester.pumpAndSettle();
+    final moveSurfaceSize =
+        tester.getSize(find.byKey(const Key('moveTargetSurface')));
+    expect(moveSurfaceSize.width, 576);
+    expect(moveSurfaceSize.height, greaterThanOrEqualTo(552));
+    expect(find.byKey(const ValueKey('moveTarget-Работа')), findsOneWidget);
+    final cancel = find.byKey(const Key('cancelMoveButton'));
+    final confirm = find.byKey(const Key('confirmMoveButton'));
+    expect(
+        tester.getTopLeft(cancel).dx, lessThan(tester.getTopLeft(confirm).dx));
+    await tester.tap(find.byKey(const ValueKey('moveTarget-Работа')));
+    await tester.tap(confirm);
+    await tester.pumpAndSettle();
+    expect(await result, 'Работа');
+    debugDefaultTargetPlatformOverride = null;
+    await tester.binding.setSurfaceSize(null);
+  });
+
   testWidgets('desktop vault uses the W1 three-column layout', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     await tester.binding.setSurfaceSize(const Size(1280, 1010));
@@ -649,6 +783,13 @@ void main() {
       const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
     );
     await tester.pumpAndSettle();
+
+    final desktopSearch = find.byKey(const Key('spbSearchInput'));
+    final desktopSubmit = find.byKey(const Key('spbSubmitSearchButton'));
+    expect(
+      tester.getTopLeft(desktopSubmit).dx,
+      closeTo(tester.getTopRight(desktopSearch).dx + 5, 0.1),
+    );
 
     expect(find.text('Мои карточки'), findsNWidgets(2));
     expect(find.text('Задачи'), findsOneWidget);
@@ -711,6 +852,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    final tabletSearch = find.byKey(const Key('spbSearchInput'));
+    final tabletSubmit = find.byKey(const Key('spbSubmitSearchButton'));
+    expect(
+      tester.getTopLeft(tabletSubmit).dx,
+      closeTo(tester.getTopRight(tabletSearch).dx + 5, 0.1),
+    );
+
     expect(find.text('Мои карточки'), findsNWidgets(2));
     expect(find.text('Шаблоны'), findsOneWidget);
     expect(find.text('Задачи'), findsNothing);
@@ -733,6 +881,12 @@ void main() {
     await tester.tap(find.byKey(const Key('mobilePaneForward')));
     await tester.pumpAndSettle();
     expect(find.text('Задачи'), findsOneWidget);
+    expect(find.byKey(const ValueKey('spbCollapseЗадачи')), findsOneWidget);
+    expect(find.byKey(const ValueKey('spbCollapseНайдено')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('spbCollapseЧасто используемые')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('mobilePaneBack')), findsOneWidget);
     expect(find.byKey(const Key('mobilePaneForward')), findsOneWidget);
     await tester.tap(find.byKey(const Key('mobilePaneBack')));
@@ -743,6 +897,111 @@ void main() {
     expect(tester.takeException(), isNull);
     debugDefaultTargetPlatformOverride = null;
     await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('viewed card remains highlighted after preview closes',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await tester.binding.setSurfaceSize(const Size(1280, 1010));
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      tester.binding.setSurfaceSize(null);
+    });
+
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+    final dynamic state = tester.state(find.byType(VaultShell));
+    final template = builtInTemplates().first;
+    final card = SecretItem(
+      id: 'highlighted-card',
+      templateId: template.id,
+      title: 'Просмотренная карточка',
+      category: '',
+      colorId: template.colorId,
+      values: const {},
+      modifiedAt: DateTime.utc(2026),
+    );
+    state.setState(() {
+      state.templates = [template];
+      state.items = [card];
+    });
+    await tester.pumpAndSettle();
+    final String cardId = card.id;
+    final treeCard = find.byKey(ValueKey('spbTreeCard-$cardId'));
+
+    await tester.tap(treeCard);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('cardPreviewBackButton')));
+    await tester.pumpAndSettle();
+
+    final tile = tester.widget<ListTile>(
+      find.descendant(of: treeCard, matching: find.byType(ListTile)),
+    );
+    expect(tile.selected, isTrue);
+    expect(tile.selectedTileColor, const Color(0xffcfe9fb));
+    debugDefaultTargetPlatformOverride = null;
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('change password uses compact standard action buttons',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 1010));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+    final dynamic state = tester.state(find.byType(VaultShell));
+    state.openChangePasswordDialog();
+    await tester.pumpAndSettle();
+
+    final cancel = find.byKey(const Key('cancelChangePassword'));
+    final save = find.byKey(const Key('confirmChangePassword'));
+    expect(tester.getSize(cancel), const Size(48, 48));
+    expect(tester.getSize(save), const Size(48, 48));
+    expect(
+      find.descendant(of: cancel, matching: find.byIcon(Icons.close)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: save, matching: find.byIcon(Icons.check)),
+      findsOneWidget,
+    );
+    await tester.tap(cancel);
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('damaged cards produce a visible report instead of disappearing',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 1010));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+    final dynamic state = tester.state(find.byType(VaultShell));
+    const snapshot = SpbWalletSnapshot(
+      templates: [],
+      cards: [],
+      categories: [],
+      cardLoadFailures: [
+        SpbWalletCardLoadFailure(
+          cardId: 'BAD-CARD-ID',
+          reason: 'Ошибка расшифровки тестовой карточки',
+        ),
+      ],
+    );
+    state.setState(() => state.applySpbSnapshot(snapshot));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Не удалось отобразить 1 карточек'), findsOneWidget);
+    await tester.tap(find.text('Не удалось отобразить 1 карточек'));
+    await tester.pumpAndSettle();
+    expect(find.text('Карточка BAD-CARD-ID'), findsOneWidget);
+    expect(find.text('Экспортировать исправные'), findsOneWidget);
+    expect(find.text('Проверить и восстановить'), findsOneWidget);
   });
 
   testWidgets('vault layout adapts to phones, landscape and tablet',
@@ -777,7 +1036,8 @@ void main() {
       const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
     );
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('spbNavigatorSplitter')), findsOneWidget);
+    expect(find.byKey(const Key('spbMobilePaneHeader')), findsOneWidget);
+    expect(find.byKey(const Key('spbNavigatorSplitter')), findsNothing);
     expect(tester.takeException(), isNull);
     debugDefaultTargetPlatformOverride = null;
     await tester.binding.setSurfaceSize(null);
@@ -835,10 +1095,10 @@ void main() {
 
     await tester.tap(find.text('Создать новый шаблон'));
     await tester.pumpAndSettle();
-    expect(
-      tester.getSize(find.byKey(const Key('templateEditorSurface'))),
-      const Size(360, 800),
-    );
+    final mobileTemplateSurfaceSize =
+        tester.getSize(find.byKey(const Key('templateEditorSurface')));
+    expect(mobileTemplateSurfaceSize.width, 360);
+    expect(mobileTemplateSurfaceSize.height, greaterThanOrEqualTo(500));
     expect(find.byKey(const Key('templateBoundIcon')), findsOneWidget);
     expect(find.byKey(const Key('templateUndoButton')), findsOneWidget);
     expect(find.byKey(const Key('templateSaveButton')), findsOneWidget);
@@ -1117,8 +1377,8 @@ void main() {
       find.descendant(of: cancelButton, matching: find.text('Отмена')),
       findsOneWidget,
     );
-    expect(tester.getSize(confirmButton), const Size(110, 40));
-    expect(tester.getSize(cancelButton), const Size(124, 40));
+    expect(tester.getSize(confirmButton), const Size(110, 48));
+    expect(tester.getSize(cancelButton), const Size(124, 48));
     final newPassword = tester.widget<TextField>(
       find.descendant(
         of: find.byKey(const Key('newVaultPassword')),
@@ -1195,8 +1455,8 @@ void main() {
     expect(find.text('Удалить карточку'), findsOneWidget);
     expect(cancel, findsOneWidget);
     expect(confirm, findsOneWidget);
-    expect(tester.getSize(cancel), const Size(124, 40));
-    expect(tester.getSize(confirm), const Size(124, 40));
+    expect(tester.getSize(cancel), const Size(124, 48));
+    expect(tester.getSize(confirm), const Size(124, 48));
 
     await tester.tap(cancel);
     await tester.pumpAndSettle();

@@ -25,11 +25,23 @@ pub struct MergeResult {
     pub conflict: Option<ConflictRecord>,
 }
 
-pub fn merge_last_write_wins(local: &ChangeRecord, remote: &ChangeRecord, created_at_ms: i64) -> MergeResult {
+pub fn merge_last_write_wins(
+    local: &ChangeRecord,
+    remote: &ChangeRecord,
+    created_at_ms: i64,
+) -> MergeResult {
     let remote_wins = remote.modified_at_ms > local.modified_at_ms
         || (remote.modified_at_ms == local.modified_at_ms && remote.change_id > local.change_id);
-    let winner = if remote_wins { remote.item.clone() } else { local.item.clone() };
-    let winner_change_id = if remote_wins { &remote.change_id } else { &local.change_id };
+    let winner = if remote_wins {
+        remote.item.clone()
+    } else {
+        local.item.clone()
+    };
+    let winner_change_id = if remote_wins {
+        &remote.change_id
+    } else {
+        &local.change_id
+    };
     let conflict = if local.item.id == remote.item.id && local.change_id != remote.change_id {
         Some(ConflictRecord {
             conflict_id: format!("conflict_{}_{}", local.change_id, remote.change_id),

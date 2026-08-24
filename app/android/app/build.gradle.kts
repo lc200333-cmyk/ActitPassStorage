@@ -1,7 +1,31 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val releaseProperties = Properties()
+val releasePropertiesFile = rootProject.file("key.properties")
+if (releasePropertiesFile.exists()) {
+    releasePropertiesFile.inputStream().use(releaseProperties::load)
+}
+fun releaseSecret(name: String, environmentName: String): String? =
+    releaseProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+        ?: System.getenv(environmentName)?.takeIf { it.isNotBlank() }
+val releaseStoreFile = releaseSecret("storeFile", "ANDROID_KEYSTORE_PATH")
+val releaseStorePassword = releaseSecret("storePassword", "ANDROID_STORE_PASSWORD")
+val releaseKeyAlias = releaseSecret("keyAlias", "ANDROID_KEY_ALIAS")
+val releaseKeyPassword = releaseSecret("keyPassword", "ANDROID_KEY_PASSWORD")
+val releaseSigningComplete = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { it != null }
+val releaseBuildRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
 }
 
 android {
@@ -25,11 +49,29 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (releaseSigningComplete) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            if (releaseBuildRequested && !releaseSigningComplete) {
+                throw GradleException(
+                    "Release signing is required. Provide key.properties or " +
+                        "ANDROID_KEYSTORE_PATH, ANDROID_STORE_PASSWORD, " +
+                        "ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD.",
+                )
+            }
+            if (releaseSigningComplete) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }
