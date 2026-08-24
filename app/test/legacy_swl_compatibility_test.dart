@@ -11,6 +11,11 @@ const _password = '0000';
 
 File _fixture(String name) => File('../docs/$name');
 
+final _legacyFixturesAvailable = [
+  'Мой кошелёк.swl',
+  'Мой кошелёк1.swl',
+].every((name) => _fixture(name).existsSync());
+
 Future<(Directory, File)> _copyFixture(String name) async {
   final directory =
       await Directory.systemTemp.createTemp('actitpass_legacy_fixture_');
@@ -86,7 +91,7 @@ void main() {
         await directory.delete(recursive: true);
       }
     }
-  });
+  }, skip: !_legacyFixturesAvailable);
 
   test('rekey preserves legacy schema, metadata and unknown tables', () async {
     final (directory, source) = await _copyFixture('Мой кошелёк.swl');
@@ -148,7 +153,7 @@ void main() {
     } finally {
       await directory.delete(recursive: true);
     }
-  });
+  }, skip: !_legacyFixturesAvailable);
 
   test('legacy repair restores current wallet ID relationships', () async {
     final (directory, copy) = await _copyFixture('Мой кошелёк1.swl');
@@ -201,7 +206,7 @@ void main() {
     } finally {
       await directory.delete(recursive: true);
     }
-  });
+  }, skip: !_legacyFixturesAvailable);
 
   test('writer stores text IDs, integer colors and ICO custom icons', () async {
     final (directory, copy) = await _copyFixture('Мой кошелёк.swl');
@@ -283,7 +288,7 @@ void main() {
     } finally {
       await directory.delete(recursive: true);
     }
-  });
+  }, skip: !_legacyFixturesAvailable);
 
   test('fresh export schema uses original SPB metadata and triggers', () async {
     final directory =
