@@ -41,12 +41,15 @@ jobs:
           components: rustfmt, clippy
       - name: Verify packaging
         run: npm test
-      - name: Verify Flutter
+      - name: Resolve Flutter dependencies
         working-directory: app
-        run: |
-          flutter pub get
-          flutter analyze
-          flutter test
+        run: flutter pub get
+      - name: Analyze Flutter
+        working-directory: app
+        run: flutter analyze
+      - name: Test Flutter
+        working-directory: app
+        run: flutter test
       - name: Verify Rust
         working-directory: core
         run: |
