@@ -2,7 +2,7 @@ name: actit_pass_storage
 description: "ActitPassStorage: локальный менеджер паролей, заметок и карточек."
 publish_to: "none"
 # Application version updates and release builds are managed by the Release workflow.
-version: 0.2.3+29
+version: 0.2.4+30
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
