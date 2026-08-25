@@ -2640,6 +2640,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   final GlobalKey spbSessionTrashButtonKey = GlobalKey();
   final ScrollController spbFoundScrollController = ScrollController();
   final ScrollController spbFrequentScrollController = ScrollController();
+  final ScrollController spbMobileActionsScrollController = ScrollController();
   Timer? inactivityTimer;
   Timer? inactivityCountdownTimer;
   int inactivitySecondsRemaining = 15;
@@ -2873,6 +2874,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     searchController.dispose();
     spbFoundScrollController.dispose();
     spbFrequentScrollController.dispose();
+    spbMobileActionsScrollController.dispose();
     passwordFocusNode.dispose();
     super.dispose();
   }
@@ -3393,9 +3395,29 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     var showRepeatedPassword = false;
     var isCreating = false;
     var createdVault = false;
+    Map<String, Object?>? androidDocument;
     String? dialogError;
 
     Future<void> pickNewVaultDirectory(StateSetter setDialogState) async {
+      if (Platform.isAndroid) {
+        final baseName = nameController.text.trim().replaceAll(
+              RegExp(r'\.swl$', caseSensitive: false),
+              '',
+            );
+        final document = await spbWalletChannel
+            .invokeMapMethod<String, Object?>('createSpbWalletDocument', {
+          'displayName': '${baseName.isEmpty ? 'Новая база' : baseName}.swl',
+        });
+        if (document == null) return;
+        setDialogState(() {
+          androidDocument = document;
+          pathController.text = document['displayPath']?.toString() ??
+              document['displayName']?.toString() ??
+              'Android-хранилище';
+          dialogError = null;
+        });
+        return;
+      }
       final selectedDirectory = await FilePicker.platform.getDirectoryPath(
         dialogTitle: 'Назначить путь для новой базы',
         lockParentWindow: true,
@@ -3445,42 +3467,61 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    TextField(
-                      key: const Key('newVaultPath'),
-                      controller: pathController,
-                      readOnly: true,
-                      autofocus: true,
-                      onTap: Platform.isAndroid
-                          ? null
-                          : () => pickNewVaultDirectory(setDialogState),
-                      decoration: InputDecoration(
-                        labelText: 'Назначить путь',
-                        hintText: Platform.isAndroid
-                            ? 'Файл будет выбран системным диалогом'
-                            : 'Выберите папку для новой базы',
-                        border: const OutlineInputBorder(),
-                        suffixIcon: Platform.isAndroid
-                            ? const Icon(Icons.phone_android)
-                            : IconButton(
-                                key: const Key('browseNewVaultPath'),
-                                tooltip: 'Выбрать папку в проводнике',
-                                icon: const Icon(Icons.folder_open_outlined),
-                                onPressed: () =>
-                                    pickNewVaultDirectory(setDialogState),
-                              ),
+                    SizedBox(
+                      height: 42,
+                      child: TextField(
+                        key: const Key('newVaultPath'),
+                        controller: pathController,
+                        readOnly: true,
+                        autofocus: true,
+                        onTap: () => pickNewVaultDirectory(setDialogState),
+                        decoration: InputDecoration(
+                          labelText: 'Назначить путь',
+                          hintText: Platform.isAndroid
+                              ? 'Выберите файл в локальном или облачном хранилище'
+                              : 'Выберите папку для новой базы',
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          suffixIconConstraints: const BoxConstraints.tightFor(
+                            width: 40,
+                            height: 40,
+                          ),
+                          suffixIcon: IconButton(
+                            key: const Key('browseNewVaultPath'),
+                            tooltip: Platform.isAndroid
+                                ? 'Выбрать файл в проводнике'
+                                : 'Выбрать папку в проводнике',
+                            padding: EdgeInsets.zero,
+                            icon: const Icon(Icons.folder_open_outlined),
+                            onPressed: () =>
+                                pickNewVaultDirectory(setDialogState),
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      key: const Key('newVaultName'),
-                      controller: nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Название базы',
-                        suffixText: '.swl',
-                        border: OutlineInputBorder(),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 42,
+                      child: TextField(
+                        key: const Key('newVaultName'),
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Название базы',
+                          suffixText: '.swl',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     PasswordField(
                       key: const Key('newVaultPassword'),
                       controller: newPasswordController,
@@ -3490,13 +3531,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                         () => showNewPassword = !showNewPassword,
                       ),
                       onChanged: (_) => setDialogState(() {}),
+                      compact: true,
                     ),
                     const SizedBox(height: 8),
                     PasswordStrengthBar(
                       key: const Key('newVaultPasswordStrength'),
                       password: newPasswordController.text,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     PasswordField(
                       key: const Key('newVaultPasswordRepeat'),
                       controller: repeatPasswordController,
@@ -3505,14 +3547,23 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                       onToggle: () => setDialogState(
                         () => showRepeatedPassword = !showRepeatedPassword,
                       ),
+                      compact: true,
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      key: const Key('newVaultPasswordHint'),
-                      controller: hintController,
-                      decoration: const InputDecoration(
-                        labelText: 'Подсказка',
-                        border: OutlineInputBorder(),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 42,
+                      child: TextField(
+                        key: const Key('newVaultPasswordHint'),
+                        controller: hintController,
+                        decoration: const InputDecoration(
+                          labelText: 'Подсказка',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                        ),
                       ),
                     ),
                     if (dialogError != null) ...[
@@ -3540,9 +3591,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   opacity: isCreating ? 0.6 : 1,
                   child: passwordKey(
                     key: const Key('confirmCreateVault'),
-                    label: 'OK',
-                    height: 40,
-                    fontSize: 18,
+                    label: 'Создать базу',
+                    height: 48,
+                    top: const Color(0xff43a047),
+                    bottom: const Color(0xff1b5e20),
+                    child:
+                        const Icon(Icons.check, color: Colors.white, size: 28),
                     onPressed: () async {
                       final selectedDirectory = pathController.text.trim();
                       final name = nameController.text.trim().replaceAll(
@@ -3584,11 +3638,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                       vaultNameController.text = name;
                       try {
                         if (Platform.isAndroid) {
-                          final document = await spbWalletChannel
-                              .invokeMapMethod<String, Object?>(
-                            'createSpbWalletDocument',
-                            {'displayName': '$normalizedVaultBaseName.swl'},
-                          );
+                          final document = androidDocument ??
+                              await spbWalletChannel
+                                  .invokeMapMethod<String, Object?>(
+                                'createSpbWalletDocument',
+                                {
+                                  'displayName': '$normalizedVaultBaseName.swl',
+                                },
+                              );
                           if (document == null) {
                             if (dialogContext.mounted) {
                               setDialogState(() => isCreating = false);
@@ -3670,10 +3727,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   child: passwordKey(
                     key: const Key('cancelCreateVault'),
                     label: 'Отмена',
-                    height: 40,
-                    fontSize: 17,
+                    height: 48,
                     top: const Color(0xffd32b31),
                     bottom: const Color(0xff7f0609),
+                    child:
+                        const Icon(Icons.close, color: Colors.white, size: 28),
                     onPressed: () => Navigator.of(dialogContext).pop(),
                   ),
                 ),
@@ -3813,8 +3871,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     label: 'Старый пароль',
                     visible: showOld,
                     onToggle: () => setDialogState(() => showOld = !showOld),
+                    compact: true,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   PasswordField(
                     key: const Key('changePasswordNew'),
                     controller: newController,
@@ -3822,13 +3881,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     visible: showNew,
                     onChanged: (_) => setDialogState(() {}),
                     onToggle: () => setDialogState(() => showNew = !showNew),
+                    compact: true,
                   ),
                   const SizedBox(height: 8),
                   PasswordStrengthBar(
                     key: const Key('changePasswordStrength'),
                     password: newController.text,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   PasswordField(
                     key: const Key('changePasswordRepeat'),
                     controller: repeatController,
@@ -3836,16 +3896,25 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     visible: showRepeat,
                     onToggle: () =>
                         setDialogState(() => showRepeat = !showRepeat),
+                    compact: true,
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    key: const Key('changePasswordHint'),
-                    controller: hintController,
-                    decoration: const InputDecoration(
-                      labelText: 'Подсказка',
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 42,
+                    child: TextField(
+                      key: const Key('changePasswordHint'),
+                      controller: hintController,
+                      decoration: const InputDecoration(
+                        labelText: 'Подсказка',
+                        filled: true,
+                        fillColor: Colors.white,
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                      ),
                     ),
                   ),
                   if (errorText != null) ...[
@@ -7610,7 +7679,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         (
           spbResourceIcon('icon_save_enable.png', 40),
           spbWritePending ? 'Повторить сохранение' : 'Сохранить базу',
-          runSync,
+          saveVaultThroughExplorer,
         ),
       ];
     }
@@ -7672,7 +7741,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       (
         spbResourceIcon('icon_save_enable.png', 40),
         spbWritePending ? 'Повторить сохранение' : 'Сохранить базу',
-        runSync,
+        saveVaultThroughExplorer,
       ),
     ];
   }
@@ -7840,74 +7909,81 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       );
     }
     return wrapSpbTemplateRightContextMenu(
-      Container(
-        color: _spbRightPanel,
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            buildSpbActionGroup(
-              'Задачи',
-              spbTasksForCurrentMode(),
-              sectionExpanded: spbTasksExpanded,
-              onExpand: () => setState(() => spbTasksExpanded = true),
-              onCollapse: () => setState(() => spbTasksExpanded = false),
-            ),
-            buildSpbCollapsibleHeader(
-              'Найдено',
-              expanded: spbFoundExpanded,
-              onExpand: () => setState(() => spbFoundExpanded = true),
-              onCollapse: () => setState(() => spbFoundExpanded = false),
-              trailing: Text(
-                '$foundCount',
-                key: const Key('spbFoundCount'),
-                style: const TextStyle(fontSize: 18),
-              ),
-            ),
-            if (spbFoundExpanded && query.isNotEmpty)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 180),
-                child: buildSpbSearchResults(
-                  matchingFolders,
-                  matchingCards,
-                  controller: spbFoundScrollController,
+      Scrollbar(
+        key: const Key('spbMobileActionsScrollbar'),
+        controller: spbMobileActionsScrollController,
+        thumbVisibility: true,
+        trackVisibility: true,
+        child: SingleChildScrollView(
+          controller: spbMobileActionsScrollController,
+          child: Container(
+            color: _spbRightPanel,
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                buildSpbActionGroup(
+                  'Задачи',
+                  spbTasksForCurrentMode(),
+                  sectionExpanded: spbTasksExpanded,
+                  onExpand: () => setState(() => spbTasksExpanded = true),
+                  onCollapse: () => setState(() => spbTasksExpanded = false),
                 ),
-              ),
-            if (spbFrequentExpanded)
-              Expanded(
-                child: buildSpbActionGroup(
-                  'Часто используемые',
-                  [
-                    for (final item in frequent.take(10))
-                      (
-                        spbSizedDataIcon(
-                          itemIconId(item, templateFor(item.templateId)),
-                          40,
-                          fallbackColor: itemPictogramColor(
-                            item,
-                            templateFor(item.templateId),
+                buildSpbCollapsibleHeader(
+                  'Найдено',
+                  expanded: spbFoundExpanded,
+                  onExpand: () => setState(() => spbFoundExpanded = true),
+                  onCollapse: () => setState(() => spbFoundExpanded = false),
+                  trailing: Text(
+                    '$foundCount',
+                    key: const Key('spbFoundCount'),
+                    style: const TextStyle(fontSize: 18),
+                  ),
+                ),
+                if (spbFoundExpanded && query.isNotEmpty)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 180),
+                    child: buildSpbSearchResults(
+                      matchingFolders,
+                      matchingCards,
+                      controller: spbFoundScrollController,
+                    ),
+                  ),
+                if (spbFrequentExpanded)
+                  buildSpbActionGroup(
+                    'Часто используемые',
+                    [
+                      for (final item in frequent.take(10))
+                        (
+                          spbSizedDataIcon(
+                            itemIconId(item, templateFor(item.templateId)),
+                            40,
+                            fallbackColor: itemPictogramColor(
+                              item,
+                              templateFor(item.templateId),
+                            ),
                           ),
+                          item.title,
+                          () => openCardPreviewDialog(item),
                         ),
-                        item.title,
-                        () => openCardPreviewDialog(item),
-                      ),
-                  ],
-                  expand: true,
-                  sectionExpanded: true,
-                  onExpand: () => setState(() => spbFrequentExpanded = true),
-                  onCollapse: () => setState(() => spbFrequentExpanded = false),
-                  scrollController: spbFrequentScrollController,
-                ),
-              )
-            else
-              buildSpbActionGroup(
-                'Часто используемые',
-                const [],
-                sectionExpanded: false,
-                onExpand: () => setState(() => spbFrequentExpanded = true),
-                onCollapse: () => setState(() => spbFrequentExpanded = false),
-              ),
-          ],
+                    ],
+                    sectionExpanded: true,
+                    onExpand: () => setState(() => spbFrequentExpanded = true),
+                    onCollapse: () =>
+                        setState(() => spbFrequentExpanded = false),
+                  )
+                else
+                  buildSpbActionGroup(
+                    'Часто используемые',
+                    const [],
+                    sectionExpanded: false,
+                    onExpand: () => setState(() => spbFrequentExpanded = true),
+                    onCollapse: () =>
+                        setState(() => spbFrequentExpanded = false),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -8427,8 +8503,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   String get passwordPromptText {
     final modified = selectedVaultModifiedText;
     return modified == null
-        ? 'Введите пароль ($selectedVaultTitle)'
-        : 'Введите пароль ($selectedVaultTitle, $modified)';
+        ? selectedVaultTitle
+        : '$selectedVaultTitle, $modified';
   }
 
   void insertPasswordText(String value) {
@@ -8804,13 +8880,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     double fontSize = 34,
     FontWeight fontWeight = FontWeight.w500,
     double height = 62,
+    double minimumHeight = 48,
     Key? key,
   }) {
     return Semantics(
       button: true,
       label: label,
       child: SizedBox(
-        height: max(height, 48),
+        height: max(height, minimumHeight),
         child: Material(
           key: key,
           color: Colors.transparent,
@@ -8878,7 +8955,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       Widget symbolKey(String symbol) => passwordKey(
             key: Key('keypadSymbol$symbol'),
             label: symbol,
-            height: 84,
+            height: 42,
+            minimumHeight: 42,
             fontSize: 25,
             onPressed: () => insertPasswordText(symbol),
           );
@@ -8900,7 +8978,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             ])
               symbolKey(symbol),
           ]),
-          const SizedBox(height: 5),
+          const SizedBox(height: 2),
           keypadRow([
             for (final symbol in [
               '!',
@@ -8916,12 +8994,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             ])
               symbolKey(symbol),
           ]),
-          const SizedBox(height: 5),
+          const SizedBox(height: 2),
           keypadRow([
             passwordKey(
               key: const Key('keypadSymbolsPage'),
               label: '1/2',
-              height: 84,
+              height: 42,
+              minimumHeight: 42,
               fontSize: 18,
               onPressed: passwordFocusNode.requestFocus,
             ),
@@ -8930,7 +9009,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             passwordKey(
               key: const Key('keypadBackspace'),
               label: '<-',
-              height: 84,
+              height: 42,
+              minimumHeight: 42,
               fontSize: 22,
               top: redTop,
               bottom: redBottom,
@@ -8948,7 +9028,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         return passwordKey(
           key: Key('keypadLetter$letter'),
           label: letter,
-          height: 84,
+          height: 42,
+          minimumHeight: 42,
           fontSize: 24,
           onPressed: () => insertPasswordText(letter),
         );
@@ -8971,7 +9052,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             ])
               letterKey(letter),
           ]),
-          const SizedBox(height: 5),
+          const SizedBox(height: 2),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: keypadRow([
@@ -8989,12 +9070,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 letterKey(letter),
             ]),
           ),
-          const SizedBox(height: 5),
+          const SizedBox(height: 2),
           keypadRow([
             passwordKey(
               key: const Key('keypadClear'),
               label: 'CLR',
-              height: 84,
+              height: 42,
+              minimumHeight: 42,
               fontSize: 17,
               top: redTop,
               bottom: redBottom,
@@ -9005,7 +9087,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             passwordKey(
               key: const Key('keypadBackspace'),
               label: '<-',
-              height: 84,
+              height: 42,
+              minimumHeight: 42,
               fontSize: 22,
               top: redTop,
               bottom: redBottom,
@@ -9128,91 +9211,87 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                Text(
-                                  passwordPromptText,
-                                  key: const Key('passwordPrompt'),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    color: Color(0xff16212a),
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    passwordPromptText,
+                                    key: const Key('passwordPrompt'),
+                                    maxLines: 1,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      color: Color(0xff16212a),
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(height: 8),
-                                FractionallySizedBox(
-                                  widthFactor: 2 / 3,
-                                  alignment: Alignment.centerLeft,
-                                  child: SizedBox(
-                                    height: 48,
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        Expanded(
-                                          child: TextSelectionTheme(
-                                            data: const TextSelectionThemeData(
-                                              cursorColor: Colors.black,
-                                              selectionColor:
-                                                  Colors.transparent,
-                                              selectionHandleColor:
-                                                  Colors.transparent,
-                                            ),
-                                            child: TextField(
-                                              key: const Key('passwordInput'),
-                                              controller: passwordController,
-                                              focusNode: passwordFocusNode,
-                                              autofocus: true,
-                                              obscureText: true,
-                                              enableSuggestions: false,
-                                              autocorrect: false,
-                                              keyboardType:
-                                                  TextInputType.visiblePassword,
-                                              textInputAction:
-                                                  TextInputAction.done,
-                                              onSubmitted: (_) => unlock(),
-                                              decoration: const InputDecoration(
-                                                isDense: true,
-                                                filled: true,
-                                                fillColor: Colors.white,
-                                                border: OutlineInputBorder(
-                                                  borderRadius:
-                                                      BorderRadius.zero,
-                                                ),
+                                SizedBox(
+                                  height: 48,
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Expanded(
+                                        child: TextSelectionTheme(
+                                          data: const TextSelectionThemeData(
+                                            cursorColor: Colors.black,
+                                            selectionColor: Colors.transparent,
+                                            selectionHandleColor:
+                                                Colors.transparent,
+                                          ),
+                                          child: TextField(
+                                            key: const Key('passwordInput'),
+                                            controller: passwordController,
+                                            focusNode: passwordFocusNode,
+                                            autofocus: true,
+                                            obscureText: true,
+                                            enableSuggestions: false,
+                                            autocorrect: false,
+                                            keyboardType:
+                                                TextInputType.visiblePassword,
+                                            textInputAction:
+                                                TextInputAction.done,
+                                            onSubmitted: (_) => unlock(),
+                                            decoration: const InputDecoration(
+                                              isDense: true,
+                                              filled: true,
+                                              fillColor: Colors.white,
+                                              border: OutlineInputBorder(
+                                                borderRadius: BorderRadius.zero,
                                               ),
                                             ),
                                           ),
                                         ),
-                                        const SizedBox(width: 6),
-                                        MouseRegion(
-                                          key: const Key(
-                                            'loginPasswordHintHover',
-                                          ),
-                                          cursor: SystemMouseCursors.click,
-                                          onEnter: (_) =>
-                                              showLoginPasswordHint(),
-                                          onExit: (_) =>
-                                              hideLoginPasswordHint(),
-                                          child: SizedBox.square(
-                                            dimension: 48,
-                                            child: passwordKey(
-                                              key: const Key(
-                                                'loginPasswordHintButton',
-                                              ),
-                                              label: 'Подсказка пароля',
-                                              height: 48,
-                                              top: const Color(0xffffdc58),
-                                              bottom: const Color(0xffc58a00),
-                                              onPressed: showLoginPasswordHint,
-                                              child: const Icon(
-                                                Icons.question_mark,
-                                                color: Colors.white,
-                                                size: 28,
-                                              ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Listener(
+                                        key: const Key(
+                                          'loginPasswordHintButton',
+                                        ),
+                                        onPointerDown: (_) =>
+                                            showLoginPasswordHint(),
+                                        onPointerUp: (_) =>
+                                            hideLoginPasswordHint(),
+                                        onPointerCancel: (_) =>
+                                            hideLoginPasswordHint(),
+                                        child: SizedBox.square(
+                                          dimension: 48,
+                                          child: passwordKey(
+                                            label: 'Подсказка пароля',
+                                            height: 48,
+                                            top: const Color(0xffffdc58),
+                                            bottom: const Color(0xffc58a00),
+                                            onPressed:
+                                                passwordFocusNode.requestFocus,
+                                            child: const Icon(
+                                              Icons.question_mark,
+                                              color: Colors.white,
+                                              size: 28,
                                             ),
                                           ),
                                         ),
-                                      ],
-                                    ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                                 if (loginHintVisible) ...[
@@ -9308,7 +9387,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                         ],
                                         child: SizedBox(
                                           width: double.infinity,
-                                          height: 40,
+                                          height: 48,
                                           child: IgnorePointer(
                                             child: passwordKey(
                                               label: 'Открыть файл',
@@ -9317,7 +9396,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                                 color: Colors.white,
                                                 size: 25,
                                               ),
-                                              height: 40,
+                                              height: 48,
                                               fontSize: 18,
                                               onPressed: () {},
                                             ),
@@ -10194,6 +10273,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       final snapshot = wallet.loadSnapshot();
       setState(() {
         applySpbSnapshot(snapshot);
+        if (!editing) {
+          selectedCategoryPath = fullPath;
+          selectedCategoryId = categoryIdsByPath[fullPath];
+          mobilePane = 1;
+        }
         if (written) message = null;
       });
       commitSessionUndo(undoEntry);
@@ -11599,19 +11683,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         );
         markVaultDirty();
         final written = await writeBackSpbWallet();
+        final updated = spbWallet!.loadSnapshot();
         setState(() {
-          if (templatesById.containsKey(prepared.id)) {
-            templates = [
-              for (final template in templates)
-                if (template.id == prepared.id) prepared else template,
-            ];
-          } else {
-            templates = [
-              ...templates,
-              prepared,
-            ]..sort((a, b) => compareNamedEntities(a.name, a.id, b.name, b.id));
-          }
-          templatesById[prepared.id] = prepared;
+          applySpbSnapshot(updated);
           selectedTemplateId = prepared.id;
           if (written) message = null;
         });
@@ -11692,6 +11766,60 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             : 'База записана в исходное хранилище.';
       }
     });
+  }
+
+  Future<void> saveVaultThroughExplorer() async {
+    final sourcePath = spbWalletPath;
+    if (spbWallet == null || sourcePath == null || sourcePath.isEmpty) {
+      setState(() => message = 'Запись доступна после открытия .swl базы.');
+      return;
+    }
+    final written = await writeBackSpbWallet();
+    if (!written || !mounted) return;
+    final source = File(sourcePath);
+    final suggestedName = spbWalletDisplayPath == null ||
+            spbWalletDisplayPath!.startsWith('content://')
+        ? '${selectedVaultTitle.replaceFirst(RegExp(r'\.swl$', caseSensitive: false), '')}.swl'
+        : File(spbWalletDisplayPath!).uri.pathSegments.last;
+    try {
+      if (Platform.isAndroid) {
+        final document = await spbWalletChannel
+            .invokeMapMethod<String, Object?>('createSpbWalletDocument', {
+          'displayName': suggestedName,
+        });
+        final uri = document?['uri']?.toString();
+        if (uri == null || uri.isEmpty) return;
+        final copied = await spbWalletChannel.invokeMethod<bool>(
+          'writeSpbWallet',
+          {'uri': uri, 'localPath': sourcePath},
+        );
+        if (copied != true) {
+          throw StateError('Системный проводник не записал выбранный файл.');
+        }
+      } else {
+        final targetPath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Сохранить базу',
+          fileName: suggestedName,
+          initialDirectory: source.parent.path,
+          type: FileType.custom,
+          allowedExtensions: const ['swl'],
+        );
+        if (targetPath == null || targetPath.trim().isEmpty) return;
+        if (File(targetPath).absolute.path.toLowerCase() !=
+            source.absolute.path.toLowerCase()) {
+          await source.copy(targetPath);
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        lastSyncAt = DateTime.now();
+        message = 'База сохранена.';
+      });
+      showSpbOperationMessage('База сохранена.');
+    } catch (error) {
+      if (!mounted) return;
+      showSpbOperationMessage('Не удалось сохранить базу: $error');
+    }
   }
 }
 
@@ -11810,6 +11938,7 @@ class PasswordField extends StatelessWidget {
     required this.onToggle,
     this.onChanged,
     this.onSubmitted,
+    this.compact = false,
     super.key,
   });
 
@@ -11819,10 +11948,11 @@ class PasswordField extends StatelessWidget {
   final VoidCallback onToggle;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
+    final field = TextField(
       controller: controller,
       obscureText: !visible,
       onChanged: onChanged,
@@ -11830,13 +11960,22 @@ class PasswordField extends StatelessWidget {
       decoration: InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),
+        isDense: compact,
+        contentPadding: compact
+            ? const EdgeInsets.symmetric(horizontal: 12, vertical: 8)
+            : null,
+        suffixIconConstraints: compact
+            ? const BoxConstraints.tightFor(width: 40, height: 40)
+            : null,
         suffixIcon: IconButton(
+          padding: compact ? EdgeInsets.zero : null,
           tooltip: visible ? 'Скрыть' : 'Показать',
           icon: Icon(visible ? Icons.visibility_off : Icons.visibility),
           onPressed: onToggle,
         ),
       ),
     );
+    return compact ? SizedBox(height: 42, child: field) : field;
   }
 }
 
@@ -12337,7 +12476,7 @@ Future<String?> showSpbOriginalIconPickerDialog(
             padding: const EdgeInsets.only(right: 12),
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
               maxCrossAxisExtent: 82,
-              mainAxisExtent: 82,
+              childAspectRatio: 1,
               mainAxisSpacing: 7,
               crossAxisSpacing: 7,
             ),
@@ -12437,7 +12576,7 @@ Future<String?> showThirdPartyIconPickerDialog(BuildContext context) async {
                     gridDelegate:
                         const SliverGridDelegateWithMaxCrossAxisExtent(
                       maxCrossAxisExtent: 82,
-                      mainAxisExtent: 82,
+                      childAspectRatio: 1,
                       mainAxisSpacing: 7,
                       crossAxisSpacing: 7,
                     ),
@@ -13302,6 +13441,16 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
                                   border: const OutlineInputBorder(),
                                   filled: true,
                                   fillColor: color.bg,
+                                  isDense: true,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  suffixIconConstraints:
+                                      const BoxConstraints.tightFor(
+                                    width: 40,
+                                    height: 40,
+                                  ),
                                   suffixIcon: fieldDefinitionIsSecret(field)
                                       ? IconButton(
                                           tooltip:
@@ -14004,54 +14153,67 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
         ),
         const SizedBox(height: 10),
         EnsureVisibleWhenFocused(
-          child: TextField(
-            key: const Key('cardTitleField'),
-            controller: title,
-            onTap: rememberCurrentAction,
-            onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
-              labelText: 'Название карточки',
-              border: OutlineInputBorder(),
+          child: SizedBox(
+            height: 45,
+            child: TextField(
+              key: const Key('cardTitleField'),
+              controller: title,
+              onTap: rememberCurrentAction,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Название карточки',
+                border: OutlineInputBorder(),
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+              ),
             ),
           ),
         ),
         const SizedBox(height: 10),
-        DropdownButtonFormField<String>(
-          key: const Key('cardTemplateField'),
-          isExpanded: true,
-          initialValue: templateId,
-          decoration: const InputDecoration(
-            labelText: 'Название шаблона',
-            border: OutlineInputBorder(),
-          ),
-          items: widget.templates
-              .map(
-                (entry) => DropdownMenuItem(
-                  value: entry.id,
-                  child: cardTemplateMenuLabel(entry),
-                ),
-              )
-              .toList(),
-          onChanged: (value) {
-            if (value == null || value == templateId) return;
-            rememberCurrentAction();
-            setState(() {
-              templateId = value;
-              if (widget.initial == null || widget.initial?.iconId == null) {
-                iconId = template.iconId;
-              }
-              for (final field in template.fields) {
-                values.putIfAbsent(
-                  field.id,
-                  () => TextEditingController(
-                    text: widget.initial?.values[field.id] ?? '',
+        SizedBox(
+          height: 45,
+          child: DropdownButtonFormField<String>(
+            key: const Key('cardTemplateField'),
+            isExpanded: true,
+            initialValue: templateId,
+            decoration: const InputDecoration(
+              labelText: 'Название шаблона',
+              border: OutlineInputBorder(),
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            ),
+            items: widget.templates
+                .map(
+                  (entry) => DropdownMenuItem(
+                    value: entry.id,
+                    child: cardTemplateMenuLabel(entry),
                   ),
-                );
-              }
-              hiddenFieldIds = {};
-              fieldOrder = [for (final field in template.fields) field.id];
-            });
-          },
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value == null || value == templateId) return;
+              rememberCurrentAction();
+              setState(() {
+                templateId = value;
+                if (widget.initial == null || widget.initial?.iconId == null) {
+                  iconId = template.iconId;
+                }
+                for (final field in template.fields) {
+                  values.putIfAbsent(
+                    field.id,
+                    () => TextEditingController(
+                      text: widget.initial?.values[field.id] ?? '',
+                    ),
+                  );
+                }
+                hiddenFieldIds = {};
+                fieldOrder = [for (final field in template.fields) field.id];
+              });
+            },
+          ),
         ),
         const SizedBox(height: 10),
         categoryEditor(),
@@ -14214,7 +14376,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(child: textField),
+          Expanded(child: SizedBox(height: 45, child: textField)),
           const SizedBox(width: 5),
           SizedBox(
             width: 34,
@@ -14470,48 +14632,59 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
         : newCategoryValue;
     return Column(
       children: [
-        DropdownButtonFormField<String>(
-          isExpanded: true,
-          initialValue: selectedValue,
-          decoration: const InputDecoration(
-            labelText: 'Папка / каталог',
-            hintText: 'Место размещения карточки',
-            border: OutlineInputBorder(),
+        SizedBox(
+          height: 45,
+          child: DropdownButtonFormField<String>(
+            isExpanded: true,
+            initialValue: selectedValue,
+            decoration: const InputDecoration(
+              labelText: 'Папка / каталог',
+              hintText: 'Место размещения карточки',
+              border: OutlineInputBorder(),
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            ),
+            items: [
+              const DropdownMenuItem(
+                value: emptyCategoryValue,
+                child: Text('Без категории'),
+              ),
+              ...widget.categories.map(
+                (entry) => DropdownMenuItem(value: entry, child: Text(entry)),
+              ),
+              const DropdownMenuItem(
+                value: newCategoryValue,
+                child: Text('Создать новую категорию'),
+              ),
+            ],
+            onChanged: (value) {
+              rememberCurrentAction();
+              setState(() {
+                categorySelection = value ?? emptyCategoryValue;
+                if (categorySelection == emptyCategoryValue) {
+                  category.clear();
+                } else if (categorySelection != newCategoryValue) {
+                  category.text = categorySelection;
+                }
+              });
+            },
           ),
-          items: [
-            const DropdownMenuItem(
-              value: emptyCategoryValue,
-              child: Text('Без категории'),
-            ),
-            ...widget.categories.map(
-              (entry) => DropdownMenuItem(value: entry, child: Text(entry)),
-            ),
-            const DropdownMenuItem(
-              value: newCategoryValue,
-              child: Text('Создать новую категорию'),
-            ),
-          ],
-          onChanged: (value) {
-            rememberCurrentAction();
-            setState(() {
-              categorySelection = value ?? emptyCategoryValue;
-              if (categorySelection == emptyCategoryValue) {
-                category.clear();
-              } else if (categorySelection != newCategoryValue) {
-                category.text = categorySelection;
-              }
-            });
-          },
         ),
         if (selectedValue == newCategoryValue) ...[
           const SizedBox(height: 10),
-          TextField(
-            controller: category,
-            onTap: rememberCurrentAction,
-            decoration: const InputDecoration(
-              labelText: 'Новая папка / каталог',
-              hintText: 'Например: Финансы / Банк',
-              border: OutlineInputBorder(),
+          SizedBox(
+            height: 45,
+            child: TextField(
+              controller: category,
+              onTap: rememberCurrentAction,
+              decoration: const InputDecoration(
+                labelText: 'Новая папка / каталог',
+                hintText: 'Например: Финансы / Банк',
+                border: OutlineInputBorder(),
+                isDense: true,
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
             ),
           ),
         ],
@@ -14886,6 +15059,16 @@ class TemplatePreviewDialog extends StatelessWidget {
                                 border: const OutlineInputBorder(),
                                 filled: true,
                                 fillColor: backgroundColor,
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                prefixIconConstraints:
+                                    const BoxConstraints.tightFor(
+                                  width: 40,
+                                  height: 40,
+                                ),
                               ),
                             ),
                           ),
@@ -15180,19 +15363,25 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
 
   Widget templateNameField() {
     return EnsureVisibleWhenFocused(
-      child: TextField(
-        key: const Key('templateNameField'),
-        controller: name,
-        onChanged: (value) {
-          rememberNameChange(value);
-          if (invalidName) setState(() => invalidName = false);
-        },
-        decoration: InputDecoration(
-          labelText: 'Название шаблона',
-          border: const OutlineInputBorder(),
-          filled: true,
-          fillColor: editorBackgroundColor,
-          errorText: invalidName ? 'Название обязательно' : null,
+      child: SizedBox(
+        height: 45,
+        child: TextField(
+          key: const Key('templateNameField'),
+          controller: name,
+          onChanged: (value) {
+            rememberNameChange(value);
+            if (invalidName) setState(() => invalidName = false);
+          },
+          decoration: InputDecoration(
+            labelText: 'Название шаблона',
+            border: const OutlineInputBorder(),
+            filled: true,
+            fillColor: editorBackgroundColor,
+            isDense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            errorText: invalidName ? 'Название обязательно' : null,
+          ),
         ),
       ),
     );
@@ -15519,7 +15708,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                 children: [
                   Expanded(
                     child: SizedBox(
-                      height: 44,
+                      height: 36,
                       child: TextField(
                         key: ValueKey('templateFieldName-${field.id}'),
                         controller: field.label,
@@ -15533,7 +15722,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12,
-                            vertical: 10,
+                            vertical: 6,
                           ),
                         ),
                       ),
@@ -15548,7 +15737,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                 children: [
                   Expanded(
                     child: SizedBox(
-                      height: 44,
+                      height: 36,
                       child: DropdownButtonFormField<String>(
                         key: ValueKey('templateFieldType-${field.id}'),
                         initialValue: field.type,
@@ -15561,7 +15750,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12,
-                            vertical: 8,
+                            vertical: 5,
                           ),
                         ),
                         items: const [
@@ -15613,7 +15802,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                     key: ValueKey('templateFieldDelete-${field.id}'),
                     tooltip: 'Удалить поле',
                     icon: Icons.delete_outline,
-                    height: 44,
+                    height: 36,
                     onTap: fields.length <= 1 ? null : () => removeField(field),
                   ),
                 ],
@@ -15629,7 +15818,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
     final index = fields.indexOf(field);
     return SizedBox(
       width: 31,
-      height: 44,
+      height: 36,
       child: Column(
         children: [
           fieldMoveButton(
@@ -15655,7 +15844,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
     required IconData icon,
     required String tooltip,
     required VoidCallback? onTap,
-    double height = 21,
+    double height = 17,
   }) {
     return Tooltip(
       message: tooltip,

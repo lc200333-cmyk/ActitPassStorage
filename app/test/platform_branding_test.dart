@@ -19,7 +19,7 @@ void main() {
     expect(iconReferenceExists('missing/icon.png'), isFalse);
   });
 
-  test('transparent APS Wallet icon and title are wired into Windows', () {
+  test('transparent Wallet APS icon and title are wired into Windows', () {
     final sourceBytes = File(
       'windows/runner/resources/app_icon.source.png',
     ).readAsBytesSync();
@@ -57,11 +57,11 @@ void main() {
       '../tools/windows/ActitPassStorage.iss',
     ).readAsStringSync();
     expect(installer, contains('app_icon.ico'));
-    expect(installer, contains('#define MyAppName "APS Wallet"'));
+    expect(installer, contains('#define MyAppName "Wallet APS"'));
     final runner = File('windows/runner/main.cpp').readAsStringSync();
-    expect(runner, contains('window.Create(L"APS Wallet"'));
+    expect(runner, contains('window.Create(L"Wallet APS"'));
     final resources = File('windows/runner/Runner.rc').readAsStringSync();
-    expect(resources, contains('VALUE "ProductName", "APS Wallet"'));
+    expect(resources, contains('VALUE "ProductName", "Wallet APS"'));
     final linuxPackage = File(
       '../tools/build_linux_deb.sh',
     ).readAsStringSync();

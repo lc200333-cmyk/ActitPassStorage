@@ -68,8 +68,8 @@ assert.match(app, /id:\s*'account'[\s\S]*label:\s*'Номер счета'[\s\S]*
 const androidScript = read('tools/build_android_apk.sh');
 assert.ok(androidScript.includes('BUILD_MODE="${BUILD_MODE:-debug}"'));
 assert.ok(androidScript.includes('flutter build apk "--$BUILD_MODE"'));
-assert.ok(androidScript.includes('ActitPassStorage-android-$BUILD_MODE.apk'));
-assert.ok(androidScript.includes('ActitPassStorage-android.apk'));
+assert.ok(androidScript.includes('Wallet-APS-android-$BUILD_MODE.apk'));
+assert.ok(androidScript.includes('Wallet-APS-android.apk'));
 
 const spbDatabase = read('app/lib/spb_wallet/spb_wallet_database.dart');
 assert.ok(spbDatabase.includes('saveCategoryIcon'));
@@ -84,7 +84,7 @@ assert.ok(debScript.includes('ActitPassStorage-linux-amd64.deb'));
 const workflow = read('.github/workflows/windows_setup.yml');
 assert.ok(workflow.includes('windows-latest'));
 assert.ok(workflow.includes('flutter build windows --release'));
-assert.ok(workflow.includes('ActitPassStorage-Setup-*.exe'));
+assert.ok(workflow.includes('Wallet-APS-Setup-*.exe'));
 
 const releaseWorkflow = read('.github/workflows/release.yml');
 [
@@ -94,8 +94,8 @@ const releaseWorkflow = read('.github/workflows/release.yml');
   'docker compose build build-apk',
   'BUILD_MODE=release',
   'docker compose build build-deb',
-  'ActitPassStorage-Setup.exe',
-  'ActitPassStorage-android.apk',
+  'Wallet-APS-Setup.exe',
+  'Wallet-APS-android.apk',
   'ActitPassStorage-linux-amd64.deb',
   'softprops/action-gh-release',
 ].forEach((needle) => assert.ok(releaseWorkflow.includes(needle), `release workflow missing ${needle}`));

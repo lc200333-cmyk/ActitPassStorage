@@ -1370,11 +1370,11 @@ void main() {
     final confirmButton = find.byKey(const Key('confirmCreateVault'));
     final cancelButton = find.byKey(const Key('cancelCreateVault'));
     expect(
-      find.descendant(of: confirmButton, matching: find.text('OK')),
+      find.descendant(of: confirmButton, matching: find.byIcon(Icons.check)),
       findsOneWidget,
     );
     expect(
-      find.descendant(of: cancelButton, matching: find.text('Отмена')),
+      find.descendant(of: cancelButton, matching: find.byIcon(Icons.close)),
       findsOneWidget,
     );
     expect(tester.getSize(confirmButton), const Size(110, 48));
@@ -1395,36 +1395,23 @@ void main() {
     expect(repeatedPassword.controller!.text, isEmpty);
   });
 
-  testWidgets('login password hint is shown from the yellow button',
+  testWidgets('login password hint is shown only while yellow button is held',
       (tester) async {
     await tester.pumpWidget(const ActitPassApp());
     await tester.pump();
 
     expect(find.byKey(const Key('loginPasswordHintButton')), findsOneWidget);
     expect(find.byKey(const Key('loginPasswordHint')), findsNothing);
-    await tester.tap(find.byKey(const Key('loginPasswordHintButton')));
-    await tester.pump();
-    expect(find.byKey(const Key('loginPasswordHint')), findsOneWidget);
-    expect(find.text('Подсказка не задана.'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('login password hint is shown while yellow button is hovered',
-      (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
-    await tester.pump();
-
-    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-    await mouse.addPointer(location: const Offset(1, 1));
-    await mouse.moveTo(
-      tester.getCenter(find.byKey(const Key('loginPasswordHintHover'))),
+    final touch = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('loginPasswordHintButton'))),
     );
     await tester.pump();
     expect(find.byKey(const Key('loginPasswordHint')), findsOneWidget);
-
-    await mouse.moveTo(const Offset(1, 1));
+    expect(find.text('Подсказка не задана.'), findsOneWidget);
+    await touch.up();
     await tester.pump();
     expect(find.byKey(const Key('loginPasswordHint')), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('delete card confirmation uses blue and red 3D buttons',

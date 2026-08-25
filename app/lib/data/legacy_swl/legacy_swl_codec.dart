@@ -75,22 +75,44 @@ abstract final class LegacySwlCodec {
       dstY: (side - decoded.height) ~/ 2,
     );
     const sizes = [16, 24, 32, 48, 64, 128, 256];
-    final first = image.copyResize(
-      square,
-      width: sizes.first,
-      height: sizes.first,
-      interpolation: image.Interpolation.cubic,
-    );
-    for (final size in sizes.skip(1)) {
-      first.addFrame(
-        image.copyResize(
-          square,
-          width: size,
-          height: size,
-          interpolation: image.Interpolation.cubic,
+    final frames = [
+      for (final size in sizes)
+        Uint8List.fromList(
+          image.encodePng(
+            image.copyResize(
+              square,
+              width: size,
+              height: size,
+              interpolation: image.Interpolation.cubic,
+            ),
+          ),
         ),
-      );
+    ];
+    final directorySize = 6 + sizes.length * 16;
+    final output = BytesBuilder(copy: false);
+    final header = ByteData(directorySize)
+      ..setUint16(0, 0, Endian.little)
+      ..setUint16(2, 1, Endian.little)
+      ..setUint16(4, sizes.length, Endian.little);
+    var dataOffset = directorySize;
+    for (var index = 0; index < sizes.length; index++) {
+      final entryOffset = 6 + index * 16;
+      final size = sizes[index];
+      header
+        ..setUint8(entryOffset, size == 256 ? 0 : size)
+        ..setUint8(entryOffset + 1, size == 256 ? 0 : size)
+        ..setUint8(entryOffset + 2, 0)
+        ..setUint8(entryOffset + 3, 0)
+        ..setUint16(entryOffset + 4, 1, Endian.little)
+        ..setUint16(entryOffset + 6, 32, Endian.little)
+        ..setUint32(entryOffset + 8, frames[index].length, Endian.little)
+        ..setUint32(entryOffset + 12, dataOffset, Endian.little);
+      dataOffset += frames[index].length;
     }
-    return image.encodeIco(first);
+    output.add(header.buffer.asUint8List());
+    for (final frame in frames) {
+      output.add(frame);
+    }
+    return output.takeBytes();
   }
 }

@@ -33,7 +33,7 @@ void RegisterSwlFileAssociation() {
   SetRegistryString(HKEY_CURRENT_USER,
                     classes + L".swl\\OpenWithProgids", prog_id.c_str(), L"");
   SetRegistryString(HKEY_CURRENT_USER, classes + prog_id, nullptr,
-                    L"APS Wallet database");
+                    L"Wallet APS database");
   SetRegistryString(HKEY_CURRENT_USER,
                     classes + prog_id + L"\\DefaultIcon", nullptr,
                     L"\"" + std::wstring(executable) + L"\",0");
@@ -67,7 +67,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(0, 0);
   Win32Window::Size size(562, 590);
-  if (!window.Create(L"APS Wallet", origin, size)) {
+  if (!window.Create(L"Wallet APS", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

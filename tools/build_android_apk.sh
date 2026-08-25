@@ -77,8 +77,8 @@ patch_plugin_compile_sdk jni_flutter
 "$ROOT_DIR/tools/apply_branding.sh"
 flutter build apk "--$BUILD_MODE"
 
-cp "$APP_DIR/build/app/outputs/flutter-apk/app-$BUILD_MODE.apk" "$DIST_DIR/ActitPassStorage-android-$BUILD_MODE.apk"
+cp "$APP_DIR/build/app/outputs/flutter-apk/app-$BUILD_MODE.apk" "$DIST_DIR/Wallet-APS-android-$BUILD_MODE.apk"
 if [ "$BUILD_MODE" = "release" ]; then
-  cp "$DIST_DIR/ActitPassStorage-android-release.apk" "$DIST_DIR/ActitPassStorage-android.apk"
+  cp "$DIST_DIR/Wallet-APS-android-release.apk" "$DIST_DIR/Wallet-APS-android.apk"
 fi
-echo "APK готов: $DIST_DIR/ActitPassStorage-android-$BUILD_MODE.apk"
+echo "APK готов: $DIST_DIR/Wallet-APS-android-$BUILD_MODE.apk"

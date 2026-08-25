@@ -1,4 +1,4 @@
-#define MyAppName "APS Wallet"
+#define MyAppName "Wallet APS"
 #define MyAppVersion "0.2.8"
 #define MyAppPublisher "Actit"
 #define MyAppExeName "actit_pass_storage.exe"
@@ -12,7 +12,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\..\dist
-OutputBaseFilename=ActitPassStorage-Setup-{#MyAppVersion}
+OutputBaseFilename=Wallet-APS-Setup-{#MyAppVersion}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
