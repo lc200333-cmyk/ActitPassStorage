@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image/image.dart' as image;
 import 'package:path_provider/path_provider.dart';
 
 import 'data/spb_wallet_repository.dart';
@@ -18,9 +19,6 @@ import 'features/categories/category_path_index.dart';
 import 'features/templates/template_order.dart';
 import 'services/wallet_rekey_service.dart';
 import 'services/platform/secure_clipboard_service.dart';
-import 'services/icon_processor.dart';
-import 'services/save_coordinator.dart';
-import 'services/third_party_icon_catalog.dart';
 import 'widgets/card_surface.dart';
 
 void main(List<String> arguments) {
@@ -45,20 +43,7 @@ Map<String, Uint8List> spbBundledIconPngs = {};
 Map<String, Uint8List> spbEmbeddedIconPngs = {};
 List<String> thirdPartyIconAssets = [];
 Future<List<String>>? thirdPartyIconAssetsFuture;
-final thirdPartyIconCatalog = ThirdPartyIconCatalog(
-  archives: const [
-    ThirdPartyIconArchive(
-      assetName: thirdPartyIconBundleAsset,
-      requiredPathPrefix: 'output/png/',
-    ),
-    ThirdPartyIconArchive(
-      assetName: additionalThirdPartyIconBundleAsset,
-      catalogPrefix: 'icos/',
-    ),
-  ],
-);
-Map<String, Uint8List> get thirdPartyIconPngs =>
-    thirdPartyIconCatalog.cachedIcons;
+Map<String, Uint8List> thirdPartyIconPngs = {};
 
 Future<List<String>> loadSpb64PngIconAssets() {
   return spb64PngIconAssetsFuture ??= () async {
@@ -97,13 +82,39 @@ Future<List<String>> loadSpb64PngIconAssets() {
 
 Future<List<String>> loadThirdPartyIconAssets() {
   return thirdPartyIconAssetsFuture ??= () async {
-    thirdPartyIconAssets = await thirdPartyIconCatalog.loadIndex();
+    final packedIcons = <String, Uint8List>{};
+    for (final assetName in const [
+      thirdPartyIconBundleAsset,
+      additionalThirdPartyIconBundleAsset,
+    ]) {
+      final data = await rootBundle.load(assetName);
+      final bytes = data.buffer.asUint8List(
+        data.offsetInBytes,
+        data.lengthInBytes,
+      );
+      final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+      for (final file in archive.files) {
+        if (!file.isFile) continue;
+        final normalizedName = file.name.replaceAll('\\', '/');
+        if (!normalizedName.toLowerCase().endsWith('.png')) continue;
+        if (assetName == thirdPartyIconBundleAsset &&
+            !normalizedName.startsWith('output/png/')) {
+          continue;
+        }
+        final catalogName = assetName == additionalThirdPartyIconBundleAsset
+            ? 'icos/$normalizedName'
+            : normalizedName;
+        packedIcons['third-party://$catalogName'] = Uint8List.fromList(
+          file.content,
+        );
+      }
+    }
+    thirdPartyIconPngs = packedIcons;
+    thirdPartyIconAssets = packedIcons.keys.toList(growable: false)
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     return thirdPartyIconAssets;
   }();
 }
-
-Future<Uint8List?> loadThirdPartyIconPng(String iconId) =>
-    thirdPartyIconCatalog.loadIcon(iconId);
 
 String normalizeSpbPackedIconId(String iconId) {
   var normalized = iconId.replaceAll('\\', '/');
@@ -1699,6 +1710,52 @@ String registerEmbeddedIcon(Uint8List bytes) {
   return id;
 }
 
+Uint8List normalizeUserIconPng(image.Image source, {int size = 128}) {
+  final scale = min(size / source.width, size / source.height);
+  final width = max(1, (source.width * scale).round());
+  final height = max(1, (source.height * scale).round());
+  final resized = image.copyResize(
+    source,
+    width: width,
+    height: height,
+    interpolation: image.Interpolation.cubic,
+  );
+  final canvas = image.Image(width: size, height: size, numChannels: 4);
+  final offsetX = (size - width) ~/ 2;
+  final offsetY = (size - height) ~/ 2;
+  final radius = max(1, (min(width, height) * 0.10).round());
+  final cornerCenter = radius - 0.5;
+  final radiusSquared = radius * radius;
+
+  for (final pixel in resized) {
+    final x = pixel.x;
+    final y = pixel.y;
+    final cornerX = x < radius
+        ? cornerCenter
+        : x >= width - radius
+            ? width - radius - 0.5
+            : null;
+    final cornerY = y < radius
+        ? cornerCenter
+        : y >= height - radius
+            ? height - radius - 0.5
+            : null;
+    final outsideRoundedCorner = cornerX != null &&
+        cornerY != null &&
+        ((x - cornerX) * (x - cornerX) + (y - cornerY) * (y - cornerY) >
+            radiusSquared);
+    canvas.setPixelRgba(
+      offsetX + x,
+      offsetY + y,
+      pixel.r,
+      pixel.g,
+      pixel.b,
+      outsideRoundedCorner ? 0 : pixel.a,
+    );
+  }
+  return Uint8List.fromList(image.encodePng(canvas));
+}
+
 Future<({Uint8List bytes, String fileName})?> pickUserIconFile(
   BuildContext context,
 ) async {
@@ -1733,7 +1790,17 @@ Future<({Uint8List bytes, String fileName})?> pickUserIconFile(
     if (bytes == null || bytes.isEmpty) {
       throw const FormatException('Выбранный файл пуст или недоступен.');
     }
-    final pngBytes = await IconProcessor.normalize(bytes);
+    image.Image? decoded;
+    try {
+      decoded = image.IcoDecoder().decodeImageLargest(bytes);
+    } catch (_) {
+      // The selected file can be a regular bitmap rather than ICO.
+    }
+    decoded ??= image.decodeImage(bytes);
+    if (decoded == null) {
+      throw const FormatException('Формат изображения не поддерживается.');
+    }
+    final pngBytes = normalizeUserIconPng(decoded);
     final baseName = file.name.replaceFirst(RegExp(r'\.[^.]+$'), '');
     return (
       bytes: pngBytes,
@@ -2587,7 +2654,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   bool spbWalletWritable = true;
   bool spbWritePending = false;
   bool vaultDirty = false;
-  late final SaveCoordinator saveCoordinator;
   String? syncSourcePath;
   String? syncSourceUrl;
   String? syncOriginProvider;
@@ -2627,7 +2693,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   int lockedExitSecondsRemaining = 30;
   bool lockedExitWarningVisible = false;
   Timer? passwordUnlockDebounce;
-  Timer? searchDebounce;
   bool automaticUnlockInProgress = false;
   bool closingForInactivity = false;
   DateTime lastUserActivityAt = DateTime.now();
@@ -2654,8 +2719,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   final Set<String> sessionTrashFolderPaths = {};
   final Set<String> sessionTrashTemplateIds = {};
   final List<SessionUndoEntry> sessionUndoHistory = [];
-  final Set<String> loadedCardDetailIds = {};
-  bool searchValuesLoaded = false;
   bool sessionUndoInProgress = false;
 
   bool get createMode => entryMode == EntryMode.createSwl;
@@ -2709,13 +2772,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    saveCoordinator = SaveCoordinator(
-      writer: ({required force}) => _performWriteBackSpbWallet(force: force),
-      onStatusChanged: (status) {
-        spbWritePending = status != SaveStatus.idle;
-        if (mounted) setState(() {});
-      },
-    );
     templatesById = indexEntitiesById(templates, (template) => template.id);
     WidgetsBinding.instance.addObserver(this);
     unlocked = widget.initiallyUnlocked;
@@ -2725,7 +2781,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       spbWalletDisplayPath = initialVaultPath;
       vaultNameController.text = _vaultTitleFromPath(initialVaultPath);
     }
-    searchController.addListener(_handleSearchChanged);
+    searchController.addListener(() => setState(() {}));
     passwordController.addListener(scheduleAutomaticUnlock);
     loadRecentVaults();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2855,8 +2911,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     clearSessionUndoHistory();
     spbWallet?.close(flush: vaultDirty);
     passwordUnlockDebounce?.cancel();
-    searchDebounce?.cancel();
-    saveCoordinator.dispose();
     vaultNameController.dispose();
     passwordController.dispose();
     confirmController.dispose();
@@ -2903,7 +2957,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   void markVaultDirty() {
     vaultDirty = true;
     spbWritePending = true;
-    saveCoordinator.markDirty();
   }
 
   Future<SessionUndoEntry> captureSessionUndo(
@@ -3085,7 +3138,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         clearSessionUndoHistory();
         spbWallet?.close(flush: vaultDirty);
         final wallet = SpbWalletDatabase.open(spbWalletPath!, password);
-        final snapshot = SpbWalletCatalogRepository(wallet).loadCatalog();
+        final snapshot = wallet.loadSnapshot();
         final integrityReport = wallet.inspectIntegrity();
         spbWallet = wallet;
         vaultDirty = false;
@@ -4173,14 +4226,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> uploadWebDavVault(Uri uri, File file) async {
+  Future<void> uploadWebDavVault(Uri uri, List<int> bytes) async {
     final client = HttpClient();
     try {
       final request = await client.putUrl(uri);
       applyWebDavAuth(request);
       request.headers.contentType = ContentType.binary;
-      request.contentLength = await file.length();
-      await request.addStream(file.openRead());
+      request.contentLength = bytes.length;
+      request.add(bytes);
       final response = await request.close();
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw StateError(
@@ -4262,10 +4315,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
   }
 
-  Future<bool> writeBackSpbWallet({bool force = false}) =>
-      saveCoordinator.flush(force: force);
-
-  Future<bool> _performWriteBackSpbWallet({required bool force}) async {
+  Future<bool> writeBackSpbWallet({bool force = false}) async {
     if (!force && !vaultDirty) {
       spbWritePending = false;
       return true;
@@ -4296,7 +4346,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       if (syncSourceUrl != null && spbWalletPath != null) {
         await uploadWebDavVault(
           Uri.parse(syncSourceUrl!),
-          File(spbWalletPath!),
+          await File(spbWalletPath!).readAsBytes(),
         );
       }
       if (spbWalletUri != null ||
@@ -4659,14 +4709,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   void applySpbSnapshot(SpbWalletSnapshot snapshot) {
-    loadedCardDetailIds
-      ..clear()
-      ..addAll(
-        snapshot.detailsIncluded
-            ? snapshot.cards.map((card) => card.id)
-            : const <String>[],
-      );
-    searchValuesLoaded = snapshot.detailsIncluded;
     cardLoadFailures = List.of(snapshot.cardLoadFailures);
     walletLoadReport = snapshot.loadReport.hasIssues
         ? snapshot.loadReport
@@ -5049,32 +5091,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           recordUserActivity();
           return KeyEventResult.ignored;
         },
-        child: Stack(
-          children: [
-            Positioned.fill(child: shell),
-            if (Platform.isAndroid &&
-                saveCoordinator.status == SaveStatus.saving)
-              const Positioned(
-                top: 8,
-                right: 12,
-                child: SafeArea(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Color(0xddffffff),
-                      borderRadius: BorderRadius.all(Radius.circular(12)),
-                    ),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      child: Text('Сохранение…'),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
+        child: shell,
       ),
     );
   }
@@ -5510,62 +5527,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   void submitSpbSearch(String value) {
-    searchDebounce?.cancel();
-    unawaited(_submitSpbSearch(value.trim()));
-  }
-
-  Future<void> _submitSpbSearch(String value) async {
-    if (value.isNotEmpty) await _ensureSearchValuesLoaded();
-    if (!mounted) return;
-    setState(() => spbSubmittedSearchQuery = value);
-  }
-
-  Future<void> _ensureSearchValuesLoaded() async {
-    final wallet = spbWallet;
-    if (wallet == null || searchValuesLoaded) return;
-    final searchableValues =
-        SpbWalletCatalogRepository(wallet).loadSearchableValues();
-    if (!mounted) return;
-    setState(() {
-      items = [
-        for (final item in items)
-          searchableValues[item.id] == null
-              ? item
-              : SecretItem(
-                  id: item.id,
-                  templateId: item.templateId,
-                  title: item.title,
-                  category: item.category,
-                  colorId: item.colorId,
-                  values: searchableValues[item.id]!,
-                  modifiedAt: item.modifiedAt,
-                  attachments: item.attachments,
-                  hitCount: item.hitCount,
-                  iconId: item.iconId,
-                  backgroundImageBase64: item.backgroundImageBase64,
-                  spbColor: item.spbColor,
-                  fieldOrder: item.fieldOrder,
-                  hiddenFieldIds: item.hiddenFieldIds,
-                ),
-      ];
-      itemsById = indexEntitiesById(items, (item) => item.id);
-      searchValuesLoaded = true;
-    });
-  }
-
-  void _handleSearchChanged() {
-    if (!mounted) return;
-    setState(() {});
-    searchDebounce?.cancel();
-    final value = searchController.text.trim();
-    searchDebounce = Timer(const Duration(milliseconds: 250), () {
-      if (!mounted || spbSubmittedSearchQuery == value) return;
-      unawaited(_submitSpbSearch(value));
-    });
+    setState(() => spbSubmittedSearchQuery = value.trim());
   }
 
   void clearSearch() {
-    searchDebounce?.cancel();
     searchController.clear();
     setState(() => spbSubmittedSearchQuery = '');
   }
@@ -8141,17 +8106,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         ),
       );
     }
-    final itemCount = matchingFolders.length + matchingCards.length;
-    final results = ListView.builder(
+    final results = ListView(
       key: const Key('spbSearchResults'),
       controller: controller,
       shrinkWrap: true,
       padding: EdgeInsets.zero,
-      itemCount: itemCount,
-      itemBuilder: (context, index) {
-        if (index < matchingFolders.length) {
-          final path = matchingFolders[index];
-          return buildSpbSearchResultRow(
+      children: [
+        for (final path in matchingFolders)
+          buildSpbSearchResultRow(
             icon: spbSizedDataIcon(
               categoryIconsByPath[path] ?? defaultIconForCategoryPath(path),
               36,
@@ -8160,25 +8122,24 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             title: categoryParts(path).last,
             subtitle: 'Папка',
             onTap: () => openSpbFolder(path),
-          );
-        }
-        final item = matchingCards[index - matchingFolders.length];
-        return buildSpbSearchResultRow(
-          icon: spbSizedDataIcon(
-            itemIconId(item, templateFor(item.templateId)),
-            36,
-            fallbackColor: itemPictogramColor(
-              item,
-              templateFor(item.templateId),
-            ),
           ),
-          title: item.title,
-          subtitle: item.category.trim().isEmpty
-              ? 'Карточка'
-              : 'Карточка • ${item.category}',
-          onTap: () => openCardPreviewDialog(item),
-        );
-      },
+        for (final item in matchingCards)
+          buildSpbSearchResultRow(
+            icon: spbSizedDataIcon(
+              itemIconId(item, templateFor(item.templateId)),
+              36,
+              fallbackColor: itemPictogramColor(
+                item,
+                templateFor(item.templateId),
+              ),
+            ),
+            title: item.title,
+            subtitle: item.category.trim().isEmpty
+                ? 'Карточка'
+                : 'Карточка • ${item.category}',
+            onTap: () => openCardPreviewDialog(item),
+          ),
+      ],
     );
     if (controller == null) return results;
     return Scrollbar(
@@ -10541,48 +10502,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   Future<void> selectItem(SecretItem item) async {
-    var current = itemById(item.id) ?? item;
-    final wallet = spbWallet;
-    if (wallet != null && !loadedCardDetailIds.contains(current.id)) {
-      final details = SpbWalletCatalogRepository(wallet).loadCardDetails(
-        current.id,
-      );
-      final values = Map<String, String>.from(details.fieldValues);
-      if (details.description.trim().isNotEmpty) {
-        values[spbDescriptionFieldId] = details.description;
-      }
-      current = SecretItem(
-        id: current.id,
-        templateId: current.templateId,
-        title: current.title,
-        category: current.category,
-        colorId: current.colorId,
-        values: values,
-        modifiedAt: current.modifiedAt,
-        attachments: details.attachments
-            .map(
-              (attachment) => SecretAttachment(
-                id: attachment.id,
-                fileName: attachment.fileName,
-                size: attachment.size,
-                decodeError: attachment.decodeError,
-              ),
-            )
-            .toList(),
-        hitCount: current.hitCount,
-        iconId: current.iconId,
-        backgroundImageBase64: details.backgroundImageBase64,
-        spbColor: current.spbColor,
-        fieldOrder: current.fieldOrder,
-        hiddenFieldIds: current.hiddenFieldIds,
-      );
-      loadedCardDetailIds.add(current.id);
-      items = [
-        for (final entry in items)
-          if (entry.id == current.id) current else entry,
-      ];
-      itemsById[current.id] = current;
-    }
+    final current = itemById(item.id) ?? item;
     final background = current.backgroundImageBase64 ??
         spbWallet?.loadCardBackgroundBase64(current.id);
     final selected = SecretItem(
@@ -11642,7 +11562,6 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           ];
         }
         itemsById[cardId] = persisted;
-        loadedCardDetailIds.add(cardId);
         if (refreshedCategories != null) {
           categoryIconsByPath = spbCategoryIconsToUi(refreshedCategories);
           categoryColorsByPath = spbCategoryColorsToUi(refreshedCategories);
@@ -12721,16 +12640,12 @@ Future<String?> showThirdPartyIconPickerDialog(BuildContext context) async {
                     itemCount: visible.length,
                     itemBuilder: (context, index) {
                       final iconId = visible[index];
+                      final bytes = thirdPartyIconPngs[iconId];
                       final fileName = iconId.split('/').last;
                       return Tooltip(
                         message: fileName,
                         child: InkWell(
-                          onTap: () async {
-                            await loadThirdPartyIconPng(iconId);
-                            if (context.mounted) {
-                              Navigator.pop(context, iconId);
-                            }
-                          },
+                          onTap: () => Navigator.pop(context, iconId),
                           borderRadius: BorderRadius.circular(7),
                           child: DecoratedBox(
                             decoration: BoxDecoration(
@@ -12742,34 +12657,15 @@ Future<String?> showThirdPartyIconPickerDialog(BuildContext context) async {
                             ),
                             child: Padding(
                               padding: const EdgeInsets.all(8),
-                              child: FutureBuilder<Uint8List?>(
-                                future: loadThirdPartyIconPng(iconId),
-                                builder: (context, snapshot) {
-                                  final bytes = snapshot.data;
-                                  if (bytes == null) {
-                                    return snapshot.connectionState ==
-                                            ConnectionState.done
-                                        ? const Icon(
-                                            Icons.broken_image_outlined,
-                                          )
-                                        : const Center(
-                                            child: SizedBox.square(
-                                              dimension: 18,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          );
-                                  }
-                                  return Image.memory(
-                                    bytes,
-                                    width: 56,
-                                    height: 56,
-                                    fit: BoxFit.contain,
-                                    filterQuality: FilterQuality.medium,
-                                  );
-                                },
-                              ),
+                              child: bytes == null
+                                  ? const Icon(Icons.broken_image_outlined)
+                                  : Image.memory(
+                                      bytes,
+                                      width: 56,
+                                      height: 56,
+                                      fit: BoxFit.contain,
+                                      filterQuality: FilterQuality.medium,
+                                    ),
                             ),
                           ),
                         ),
