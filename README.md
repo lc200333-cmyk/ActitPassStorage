@@ -1,6 +1,6 @@
-# ActitPassStorage
+# Wallet APS
 
-ActitPassStorage is a local, offline password and private data manager for
+Wallet APS is a local, offline password and private data manager for
 Windows, Android, and Linux. It works with password-protected `.swl` vaults
 and is compatible with SPB Wallet data, so your vault remains a file that you
 control.
@@ -9,9 +9,9 @@ control.
 
 The latest builds are available from GitHub Releases:
 
-- [Windows setup.exe](../../releases/latest/download/ActitPassStorage-Setup.exe)
-- [Android APK](../../releases/latest/download/ActitPassStorage-android.apk)
-- [Linux deb amd64](../../releases/latest/download/ActitPassStorage-linux-amd64.deb)
+- [Windows setup.exe](../../releases/latest/download/Wallet-APS-Setup.exe)
+- [Android APK](../../releases/latest/download/Wallet-APS-android.apk)
+- [Linux deb amd64](../../releases/latest/download/Wallet-APS-linux-amd64.deb)
 
 If a direct link does not work, open the [latest release](../../releases/latest).
 
@@ -33,22 +33,22 @@ If a direct link does not work, open the [latest release](../../releases/latest)
 - Create archive copies of important vaults before major changes.
 - Use an interface adapted for desktop and mobile screens.
 
-ActitPassStorage does not require an account or a cloud service. Your primary
+Wallet APS does not require an account or a cloud service. Your primary
 vault stays on your device and can be used without an internet connection.
 
 ## Quick Start
 
 1. Download the package for your platform:
-   - On Windows, run `ActitPassStorage-Setup.exe` and follow the installer.
-   - On Android, install `ActitPassStorage-android.apk`. Your device may ask you
+   - On Windows, run `Wallet-APS-Setup.exe` and follow the installer.
+   - On Android, install `Wallet-APS-android.apk`. Your device may ask you
      to allow installation from your browser or file manager.
    - On Debian or Ubuntu, install the downloaded package with:
 
      ```bash
-     sudo apt install ./ActitPassStorage-linux-amd64.deb
+     sudo apt install ./Wallet-APS-linux-amd64.deb
      ```
 
-2. Start ActitPassStorage.
+2. Start Wallet APS.
 3. To create a vault, select **+**, choose its location and name, then enter and
    confirm a new password. To use an existing vault, select the folder button,
    choose a `.swl` file, and enter its password.

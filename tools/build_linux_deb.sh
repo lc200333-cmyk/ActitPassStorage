@@ -4,11 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/app"
 DIST_DIR="$ROOT_DIR/dist"
-PACKAGE_ROOT="$ROOT_DIR/build/deb/actit-pass-storage"
+PACKAGE_ROOT="$ROOT_DIR/build/deb/wallet-aps"
 VERSION="0.3.0"
 ARCH="amd64"
-BIN_NAME="actit_pass_storage"
-DEB_PATH="$DIST_DIR/actit-pass-storage_${VERSION}_${ARCH}.deb"
+BIN_NAME="wallet_aps"
+DEB_PATH="$DIST_DIR/wallet-aps_${VERSION}_${ARCH}.deb"
 DISPLAY_NAME="$(sed -n 's/^name:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$APP_DIR/branding.yaml" | head -1)"
 
 command -v flutter >/dev/null 2>&1 || {
@@ -33,43 +33,43 @@ flutter build linux --release
 rm -rf "$PACKAGE_ROOT"
 mkdir -p \
   "$PACKAGE_ROOT/DEBIAN" \
-  "$PACKAGE_ROOT/opt/ActitPassStorage" \
+  "$PACKAGE_ROOT/opt/WalletAPS" \
   "$PACKAGE_ROOT/usr/bin" \
   "$PACKAGE_ROOT/usr/share/applications" \
   "$PACKAGE_ROOT/usr/share/icons/hicolor/128x128/apps"
 
-cp -R "$APP_DIR/build/linux/x64/release/bundle/." "$PACKAGE_ROOT/opt/ActitPassStorage/"
-cp "$ROOT_DIR/docs/Wallet.png" "$PACKAGE_ROOT/usr/share/icons/hicolor/128x128/apps/actit-pass-storage.png"
+cp -R "$APP_DIR/build/linux/x64/release/bundle/." "$PACKAGE_ROOT/opt/WalletAPS/"
+cp "$ROOT_DIR/docs/Wallet.png" "$PACKAGE_ROOT/usr/share/icons/hicolor/128x128/apps/wallet-aps.png"
 
 cat > "$PACKAGE_ROOT/DEBIAN/control" <<CONTROL
-Package: actit-pass-storage
+Package: wallet-aps
 Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: $ARCH
-Maintainer: ActitPassStorage <noreply@example.local>
+Maintainer: Wallet APS <noreply@example.local>
 Depends: libgtk-3-0, libblkid1, liblzma5
 Description: Локальный менеджер паролей, заметок и карточек
- ActitPassStorage хранит локальные базы секретов и поддерживает настраиваемые карточки.
+ Wallet APS хранит локальные базы секретов и поддерживает настраиваемые карточки.
 CONTROL
 
-cat > "$PACKAGE_ROOT/usr/share/applications/actit-pass-storage.desktop" <<DESKTOP
+cat > "$PACKAGE_ROOT/usr/share/applications/wallet-aps.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=$DISPLAY_NAME
 Comment=Локальный менеджер паролей, заметок и карточек
-Exec=/opt/ActitPassStorage/$BIN_NAME
-Icon=actit-pass-storage
+Exec=/opt/WalletAPS/$BIN_NAME
+Icon=wallet-aps
 Terminal=false
 Categories=Utility;Security;
 DESKTOP
 
-cat > "$PACKAGE_ROOT/usr/bin/actit-pass-storage" <<LAUNCHER
+cat > "$PACKAGE_ROOT/usr/bin/wallet-aps" <<LAUNCHER
 #!/usr/bin/env bash
-exec /opt/ActitPassStorage/$BIN_NAME "\$@"
+exec /opt/WalletAPS/$BIN_NAME "\$@"
 LAUNCHER
-chmod 0755 "$PACKAGE_ROOT/usr/bin/actit-pass-storage"
+chmod 0755 "$PACKAGE_ROOT/usr/bin/wallet-aps"
 
 fakeroot dpkg-deb --build "$PACKAGE_ROOT" "$DEB_PATH"
-cp "$DEB_PATH" "$DIST_DIR/ActitPassStorage-linux-amd64.deb"
+cp "$DEB_PATH" "$DIST_DIR/Wallet-APS-linux-amd64.deb"
 echo "deb готов: $DEB_PATH"

@@ -1377,8 +1377,8 @@ void main() {
       find.descendant(of: cancelButton, matching: find.byIcon(Icons.close)),
       findsOneWidget,
     );
-    expect(tester.getSize(confirmButton), const Size(110, 48));
-    expect(tester.getSize(cancelButton), const Size(124, 48));
+    expect(tester.getSize(confirmButton), const Size.square(48));
+    expect(tester.getSize(cancelButton), const Size.square(48));
     final newPassword = tester.widget<TextField>(
       find.descendant(
         of: find.byKey(const Key('newVaultPassword')),

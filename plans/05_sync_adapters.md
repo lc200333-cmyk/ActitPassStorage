@@ -40,7 +40,7 @@ Use IMAP/SMTP:
 
 - SMTP uploads sync packages as email attachments or structured message bodies.
 - IMAP downloads unread or labeled sync messages.
-- Messages should include a recognizable subject prefix such as `ActitPassStorage Sync`.
+- Messages should include a recognizable subject prefix such as `Wallet APS Sync`.
 - Payload remains encrypted.
 - App stores provider cursor to avoid reprocessing old messages.
 

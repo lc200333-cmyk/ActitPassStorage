@@ -10,4 +10,4 @@ resolver = "2"
 edition = "2021"
 version = "0.3.0"
 license = "UNLICENSED"
-authors = ["ActitPassStorage"]
+authors = ["Wallet APS"]

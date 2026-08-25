@@ -1,8 +1,8 @@
-# ActitPassStorage Product Specification
+# Wallet APS Product Specification
 
 ## 1. Product Goal
 
-ActitPassStorage is a modern cross-platform secure wallet for passwords, private notes, payment data, identity records, license keys, server credentials, and user-defined card types. The product should feel like a modern successor to SPB Wallet: local-first, fast, reliable offline, and simple enough for non-technical users, while still supporting advanced synchronization options.
+Wallet APS is a modern cross-platform secure wallet for passwords, private notes, payment data, identity records, license keys, server credentials, and user-defined card types. The product should feel like a modern successor to SPB Wallet: local-first, fast, reliable offline, and simple enough for non-technical users, while still supporting advanced synchronization options.
 
 The application must run on Linux, Windows, macOS, Android, and iOS from one shared product model. Every device stores its own encrypted local copy of the vault. Synchronization is optional and works when network access is available.
 

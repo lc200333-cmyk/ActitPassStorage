@@ -44,6 +44,7 @@ void main() {
     final manifest = File(
       'android/app/src/main/AndroidManifest.xml',
     ).readAsStringSync();
+    expect(manifest, contains('android:label="Wallet APS"'));
     expect(manifest, contains('android:icon="@mipmap/launcher_icon"'));
     expect(manifest, contains('android:roundIcon="@mipmap/launcher_icon"'));
     expect(
@@ -58,10 +59,14 @@ void main() {
     ).readAsStringSync();
     expect(installer, contains('app_icon.ico'));
     expect(installer, contains('#define MyAppName "Wallet APS"'));
+    expect(installer, contains('#define MyAppExeName "wallet_aps.exe"'));
     final runner = File('windows/runner/main.cpp').readAsStringSync();
     expect(runner, contains('window.Create(L"Wallet APS"'));
     final resources = File('windows/runner/Runner.rc').readAsStringSync();
     expect(resources, contains('VALUE "ProductName", "Wallet APS"'));
+    expect(resources, contains('VALUE "OriginalFilename", "wallet_aps.exe"'));
+    final windowsBuild = File('windows/CMakeLists.txt').readAsStringSync();
+    expect(windowsBuild, contains('set(BINARY_NAME "wallet_aps")'));
     final linuxPackage = File(
       '../tools/build_linux_deb.sh',
     ).readAsStringSync();

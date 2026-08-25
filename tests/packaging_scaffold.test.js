@@ -32,7 +32,7 @@ function exists(relativePath) {
 
 const app = read('app/lib/main.dart');
 [
-  'ActitPassStorage',
+  'Wallet APS',
   'Открыть кошелёк',
   'Создать кошелёк',
   'Последние файлы',
@@ -78,8 +78,8 @@ assert.ok(spbDatabase.includes('UPDATE spbwlt_Category SET IconID'));
 const debScript = read('tools/build_linux_deb.sh');
 assert.ok(debScript.includes('flutter build linux --release'));
 assert.ok(debScript.includes('dpkg-deb --build'));
-assert.ok(debScript.includes('actit-pass-storage_${VERSION}_${ARCH}.deb'));
-assert.ok(debScript.includes('ActitPassStorage-linux-amd64.deb'));
+assert.ok(debScript.includes('wallet-aps_${VERSION}_${ARCH}.deb'));
+assert.ok(debScript.includes('Wallet-APS-linux-amd64.deb'));
 
 const workflow = read('.github/workflows/windows_setup.yml');
 assert.ok(workflow.includes('windows-latest'));
@@ -96,7 +96,7 @@ const releaseWorkflow = read('.github/workflows/release.yml');
   'docker compose build build-deb',
   'Wallet-APS-Setup.exe',
   'Wallet-APS-android.apk',
-  'ActitPassStorage-linux-amd64.deb',
+  'Wallet-APS-linux-amd64.deb',
   'softprops/action-gh-release',
 ].forEach((needle) => assert.ok(releaseWorkflow.includes(needle), `release workflow missing ${needle}`));
 

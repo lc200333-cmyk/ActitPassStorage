@@ -2,7 +2,7 @@ version: "3.3"
 
 services:
   test:
-    image: actit-pass-storage-build-env:latest
+    image: wallet-aps-build-env:latest
     build:
       context: .
       dockerfile: docker/build-env/Dockerfile
@@ -26,7 +26,7 @@ services:
     command: bash -lc "trap 'chown -R $${HOST_UID}:$${HOST_GID} /workspace/dist 2>/dev/null || true' EXIT; npm test"
 
   build-apk:
-    image: actit-pass-storage-build-env:latest
+    image: wallet-aps-build-env:latest
     build:
       context: .
       dockerfile: docker/build-env/Dockerfile
@@ -50,7 +50,7 @@ services:
     command: bash -lc "trap 'chown -R $${HOST_UID}:$${HOST_GID} /workspace/dist /workspace/app/android /workspace/app/build 2>/dev/null || true' EXIT; tools/build_android_apk.sh"
 
   build-deb:
-    image: actit-pass-storage-linux-deb-env:latest
+    image: wallet-aps-linux-deb-env:latest
     build:
       context: .
       dockerfile: docker/linux-deb/Dockerfile

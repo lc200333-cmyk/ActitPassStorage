@@ -20,7 +20,7 @@
 Create a monorepo:
 
 ```text
-ActitPassStorage/
+WalletAPS/
   app/                 # Flutter application
   core/                # Rust workspace
     crates/

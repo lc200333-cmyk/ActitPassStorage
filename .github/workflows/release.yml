@@ -94,7 +94,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json app/pubspec.yaml core/Cargo.toml tools/windows/ActitPassStorage.iss tools/build_linux_deb.sh
           git commit -m "chore: release v$VERSION [skip release]"
-          git tag -a "v$VERSION" -m "ActitPassStorage v$VERSION"
+          git tag -a "v$VERSION" -m "Wallet APS v$VERSION"
           git push origin HEAD:master
           git push origin "refs/tags/v$VERSION"
 
@@ -192,7 +192,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-deb
-          path: dist/ActitPassStorage-linux-amd64.deb
+          path: dist/Wallet-APS-linux-amd64.deb
           retention-days: 1
 
   publish:
@@ -209,12 +209,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.tag }}
-          name: ActitPassStorage ${{ needs.version.outputs.version }}
+          name: Wallet APS ${{ needs.version.outputs.version }}
           generate_release_notes: true
           files: |
             release-assets/Wallet-APS-Setup.exe
             release-assets/Wallet-APS-android.apk
-            release-assets/ActitPassStorage-linux-amd64.deb
+            release-assets/Wallet-APS-linux-amd64.deb
 
       - name: Keep only last 2 releases
         env:

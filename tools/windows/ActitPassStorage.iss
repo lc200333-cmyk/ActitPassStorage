@@ -1,7 +1,7 @@
 #define MyAppName "Wallet APS"
 #define MyAppVersion "0.3.0"
 #define MyAppPublisher "Actit"
-#define MyAppExeName "actit_pass_storage.exe"
+#define MyAppExeName "wallet_aps.exe"
 
 [Setup]
 AppId={{94F89A42-1716-4D1F-8752-A3A3F89B1123}

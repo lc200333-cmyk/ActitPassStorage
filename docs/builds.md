@@ -1,4 +1,4 @@
-# Сборки ActitPassStorage
+# Сборки Wallet APS
 
 Эта инструкция нужна для сборки APK и deb без установки Flutter, Android SDK и Rust на хост. На машине должны быть только Docker, `docker-compose` v1 и npm.
 
@@ -7,17 +7,17 @@
 Все артефакты складываются в папку `dist/` проекта:
 
 ```text
-dist/ActitPassStorage-android-debug.apk
-dist/ActitPassStorage-android-release.apk
-dist/ActitPassStorage-android.apk
-dist/actit-pass-storage_0.1.0_amd64.deb
-dist/ActitPassStorage-linux-amd64.deb
+dist/Wallet-APS-android-debug.apk
+dist/Wallet-APS-android-release.apk
+dist/Wallet-APS-android.apk
+dist/wallet-aps_0.1.0_amd64.deb
+dist/Wallet-APS-linux-amd64.deb
 ```
 
 Windows `setup.exe` собирается отдельно через GitHub Actions на Windows runner:
 
 ```text
-ActitPassStorage-Setup-0.1.0.exe
+Wallet-APS-Setup-0.1.0.exe
 ```
 
 ## Первый запуск
@@ -45,7 +45,7 @@ npm run docker:apk
 Ожидаемый результат:
 
 ```text
-dist/ActitPassStorage-android-debug.apk
+dist/Wallet-APS-android-debug.apk
 ```
 
 Это debug APK без release-подписи. Его можно ставить на устройство для тестирования.
@@ -67,19 +67,19 @@ GLIBC_2.34 not found
 Ожидаемый результат:
 
 ```text
-dist/actit-pass-storage_0.1.0_amd64.deb
+dist/wallet-aps_0.1.0_amd64.deb
 ```
 
 Проверить метаданные пакета можно так:
 
 ```bash
-dpkg -I dist/actit-pass-storage_0.1.0_amd64.deb
+dpkg -I dist/wallet-aps_0.1.0_amd64.deb
 ```
 
 После этого переустанови пакет:
 
 ```bash
-sudo apt install --reinstall ./dist/actit-pass-storage_0.1.0_amd64.deb
+sudo apt install --reinstall ./dist/wallet-aps_0.1.0_amd64.deb
 ```
 
 ## APK и deb одной командой
@@ -115,9 +115,9 @@ npm run docker:apk:release
 Стабильные имена артефактов последнего релиза:
 
 ```text
-ActitPassStorage-Setup.exe
-ActitPassStorage-android.apk
-ActitPassStorage-linux-amd64.deb
+Wallet-APS-Setup.exe
+Wallet-APS-android.apk
+Wallet-APS-linux-amd64.deb
 ```
 
 ## Как проверить на Linux
@@ -129,15 +129,15 @@ ActitPassStorage-linux-amd64.deb
 APK - это zip-контейнер. Быстрая проверка, что файл не битый:
 
 ```bash
-file dist/ActitPassStorage-android-debug.apk
-unzip -t dist/ActitPassStorage-android-debug.apk
+file dist/Wallet-APS-android-debug.apk
+unzip -t dist/Wallet-APS-android-debug.apk
 ```
 
 deb-пакет:
 
 ```bash
-file dist/actit-pass-storage_0.1.0_amd64.deb
-dpkg -I dist/actit-pass-storage_0.1.0_amd64.deb
+file dist/wallet-aps_0.1.0_amd64.deb
+dpkg -I dist/wallet-aps_0.1.0_amd64.deb
 ```
 
 ### 2. Проверить Linux-приложение
@@ -151,19 +151,19 @@ npm run docker:deb
 Потом установи пакет:
 
 ```bash
-sudo apt install ./dist/actit-pass-storage_0.1.0_amd64.deb
+sudo apt install ./dist/wallet-aps_0.1.0_amd64.deb
 ```
 
 Запусти приложение из меню рабочего стола или командой:
 
 ```bash
-actit-pass-storage
+wallet-aps
 ```
 
 Удалить установленный пакет:
 
 ```bash
-sudo apt remove actit-pass-storage
+sudo apt remove wallet-aps
 ```
 
 ### 3. Проверить APK на Android Emulator
@@ -189,7 +189,7 @@ sudo apt install adb
 
 ```bash
 adb devices
-adb install -r dist/ActitPassStorage-android-debug.apk
+adb install -r dist/Wallet-APS-android-debug.apk
 ```
 
 Логи приложения:
@@ -212,7 +212,7 @@ Flutter Windows desktop требует Windows SDK/MSVC, поэтому setup.ex
 4. Скачай artifact:
 
 ```text
-ActitPassStorage-Setup-0.1.0.exe
+Wallet-APS-Setup-0.1.0.exe
 ```
 
 Workflow лежит здесь:

@@ -187,6 +187,9 @@ class ActitPassApp extends StatelessWidget {
       ),
       scaffoldBackgroundColor: const Color(0xfff5f7f8),
       visualDensity: VisualDensity.standard,
+      scrollbarTheme: const ScrollbarThemeData(
+        thickness: WidgetStatePropertyAll<double>(13.6),
+      ),
     );
     TextStyle enlarged(TextStyle? style, double defaultSize) =>
         (style ?? const TextStyle()).copyWith(
@@ -213,7 +216,7 @@ class ActitPassApp extends StatelessWidget {
     );
     return MaterialApp(
       scaffoldMessengerKey: rootScaffoldMessengerKey,
-      title: Platform.isWindows ? 'APS Wallet' : 'ActitPassStorage',
+      title: 'Wallet APS',
       debugShowCheckedModeBanner: false,
       builder: (context, child) => child ?? const SizedBox.shrink(),
       theme: baseTheme.copyWith(textTheme: enlargedText),
@@ -1707,6 +1710,52 @@ String registerEmbeddedIcon(Uint8List bytes) {
   return id;
 }
 
+Uint8List normalizeUserIconPng(image.Image source, {int size = 128}) {
+  final scale = min(size / source.width, size / source.height);
+  final width = max(1, (source.width * scale).round());
+  final height = max(1, (source.height * scale).round());
+  final resized = image.copyResize(
+    source,
+    width: width,
+    height: height,
+    interpolation: image.Interpolation.cubic,
+  );
+  final canvas = image.Image(width: size, height: size, numChannels: 4);
+  final offsetX = (size - width) ~/ 2;
+  final offsetY = (size - height) ~/ 2;
+  final radius = max(1, (min(width, height) * 0.10).round());
+  final cornerCenter = radius - 0.5;
+  final radiusSquared = radius * radius;
+
+  for (final pixel in resized) {
+    final x = pixel.x;
+    final y = pixel.y;
+    final cornerX = x < radius
+        ? cornerCenter
+        : x >= width - radius
+            ? width - radius - 0.5
+            : null;
+    final cornerY = y < radius
+        ? cornerCenter
+        : y >= height - radius
+            ? height - radius - 0.5
+            : null;
+    final outsideRoundedCorner = cornerX != null &&
+        cornerY != null &&
+        ((x - cornerX) * (x - cornerX) + (y - cornerY) * (y - cornerY) >
+            radiusSquared);
+    canvas.setPixelRgba(
+      offsetX + x,
+      offsetY + y,
+      pixel.r,
+      pixel.g,
+      pixel.b,
+      outsideRoundedCorner ? 0 : pixel.a,
+    );
+  }
+  return Uint8List.fromList(image.encodePng(canvas));
+}
+
 Future<({Uint8List bytes, String fileName})?> pickUserIconFile(
   BuildContext context,
 ) async {
@@ -1751,13 +1800,7 @@ Future<({Uint8List bytes, String fileName})?> pickUserIconFile(
     if (decoded == null) {
       throw const FormatException('Формат изображения не поддерживается.');
     }
-    final maxSide = max(decoded.width, decoded.height);
-    if (maxSide > 512) {
-      decoded = decoded.width >= decoded.height
-          ? image.copyResize(decoded, width: 512)
-          : image.copyResize(decoded, height: 512);
-    }
-    final pngBytes = Uint8List.fromList(image.encodePng(decoded));
+    final pngBytes = normalizeUserIconPng(decoded);
     final baseName = file.name.replaceFirst(RegExp(r'\.[^.]+$'), '');
     return (
       bytes: pngBytes,
@@ -3048,9 +3091,19 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     wallet.flushToDisk();
   }
 
-  Future<void> finalizeSessionTrash() async {
+  Future<bool> finalizeSessionTrash() async {
     purgeSessionTrashFromDatabase();
-    await writeBackSpbWallet();
+    return writeBackSpbWallet();
+  }
+
+  Future<void> exitToPasswordPrompt() async {
+    final saved = await finalizeSessionTrash();
+    if (!saved || !mounted) return;
+    await closeCurrentVaultForPasswordPrompt();
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) passwordFocusNode.requestFocus();
+    });
   }
 
   void scheduleAutomaticUnlock() {
@@ -3583,21 +3636,18 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           ),
           actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
           actions: [
-            SizedBox(
-              width: 110,
+            SizedBox.square(
+              dimension: 48,
               child: IgnorePointer(
                 ignoring: isCreating,
                 child: Opacity(
                   opacity: isCreating ? 0.6 : 1,
-                  child: passwordKey(
+                  child: SpbGradientActionButton(
                     key: const Key('confirmCreateVault'),
-                    label: 'Создать базу',
-                    height: 48,
-                    top: const Color(0xff43a047),
-                    bottom: const Color(0xff1b5e20),
-                    child:
-                        const Icon(Icons.check, color: Colors.white, size: 28),
-                    onPressed: () async {
+                    icon: Icons.check,
+                    tooltip: 'Создать базу',
+                    colors: const [Color(0xff43a047), Color(0xff1b5e20)],
+                    onTap: () async {
                       final selectedDirectory = pathController.text.trim();
                       final name = nameController.text.trim().replaceAll(
                             RegExp(r'\.swl$', caseSensitive: false),
@@ -3718,21 +3768,18 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(width: 8),
-            SizedBox(
-              width: 124,
+            SizedBox.square(
+              dimension: 48,
               child: IgnorePointer(
                 ignoring: isCreating,
                 child: Opacity(
                   opacity: isCreating ? 0.6 : 1,
-                  child: passwordKey(
+                  child: SpbGradientActionButton(
                     key: const Key('cancelCreateVault'),
-                    label: 'Отмена',
-                    height: 48,
-                    top: const Color(0xffd32b31),
-                    bottom: const Color(0xff7f0609),
-                    child:
-                        const Icon(Icons.close, color: Colors.white, size: 28),
-                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    icon: Icons.close,
+                    tooltip: 'Отмена',
+                    colors: const [Color(0xffd32b31), Color(0xff7f0609)],
+                    onTap: () => Navigator.of(dialogContext).pop(),
                   ),
                 ),
               ),
@@ -7681,6 +7728,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           spbWritePending ? 'Повторить сохранение' : 'Сохранить базу',
           saveVaultThroughExplorer,
         ),
+        (
+          const Icon(Icons.logout, size: 36, color: Color(0xff33434f)),
+          'Выйти',
+          exitToPasswordPrompt,
+        ),
       ];
     }
     return [
@@ -7742,6 +7794,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         spbResourceIcon('icon_save_enable.png', 40),
         spbWritePending ? 'Повторить сохранение' : 'Сохранить базу',
         saveVaultThroughExplorer,
+      ),
+      (
+        const Icon(Icons.logout, size: 36, color: Color(0xff33434f)),
+        'Выйти',
+        exitToPasswordPrompt,
       ),
     ];
   }
@@ -13769,7 +13826,8 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
     values = {
       for (final field in allCardFields)
         field.id: TextEditingController(
-          text: widget.initial?.values[field.id] ?? '',
+          text: widget.initial?.values[field.id] ??
+              (field.type == 'url' ? 'http://www' : ''),
         ),
     };
     hiddenFieldIds = {...?widget.initial?.hiddenFieldIds};
@@ -15124,7 +15182,7 @@ class TemplateEditorDialog extends StatefulWidget {
 class TemplateFieldDraft {
   TemplateFieldDraft(FieldDefinition field)
       : id = field.id,
-        type = field.type,
+        type = field.type == 'totp' ? 'url' : field.type,
         label = TextEditingController(text: field.label);
 
   final String id;
@@ -15778,7 +15836,6 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                             value: 'number',
                             child: Text('Число'),
                           ),
-                          DropdownMenuItem(value: 'url', child: Text('Сайт')),
                           DropdownMenuItem(
                             value: 'email',
                             child: Text('Email'),
@@ -15788,7 +15845,7 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
                             child: Text('Телефон'),
                           ),
                           DropdownMenuItem(value: 'date', child: Text('Дата')),
-                          DropdownMenuItem(value: 'totp', child: Text('TOTP')),
+                          DropdownMenuItem(value: 'url', child: Text('WEB')),
                         ],
                         onChanged: (value) {
                           rememberCurrentAction();
@@ -16043,36 +16100,9 @@ class _TemplateEditorDialogState extends State<TemplateEditorDialog> {
   }
 
   Future<void> pickCustomIconFile() async {
-    final picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['png', 'ico', 'jpg', 'jpeg', 'bmp', 'gif'],
-      withData: true,
-    );
-    final file = picked?.files.single;
-    if (file == null || !mounted) return;
-    Uint8List? bytes = file.bytes;
-    if (bytes == null && file.path != null) {
-      bytes = await File(file.path!).readAsBytes();
-    }
-    if (bytes == null || bytes.isEmpty || !mounted) return;
-    image.Image? decoded;
-    try {
-      decoded = image.IcoDecoder().decodeImageLargest(bytes);
-    } catch (_) {
-      // The selected file can be PNG rather than ICO.
-    }
-    decoded ??= image.decodeImage(bytes);
-    if (decoded == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось прочитать файл иконки.')),
-      );
-      return;
-    }
-    final pngBytes = Uint8List.fromList(image.encodePng(decoded));
-    final pngFileName = file.name.toLowerCase().endsWith('.png')
-        ? file.name
-        : '${file.name.replaceFirst(RegExp(r'\.[^.]+$'), '')}.png';
-    applyCustomIcon(pngBytes, pngFileName);
+    final picked = await pickUserIconFile(context);
+    if (picked == null || !mounted) return;
+    applyCustomIcon(picked.bytes, picked.fileName);
   }
 
   void applyCustomIcon(Uint8List pngBytes, String fileName) {
