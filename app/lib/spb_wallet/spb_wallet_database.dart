@@ -196,6 +196,10 @@ class SpbWalletDatabase {
     )) {
       try {
         final iconBytes = attachmentCodec.decode(row['Data']).bytes;
+        if (_isNormalizedIconPng(iconBytes)) {
+          icons[_string(row['ID']).toUpperCase()] = iconBytes;
+          continue;
+        }
         image.Image? decoded;
         try {
           decoded = image.IcoDecoder().decodeImageLargest(iconBytes);
@@ -220,6 +224,22 @@ class SpbWalletDatabase {
     }
     _embeddedIconCache = icons;
     return icons;
+  }
+
+  bool _isNormalizedIconPng(Uint8List bytes) {
+    if (bytes.length < 24 ||
+        bytes[0] != 0x89 ||
+        bytes[1] != 0x50 ||
+        bytes[2] != 0x4e ||
+        bytes[3] != 0x47 ||
+        bytes[4] != 0x0d ||
+        bytes[5] != 0x0a ||
+        bytes[6] != 0x1a ||
+        bytes[7] != 0x0a) {
+      return false;
+    }
+    final header = ByteData.sublistView(bytes, 16, 24);
+    return header.getUint32(0) == 128 && header.getUint32(4) == 128;
   }
 
   List<SpbWalletAttachmentRecord> loadAttachments(String cardId) {

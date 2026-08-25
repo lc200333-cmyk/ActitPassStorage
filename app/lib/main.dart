@@ -9,7 +9,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:image/image.dart' as image;
 import 'package:path_provider/path_provider.dart';
 
 import 'data/spb_wallet_repository.dart';
@@ -19,6 +18,7 @@ import 'features/categories/category_path_index.dart';
 import 'features/templates/template_order.dart';
 import 'services/wallet_rekey_service.dart';
 import 'services/platform/secure_clipboard_service.dart';
+import 'services/icon_processor.dart';
 import 'widgets/card_surface.dart';
 
 void main(List<String> arguments) {
@@ -1710,52 +1710,6 @@ String registerEmbeddedIcon(Uint8List bytes) {
   return id;
 }
 
-Uint8List normalizeUserIconPng(image.Image source, {int size = 128}) {
-  final scale = min(size / source.width, size / source.height);
-  final width = max(1, (source.width * scale).round());
-  final height = max(1, (source.height * scale).round());
-  final resized = image.copyResize(
-    source,
-    width: width,
-    height: height,
-    interpolation: image.Interpolation.cubic,
-  );
-  final canvas = image.Image(width: size, height: size, numChannels: 4);
-  final offsetX = (size - width) ~/ 2;
-  final offsetY = (size - height) ~/ 2;
-  final radius = max(1, (min(width, height) * 0.10).round());
-  final cornerCenter = radius - 0.5;
-  final radiusSquared = radius * radius;
-
-  for (final pixel in resized) {
-    final x = pixel.x;
-    final y = pixel.y;
-    final cornerX = x < radius
-        ? cornerCenter
-        : x >= width - radius
-            ? width - radius - 0.5
-            : null;
-    final cornerY = y < radius
-        ? cornerCenter
-        : y >= height - radius
-            ? height - radius - 0.5
-            : null;
-    final outsideRoundedCorner = cornerX != null &&
-        cornerY != null &&
-        ((x - cornerX) * (x - cornerX) + (y - cornerY) * (y - cornerY) >
-            radiusSquared);
-    canvas.setPixelRgba(
-      offsetX + x,
-      offsetY + y,
-      pixel.r,
-      pixel.g,
-      pixel.b,
-      outsideRoundedCorner ? 0 : pixel.a,
-    );
-  }
-  return Uint8List.fromList(image.encodePng(canvas));
-}
-
 Future<({Uint8List bytes, String fileName})?> pickUserIconFile(
   BuildContext context,
 ) async {
@@ -1790,17 +1744,7 @@ Future<({Uint8List bytes, String fileName})?> pickUserIconFile(
     if (bytes == null || bytes.isEmpty) {
       throw const FormatException('Выбранный файл пуст или недоступен.');
     }
-    image.Image? decoded;
-    try {
-      decoded = image.IcoDecoder().decodeImageLargest(bytes);
-    } catch (_) {
-      // The selected file can be a regular bitmap rather than ICO.
-    }
-    decoded ??= image.decodeImage(bytes);
-    if (decoded == null) {
-      throw const FormatException('Формат изображения не поддерживается.');
-    }
-    final pngBytes = normalizeUserIconPng(decoded);
+    final pngBytes = await IconProcessor.normalize(bytes);
     final baseName = file.name.replaceFirst(RegExp(r'\.[^.]+$'), '');
     return (
       bytes: pngBytes,
@@ -2693,6 +2637,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   int lockedExitSecondsRemaining = 30;
   bool lockedExitWarningVisible = false;
   Timer? passwordUnlockDebounce;
+  Timer? searchDebounce;
   bool automaticUnlockInProgress = false;
   bool closingForInactivity = false;
   DateTime lastUserActivityAt = DateTime.now();
@@ -2781,7 +2726,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       spbWalletDisplayPath = initialVaultPath;
       vaultNameController.text = _vaultTitleFromPath(initialVaultPath);
     }
-    searchController.addListener(() => setState(() {}));
+    searchController.addListener(_handleSearchChanged);
     passwordController.addListener(scheduleAutomaticUnlock);
     loadRecentVaults();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2911,6 +2856,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     clearSessionUndoHistory();
     spbWallet?.close(flush: vaultDirty);
     passwordUnlockDebounce?.cancel();
+    searchDebounce?.cancel();
     vaultNameController.dispose();
     passwordController.dispose();
     confirmController.dispose();
@@ -5527,10 +5473,23 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   void submitSpbSearch(String value) {
+    searchDebounce?.cancel();
     setState(() => spbSubmittedSearchQuery = value.trim());
   }
 
+  void _handleSearchChanged() {
+    if (!mounted) return;
+    setState(() {});
+    searchDebounce?.cancel();
+    final value = searchController.text.trim();
+    searchDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted || spbSubmittedSearchQuery == value) return;
+      setState(() => spbSubmittedSearchQuery = value);
+    });
+  }
+
   void clearSearch() {
+    searchDebounce?.cancel();
     searchController.clear();
     setState(() => spbSubmittedSearchQuery = '');
   }
@@ -8106,14 +8065,17 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         ),
       );
     }
-    final results = ListView(
+    final itemCount = matchingFolders.length + matchingCards.length;
+    final results = ListView.builder(
       key: const Key('spbSearchResults'),
       controller: controller,
       shrinkWrap: true,
       padding: EdgeInsets.zero,
-      children: [
-        for (final path in matchingFolders)
-          buildSpbSearchResultRow(
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        if (index < matchingFolders.length) {
+          final path = matchingFolders[index];
+          return buildSpbSearchResultRow(
             icon: spbSizedDataIcon(
               categoryIconsByPath[path] ?? defaultIconForCategoryPath(path),
               36,
@@ -8122,24 +8084,25 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             title: categoryParts(path).last,
             subtitle: 'Папка',
             onTap: () => openSpbFolder(path),
-          ),
-        for (final item in matchingCards)
-          buildSpbSearchResultRow(
-            icon: spbSizedDataIcon(
-              itemIconId(item, templateFor(item.templateId)),
-              36,
-              fallbackColor: itemPictogramColor(
-                item,
-                templateFor(item.templateId),
-              ),
+          );
+        }
+        final item = matchingCards[index - matchingFolders.length];
+        return buildSpbSearchResultRow(
+          icon: spbSizedDataIcon(
+            itemIconId(item, templateFor(item.templateId)),
+            36,
+            fallbackColor: itemPictogramColor(
+              item,
+              templateFor(item.templateId),
             ),
-            title: item.title,
-            subtitle: item.category.trim().isEmpty
-                ? 'Карточка'
-                : 'Карточка • ${item.category}',
-            onTap: () => openCardPreviewDialog(item),
           ),
-      ],
+          title: item.title,
+          subtitle: item.category.trim().isEmpty
+              ? 'Карточка'
+              : 'Карточка • ${item.category}',
+          onTap: () => openCardPreviewDialog(item),
+        );
+      },
     );
     if (controller == null) return results;
     return Scrollbar(
