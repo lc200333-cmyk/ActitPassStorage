@@ -24,7 +24,10 @@ void main() {
     );
     expect(icons, contains('third-party://icos/icon_01.png'));
     expect(icons, contains('third-party://icos/icon_16.png'));
-    expect(thirdPartyIconPngs[icons.first], isNotEmpty);
+    expect(thirdPartyIconPngs, isEmpty);
+    final firstIcon = await loadThirdPartyIconPng(icons.first);
+    expect(firstIcon, isNotEmpty);
+    expect(thirdPartyIconPngs, hasLength(1));
   });
 
   test('selected template icon survives the stored IconID round trip', () {

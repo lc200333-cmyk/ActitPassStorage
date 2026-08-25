@@ -20,6 +20,7 @@ import 'services/wallet_rekey_service.dart';
 import 'services/platform/secure_clipboard_service.dart';
 import 'services/icon_processor.dart';
 import 'services/save_coordinator.dart';
+import 'services/third_party_icon_catalog.dart';
 import 'widgets/card_surface.dart';
 
 void main(List<String> arguments) {
@@ -44,7 +45,20 @@ Map<String, Uint8List> spbBundledIconPngs = {};
 Map<String, Uint8List> spbEmbeddedIconPngs = {};
 List<String> thirdPartyIconAssets = [];
 Future<List<String>>? thirdPartyIconAssetsFuture;
-Map<String, Uint8List> thirdPartyIconPngs = {};
+final thirdPartyIconCatalog = ThirdPartyIconCatalog(
+  archives: const [
+    ThirdPartyIconArchive(
+      assetName: thirdPartyIconBundleAsset,
+      requiredPathPrefix: 'output/png/',
+    ),
+    ThirdPartyIconArchive(
+      assetName: additionalThirdPartyIconBundleAsset,
+      catalogPrefix: 'icos/',
+    ),
+  ],
+);
+Map<String, Uint8List> get thirdPartyIconPngs =>
+    thirdPartyIconCatalog.cachedIcons;
 
 Future<List<String>> loadSpb64PngIconAssets() {
   return spb64PngIconAssetsFuture ??= () async {
@@ -83,39 +97,13 @@ Future<List<String>> loadSpb64PngIconAssets() {
 
 Future<List<String>> loadThirdPartyIconAssets() {
   return thirdPartyIconAssetsFuture ??= () async {
-    final packedIcons = <String, Uint8List>{};
-    for (final assetName in const [
-      thirdPartyIconBundleAsset,
-      additionalThirdPartyIconBundleAsset,
-    ]) {
-      final data = await rootBundle.load(assetName);
-      final bytes = data.buffer.asUint8List(
-        data.offsetInBytes,
-        data.lengthInBytes,
-      );
-      final archive = ZipDecoder().decodeBytes(bytes, verify: true);
-      for (final file in archive.files) {
-        if (!file.isFile) continue;
-        final normalizedName = file.name.replaceAll('\\', '/');
-        if (!normalizedName.toLowerCase().endsWith('.png')) continue;
-        if (assetName == thirdPartyIconBundleAsset &&
-            !normalizedName.startsWith('output/png/')) {
-          continue;
-        }
-        final catalogName = assetName == additionalThirdPartyIconBundleAsset
-            ? 'icos/$normalizedName'
-            : normalizedName;
-        packedIcons['third-party://$catalogName'] = Uint8List.fromList(
-          file.content,
-        );
-      }
-    }
-    thirdPartyIconPngs = packedIcons;
-    thirdPartyIconAssets = packedIcons.keys.toList(growable: false)
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    thirdPartyIconAssets = await thirdPartyIconCatalog.loadIndex();
     return thirdPartyIconAssets;
   }();
 }
+
+Future<Uint8List?> loadThirdPartyIconPng(String iconId) =>
+    thirdPartyIconCatalog.loadIcon(iconId);
 
 String normalizeSpbPackedIconId(String iconId) {
   var normalized = iconId.replaceAll('\\', '/');
@@ -12733,12 +12721,16 @@ Future<String?> showThirdPartyIconPickerDialog(BuildContext context) async {
                     itemCount: visible.length,
                     itemBuilder: (context, index) {
                       final iconId = visible[index];
-                      final bytes = thirdPartyIconPngs[iconId];
                       final fileName = iconId.split('/').last;
                       return Tooltip(
                         message: fileName,
                         child: InkWell(
-                          onTap: () => Navigator.pop(context, iconId),
+                          onTap: () async {
+                            await loadThirdPartyIconPng(iconId);
+                            if (context.mounted) {
+                              Navigator.pop(context, iconId);
+                            }
+                          },
                           borderRadius: BorderRadius.circular(7),
                           child: DecoratedBox(
                             decoration: BoxDecoration(
@@ -12750,15 +12742,34 @@ Future<String?> showThirdPartyIconPickerDialog(BuildContext context) async {
                             ),
                             child: Padding(
                               padding: const EdgeInsets.all(8),
-                              child: bytes == null
-                                  ? const Icon(Icons.broken_image_outlined)
-                                  : Image.memory(
-                                      bytes,
-                                      width: 56,
-                                      height: 56,
-                                      fit: BoxFit.contain,
-                                      filterQuality: FilterQuality.medium,
-                                    ),
+                              child: FutureBuilder<Uint8List?>(
+                                future: loadThirdPartyIconPng(iconId),
+                                builder: (context, snapshot) {
+                                  final bytes = snapshot.data;
+                                  if (bytes == null) {
+                                    return snapshot.connectionState ==
+                                            ConnectionState.done
+                                        ? const Icon(
+                                            Icons.broken_image_outlined,
+                                          )
+                                        : const Center(
+                                            child: SizedBox.square(
+                                              dimension: 18,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          );
+                                  }
+                                  return Image.memory(
+                                    bytes,
+                                    width: 56,
+                                    height: 56,
+                                    fit: BoxFit.contain,
+                                    filterQuality: FilterQuality.medium,
+                                  );
+                                },
+                              ),
                             ),
                           ),
                         ),
