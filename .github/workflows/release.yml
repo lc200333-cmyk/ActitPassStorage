@@ -22,6 +22,7 @@ on:
 permissions:
   contents: write
 
+# Serialize releases so each run bumps the version produced by the previous run.
 concurrency:
   group: release-master
   cancel-in-progress: false
