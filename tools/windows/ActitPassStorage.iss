@@ -1,5 +1,5 @@
 #define MyAppName "Wallet APS"
-#define MyAppVersion "0.2.8"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "Actit"
 #define MyAppExeName "actit_pass_storage.exe"
 
