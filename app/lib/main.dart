@@ -19,6 +19,7 @@ import 'features/templates/template_order.dart';
 import 'services/wallet_rekey_service.dart';
 import 'services/platform/secure_clipboard_service.dart';
 import 'services/icon_processor.dart';
+import 'services/save_coordinator.dart';
 import 'widgets/card_surface.dart';
 
 void main(List<String> arguments) {
@@ -2598,6 +2599,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   bool spbWalletWritable = true;
   bool spbWritePending = false;
   bool vaultDirty = false;
+  late final SaveCoordinator saveCoordinator;
   String? syncSourcePath;
   String? syncSourceUrl;
   String? syncOriginProvider;
@@ -2719,6 +2721,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    saveCoordinator = SaveCoordinator(
+      writer: ({required force}) => _performWriteBackSpbWallet(force: force),
+      onStatusChanged: (status) {
+        spbWritePending = status != SaveStatus.idle;
+        if (mounted) setState(() {});
+      },
+    );
     templatesById = indexEntitiesById(templates, (template) => template.id);
     WidgetsBinding.instance.addObserver(this);
     unlocked = widget.initiallyUnlocked;
@@ -2859,6 +2868,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     spbWallet?.close(flush: vaultDirty);
     passwordUnlockDebounce?.cancel();
     searchDebounce?.cancel();
+    saveCoordinator.dispose();
     vaultNameController.dispose();
     passwordController.dispose();
     confirmController.dispose();
@@ -2905,6 +2915,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   void markVaultDirty() {
     vaultDirty = true;
     spbWritePending = true;
+    saveCoordinator.markDirty();
   }
 
   Future<SessionUndoEntry> captureSessionUndo(
@@ -4174,14 +4185,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> uploadWebDavVault(Uri uri, List<int> bytes) async {
+  Future<void> uploadWebDavVault(Uri uri, File file) async {
     final client = HttpClient();
     try {
       final request = await client.putUrl(uri);
       applyWebDavAuth(request);
       request.headers.contentType = ContentType.binary;
-      request.contentLength = bytes.length;
-      request.add(bytes);
+      request.contentLength = await file.length();
+      await request.addStream(file.openRead());
       final response = await request.close();
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw StateError(
@@ -4263,7 +4274,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
   }
 
-  Future<bool> writeBackSpbWallet({bool force = false}) async {
+  Future<bool> writeBackSpbWallet({bool force = false}) =>
+      saveCoordinator.flush(force: force);
+
+  Future<bool> _performWriteBackSpbWallet({required bool force}) async {
     if (!force && !vaultDirty) {
       spbWritePending = false;
       return true;
@@ -4294,7 +4308,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       if (syncSourceUrl != null && spbWalletPath != null) {
         await uploadWebDavVault(
           Uri.parse(syncSourceUrl!),
-          await File(spbWalletPath!).readAsBytes(),
+          File(spbWalletPath!),
         );
       }
       if (spbWalletUri != null ||
@@ -5047,7 +5061,32 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           recordUserActivity();
           return KeyEventResult.ignored;
         },
-        child: shell,
+        child: Stack(
+          children: [
+            Positioned.fill(child: shell),
+            if (Platform.isAndroid &&
+                saveCoordinator.status == SaveStatus.saving)
+              const Positioned(
+                top: 8,
+                right: 12,
+                child: SafeArea(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Color(0xddffffff),
+                      borderRadius: BorderRadius.all(Radius.circular(12)),
+                    ),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      child: Text('Сохранение…'),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
