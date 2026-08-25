@@ -5187,7 +5187,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       child: Transform.translate(
         offset: const Offset(0, 21),
         child: SizedBox(
-          width: mobile ? double.infinity : 178.889,
+          width: mobile ? double.infinity : 250.445,
           height: 68,
           child: TextField(
             key: const Key('spbSearchInput'),
@@ -5300,16 +5300,22 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    SizedBox(width: 178.889, child: searchField),
-                    const SizedBox(width: 4),
-                    buildSpbSearchButton(
-                      key: const Key('spbSubmitSearchButton'),
-                      icon: Icons.search,
-                      tooltip: 'Начать поиск',
-                      gradient: const [Color(0xff42bff5), Color(0xff006fc4)],
-                      onTap: () => submitSpbSearch(searchController.text),
-                    ),
+                    SizedBox(width: 250.445, child: searchField),
                   ],
+                ),
+                Positioned(
+                  left: max(
+                    0,
+                    (desktopNavigatorWidth ?? 300) - 11 - 34.2,
+                  ),
+                  top: 0,
+                  child: buildSpbSearchButton(
+                    key: const Key('spbSubmitSearchButton'),
+                    icon: Icons.search,
+                    tooltip: 'Начать поиск',
+                    gradient: const [Color(0xff42bff5), Color(0xff006fc4)],
+                    onTap: () => submitSpbSearch(searchController.text),
+                  ),
                 ),
                 Positioned(
                   right: (desktopActionsPanelWidth ?? 300) - 49.2,
@@ -5583,7 +5589,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         child: LayoutBuilder(
           builder: (context, constraints) {
             const rightDividerWidth = 1.0;
-            const minimumNavigatorWidth = 180.0;
+            const minimumNavigatorWidth = 416.0;
             const minimumCenterWidth = 160.0;
             const minimumRightPanelWidth = 180.0;
             const splitterHitWidth = 9.0;

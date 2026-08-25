@@ -786,9 +786,10 @@ void main() {
 
     final desktopSearch = find.byKey(const Key('spbSearchInput'));
     final desktopSubmit = find.byKey(const Key('spbSubmitSearchButton'));
+    expect(tester.getSize(desktopSearch).width, closeTo(250.445, 0.1));
     expect(
       tester.getTopLeft(desktopSubmit).dx,
-      closeTo(tester.getTopRight(desktopSearch).dx + 5, 0.1),
+      greaterThan(tester.getTopRight(desktopSearch).dx + 5),
     );
 
     expect(find.text('Мои карточки'), findsNWidgets(2));
