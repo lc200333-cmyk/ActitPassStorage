@@ -18,7 +18,26 @@ void main() {
         folderCount: 6,
       );
       final database = SpbWalletDatabase.open(path, result.password);
+      final catalog = database.loadCatalog();
+      expect(catalog.detailsIncluded, isFalse);
+      expect(catalog.cards, hasLength(40));
+      expect(catalog.cards.every((card) => card.fieldValues.isEmpty), isTrue);
+      expect(catalog.cards.every((card) => card.attachments.isEmpty), isTrue);
+      final firstCard = catalog.cards.singleWhere(
+        (card) => card.title == 'Карточка 0000',
+      );
+      final details = database.loadCardDetails(firstCard.id);
+      expect(details.fieldValues, hasLength(5));
+      expect(details.description, contains('Заметка производительности'));
+      expect(details.attachments, hasLength(1));
+      final plans = database.explainPerformanceQueries();
+      expect(plans, hasLength(4));
+      expect(
+        plans.values.expand((entries) => entries).join(' '),
+        isNot(contains('SCAN spbwlt_CardFieldValue')),
+      );
       final snapshot = database.loadSnapshot();
+      expect(snapshot.detailsIncluded, isTrue);
       expect(snapshot.cards, hasLength(40));
       expect(snapshot.templates, hasLength(4));
       expect(snapshot.categories, isNotEmpty);

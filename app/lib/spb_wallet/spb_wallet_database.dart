@@ -117,14 +117,22 @@ class SpbWalletDatabase {
     }
   }
 
-  SpbWalletSnapshot loadSnapshot() {
+  SpbWalletSnapshot loadSnapshot() => _loadSnapshot(includeDetails: true);
+
+  SpbWalletSnapshot loadCatalog() => _loadSnapshot(includeDetails: false);
+
+  SpbWalletSnapshot _loadSnapshot({required bool includeDetails}) {
     final loadIssues = <WalletLoadIssue>[];
     final categories = _loadCategories(_loadCategoryColors(), loadIssues);
     final templates = _loadTemplates(categories, loadIssues);
     final embeddedIconPngs = _loadEmbeddedIconPngs(loadIssues);
     final cardStates = _loadCardStates();
-    final fieldValuesByCard = _loadAllCardFieldValues(loadIssues);
-    final attachmentsByCard = _loadAllAttachments(loadIssues);
+    final fieldValuesByCard = includeDetails
+        ? _loadAllCardFieldValues(loadIssues)
+        : const <String, Map<String, String>>{};
+    final attachmentsByCard = includeDetails
+        ? _loadAllAttachments(loadIssues)
+        : const <String, List<SpbWalletAttachmentRecord>>{};
     final cards = <SpbWalletCardRecord>[];
     final cardLoadFailures = <SpbWalletCardLoadFailure>[];
 
@@ -140,7 +148,8 @@ class SpbWalletDatabase {
           SpbWalletCardRecord(
             id: id,
             title: crypto.decryptText(row['Name']),
-            description: crypto.decryptText(row['Description']),
+            description:
+                includeDetails ? crypto.decryptText(row['Description']) : '',
             categoryPath: _categoryPath(
               categories,
               _string(row['ParentCategoryID']),
@@ -183,7 +192,65 @@ class SpbWalletDatabase {
       embeddedIconPngs: embeddedIconPngs,
       cardLoadFailures: cardLoadFailures,
       loadReport: WalletLoadReport(loadIssues),
+      detailsIncluded: includeDetails,
     );
+  }
+
+  SpbWalletCardDetails loadCardDetails(String cardId) {
+    final rows = _db.select(
+      'SELECT Description FROM spbwlt_Card WHERE ID = ? LIMIT 1',
+      [_idFromHex(cardId)],
+    );
+    if (rows.isEmpty) {
+      throw const SpbWalletOpenException('Карточка SPB Wallet не найдена.');
+    }
+    return SpbWalletCardDetails(
+      cardId: cardId,
+      description: crypto.decryptText(rows.first['Description']),
+      fieldValues: loadSearchableValues(cardId: cardId)[cardId] ?? const {},
+      attachments: loadAttachments(cardId),
+      backgroundImageBase64: loadCardBackgroundBase64(cardId),
+    );
+  }
+
+  Map<String, Map<String, String>> loadSearchableValues({String? cardId}) {
+    final issues = <WalletLoadIssue>[];
+    if (cardId == null) {
+      final result = _loadAllCardFieldValues(issues);
+      for (final row in _db.select(
+        'SELECT hex(ID) AS ID, Description FROM spbwlt_Card '
+        'WHERE Description IS NOT NULL',
+      )) {
+        try {
+          final description = crypto.decryptText(row['Description']);
+          if (description.isNotEmpty) {
+            result
+                .putIfAbsent(_string(row['ID']), () => <String, String>{})
+                .putIfAbsent('__spb_description', () => description);
+          }
+        } catch (_) {
+          // A damaged note is omitted from search without hiding the card.
+        }
+      }
+      return result;
+    }
+    final result = <String, Map<String, String>>{};
+    for (final row in _db.select(
+      'SELECT hex(CardID) AS CardID, hex(TemplateFieldID) AS TemplateFieldID, '
+      'ValueString FROM spbwlt_CardFieldValue WHERE CardID = ? '
+      'ORDER BY hex(ID)',
+      [_idFromHex(cardId)],
+    )) {
+      try {
+        result.putIfAbsent(cardId, () => <String, String>{}).putIfAbsent(
+              _string(row['TemplateFieldID']),
+              () => crypto.decryptText(row['ValueString']),
+            );
+      } catch (_) {
+        // A damaged field is omitted without hiding the rest of the card.
+      }
+    }
+    return result;
   }
 
   Map<String, Uint8List> _loadEmbeddedIconPngs(List<WalletLoadIssue> issues) {
@@ -245,8 +312,8 @@ class SpbWalletDatabase {
   List<SpbWalletAttachmentRecord> loadAttachments(String cardId) {
     return _db.select(
       'SELECT hex(ID) AS ID, hex(CardID) AS CardID, Name '
-      'FROM spbwlt_CardAttachment WHERE hex(CardID) = ? ORDER BY hex(ID)',
-      [cardId],
+      'FROM spbwlt_CardAttachment WHERE CardID = ? ORDER BY hex(ID)',
+      [_idFromHex(cardId)],
     ).map((row) {
       return SpbWalletAttachmentRecord(
         id: _string(row['ID']),
@@ -269,8 +336,8 @@ class SpbWalletDatabase {
       'SELECT i.Data AS BackgroundData FROM spbwlt_Card c '
       'LEFT JOIN spbwlt_CardView v ON v.ID=c.CardViewID '
       'LEFT JOIN spbwlt_Image i ON i.ID=v.ImageID '
-      'WHERE hex(c.ID)=? LIMIT 1',
-      [cardId],
+      'WHERE c.ID=? LIMIT 1',
+      [_idFromHex(cardId)],
     );
     if (rows.isEmpty) return null;
     return _imageDataToBase64(rows.first['BackgroundData']);
@@ -278,13 +345,45 @@ class SpbWalletDatabase {
 
   Uint8List readAttachmentBytes(String attachmentId) {
     final rows = _db.select(
-      'SELECT Data FROM spbwlt_CardAttachment WHERE hex(ID) = ?',
-      [attachmentId],
+      'SELECT Data FROM spbwlt_CardAttachment WHERE ID = ?',
+      [_idFromHex(attachmentId)],
     );
     if (rows.isEmpty) {
       throw const SpbWalletOpenException('Вложение SPB Wallet не найдено.');
     }
     return attachmentCodec.decode(rows.first['Data']).bytes;
+  }
+
+  Map<String, List<String>> explainPerformanceQueries() {
+    final sampleId = _idFromHex('0000000000000000');
+    final queries = <String, (String, List<Object?>)>{
+      'cardsByCategory': (
+        'SELECT ID FROM spbwlt_Card WHERE ParentCategoryID = ?',
+        [sampleId],
+      ),
+      'fieldsByCard': (
+        'SELECT ID FROM spbwlt_CardFieldValue WHERE CardID = ?',
+        [sampleId],
+      ),
+      'attachmentsByCard': (
+        'SELECT ID FROM spbwlt_CardAttachment WHERE CardID = ?',
+        [sampleId],
+      ),
+      'templateFields': (
+        'SELECT ID FROM spbwlt_TemplateField WHERE TemplateID = ?',
+        [sampleId],
+      ),
+    };
+    return {
+      for (final entry in queries.entries)
+        entry.key: _db
+            .select(
+              'EXPLAIN QUERY PLAN ${entry.value.$1}',
+              entry.value.$2,
+            )
+            .map((row) => _string(row['detail']))
+            .toList(),
+    };
   }
 
   void _saveCardBackground(String cardId, String? backgroundImageBase64) {
@@ -1876,6 +1975,7 @@ class SpbWalletSnapshot {
     this.embeddedIconPngs = const {},
     this.cardLoadFailures = const [],
     this.loadReport = const WalletLoadReport([]),
+    this.detailsIncluded = true,
   });
 
   final List<SpbWalletTemplateRecord> templates;
@@ -1884,6 +1984,23 @@ class SpbWalletSnapshot {
   final Map<String, Uint8List> embeddedIconPngs;
   final List<SpbWalletCardLoadFailure> cardLoadFailures;
   final WalletLoadReport loadReport;
+  final bool detailsIncluded;
+}
+
+class SpbWalletCardDetails {
+  const SpbWalletCardDetails({
+    required this.cardId,
+    required this.description,
+    required this.fieldValues,
+    required this.attachments,
+    this.backgroundImageBase64,
+  });
+
+  final String cardId;
+  final String description;
+  final Map<String, String> fieldValues;
+  final List<SpbWalletAttachmentRecord> attachments;
+  final String? backgroundImageBase64;
 }
 
 enum WalletLoadIssueKind { card, field, attachment, category, template, icon }

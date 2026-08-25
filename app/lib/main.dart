@@ -2664,6 +2664,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   final Set<String> sessionTrashFolderPaths = {};
   final Set<String> sessionTrashTemplateIds = {};
   final List<SessionUndoEntry> sessionUndoHistory = [];
+  final Set<String> loadedCardDetailIds = {};
+  bool searchValuesLoaded = false;
   bool sessionUndoInProgress = false;
 
   bool get createMode => entryMode == EntryMode.createSwl;
@@ -3084,7 +3086,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         clearSessionUndoHistory();
         spbWallet?.close(flush: vaultDirty);
         final wallet = SpbWalletDatabase.open(spbWalletPath!, password);
-        final snapshot = wallet.loadSnapshot();
+        final snapshot = SpbWalletCatalogRepository(wallet).loadCatalog();
         final integrityReport = wallet.inspectIntegrity();
         spbWallet = wallet;
         vaultDirty = false;
@@ -4655,6 +4657,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   void applySpbSnapshot(SpbWalletSnapshot snapshot) {
+    loadedCardDetailIds
+      ..clear()
+      ..addAll(
+        snapshot.detailsIncluded
+            ? snapshot.cards.map((card) => card.id)
+            : const <String>[],
+      );
+    searchValuesLoaded = snapshot.detailsIncluded;
     cardLoadFailures = List.of(snapshot.cardLoadFailures);
     walletLoadReport = snapshot.loadReport.hasIssues
         ? snapshot.loadReport
@@ -5474,7 +5484,46 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   void submitSpbSearch(String value) {
     searchDebounce?.cancel();
-    setState(() => spbSubmittedSearchQuery = value.trim());
+    unawaited(_submitSpbSearch(value.trim()));
+  }
+
+  Future<void> _submitSpbSearch(String value) async {
+    if (value.isNotEmpty) await _ensureSearchValuesLoaded();
+    if (!mounted) return;
+    setState(() => spbSubmittedSearchQuery = value);
+  }
+
+  Future<void> _ensureSearchValuesLoaded() async {
+    final wallet = spbWallet;
+    if (wallet == null || searchValuesLoaded) return;
+    final searchableValues =
+        SpbWalletCatalogRepository(wallet).loadSearchableValues();
+    if (!mounted) return;
+    setState(() {
+      items = [
+        for (final item in items)
+          searchableValues[item.id] == null
+              ? item
+              : SecretItem(
+                  id: item.id,
+                  templateId: item.templateId,
+                  title: item.title,
+                  category: item.category,
+                  colorId: item.colorId,
+                  values: searchableValues[item.id]!,
+                  modifiedAt: item.modifiedAt,
+                  attachments: item.attachments,
+                  hitCount: item.hitCount,
+                  iconId: item.iconId,
+                  backgroundImageBase64: item.backgroundImageBase64,
+                  spbColor: item.spbColor,
+                  fieldOrder: item.fieldOrder,
+                  hiddenFieldIds: item.hiddenFieldIds,
+                ),
+      ];
+      itemsById = indexEntitiesById(items, (item) => item.id);
+      searchValuesLoaded = true;
+    });
   }
 
   void _handleSearchChanged() {
@@ -5484,7 +5533,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     final value = searchController.text.trim();
     searchDebounce = Timer(const Duration(milliseconds: 250), () {
       if (!mounted || spbSubmittedSearchQuery == value) return;
-      setState(() => spbSubmittedSearchQuery = value);
+      unawaited(_submitSpbSearch(value));
     });
   }
 
@@ -10465,7 +10514,48 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   Future<void> selectItem(SecretItem item) async {
-    final current = itemById(item.id) ?? item;
+    var current = itemById(item.id) ?? item;
+    final wallet = spbWallet;
+    if (wallet != null && !loadedCardDetailIds.contains(current.id)) {
+      final details = SpbWalletCatalogRepository(wallet).loadCardDetails(
+        current.id,
+      );
+      final values = Map<String, String>.from(details.fieldValues);
+      if (details.description.trim().isNotEmpty) {
+        values[spbDescriptionFieldId] = details.description;
+      }
+      current = SecretItem(
+        id: current.id,
+        templateId: current.templateId,
+        title: current.title,
+        category: current.category,
+        colorId: current.colorId,
+        values: values,
+        modifiedAt: current.modifiedAt,
+        attachments: details.attachments
+            .map(
+              (attachment) => SecretAttachment(
+                id: attachment.id,
+                fileName: attachment.fileName,
+                size: attachment.size,
+                decodeError: attachment.decodeError,
+              ),
+            )
+            .toList(),
+        hitCount: current.hitCount,
+        iconId: current.iconId,
+        backgroundImageBase64: details.backgroundImageBase64,
+        spbColor: current.spbColor,
+        fieldOrder: current.fieldOrder,
+        hiddenFieldIds: current.hiddenFieldIds,
+      );
+      loadedCardDetailIds.add(current.id);
+      items = [
+        for (final entry in items)
+          if (entry.id == current.id) current else entry,
+      ];
+      itemsById[current.id] = current;
+    }
     final background = current.backgroundImageBase64 ??
         spbWallet?.loadCardBackgroundBase64(current.id);
     final selected = SecretItem(
@@ -11525,6 +11615,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           ];
         }
         itemsById[cardId] = persisted;
+        loadedCardDetailIds.add(cardId);
         if (refreshedCategories != null) {
           categoryIconsByPath = spbCategoryIconsToUi(refreshedCategories);
           categoryColorsByPath = spbCategoryColorsToUi(refreshedCategories);

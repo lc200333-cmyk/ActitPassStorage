@@ -15,8 +15,16 @@ Future<void> main(List<String> arguments) async {
 
   final openWatch = Stopwatch()..start();
   final database = SpbWalletDatabase.open(fixture.path, fixture.password);
-  final snapshot = database.loadSnapshot();
+  final catalog = database.loadCatalog();
   openWatch.stop();
+
+  final fullSnapshotWatch = Stopwatch()..start();
+  final snapshot = database.loadSnapshot();
+  fullSnapshotWatch.stop();
+
+  final detailsWatch = Stopwatch()..start();
+  database.loadCardDetails(catalog.cards.last.id);
+  detailsWatch.stop();
 
   final firstSearchWatch = Stopwatch()..start();
   final firstSearch = snapshot.cards
@@ -70,7 +78,9 @@ Future<void> main(List<String> arguments) async {
     },
     'milliseconds': {
       'fixtureGeneration': fixtureWatch.elapsedMilliseconds,
-      'openAndLoadSnapshot': openWatch.elapsedMilliseconds,
+      'openAndLoadCatalog': openWatch.elapsedMilliseconds,
+      'loadFullSnapshot': fullSnapshotWatch.elapsedMilliseconds,
+      'loadOneCardDetails': detailsWatch.elapsedMicroseconds / 1000,
       'firstSearch': firstSearchWatch.elapsedMicroseconds / 1000,
       'repeatedSearch25': repeatedSearchWatch.elapsedMicroseconds / 1000,
       'saveOneCardAndFlush': saveWatch.elapsedMilliseconds,
