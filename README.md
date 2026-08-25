@@ -1,158 +1,67 @@
 # ActitPassStorage
 
-Современный локальный менеджер секретов в духе SPB Wallet.
+ActitPassStorage is a local, offline password and private data manager for
+Windows, Android, and Linux. It works with password-protected `.swl` vaults
+and is compatible with SPB Wallet data, so your vault remains a file that you
+control.
 
-## Скачать
+## Download
 
-Актуальные сборки публикуются в GitHub Releases:
+The latest builds are available from GitHub Releases:
 
 - [Windows setup.exe](../../releases/latest/download/ActitPassStorage-Setup.exe)
 - [Android APK](../../releases/latest/download/ActitPassStorage-android.apk)
 - [Linux deb amd64](../../releases/latest/download/ActitPassStorage-linux-amd64.deb)
 
-Если ссылки не открываются, смотри страницу [последнего релиза](../../releases/latest).
+If a direct link does not work, open the [latest release](../../releases/latest).
 
-В текущем состоянии репозитория есть:
+## Features
 
-- `plans/` - подробные планы продукта и реализации.
-- `tests/` - тесты Node для сборочных скриптов и Docker-окружения.
-- `app/` - Flutter-приложение для production-сборок.
-- `core/` - Rust workspace с доменными типами vault/sync и FFI-точкой входа.
+- Create new password-protected `.swl` vaults or open existing SPB Wallet
+  databases.
+- Organize passwords, notes, payment details, and other private information in
+  folders and cards.
+- Use built-in card templates or create custom templates with your own fields
+  and icons.
+- Keep secret fields hidden until you reveal or copy them.
+- Add notes and file attachments to cards.
+- Search, filter, and sort cards and templates.
+- Import and export cards and templates for moving selected data between
+  vaults.
+- Undo changes and restore deleted items from the session trash before closing
+  the application.
+- Create archive copies of important vaults before major changes.
+- Use an interface adapted for desktop and mobile screens.
 
-## Проверка
+ActitPassStorage does not require an account or a cloud service. Your primary
+vault stays on your device and can be used without an internet connection.
 
-```bash
-npm test
-```
+## Quick Start
 
-## Docker-сборки APK/deb/setup.exe
+1. Download the package for your platform:
+   - On Windows, run `ActitPassStorage-Setup.exe` and follow the installer.
+   - On Android, install `ActitPassStorage-android.apk`. Your device may ask you
+     to allow installation from your browser or file manager.
+   - On Debian or Ubuntu, install the downloaded package with:
 
-Основной способ сборки APK и deb не требует установки Flutter, Android SDK или Rust на хост: нужен только Docker и `docker-compose`.
+     ```bash
+     sudo apt install ./ActitPassStorage-linux-amd64.deb
+     ```
 
-Подробная инструкция: [docs/builds.md](docs/builds.md).
+2. Start ActitPassStorage.
+3. To create a vault, select **+**, choose its location and name, then enter and
+   confirm a new password. To use an existing vault, select the folder button,
+   choose a `.swl` file, and enter its password.
+4. Select or create a folder, add a card, choose a template, and fill in the
+   required fields.
+5. Save the vault after making changes. You can also use the safe-close button,
+   which saves pending changes before closing.
+6. Create an archive copy and store it separately from the working vault.
 
-Собрать Docker-образ с окружением:
+## Important
 
-```bash
-npm run docker:build-image
-```
+The vault password is not stored by the application and cannot be recovered if
+you forget it. Use a strong, unique password and keep it in a safe place.
 
-Собрать Android APK:
-
-```bash
-npm run docker:apk
-```
-
-Собрать Linux deb:
-
-```bash
-npm run docker:deb
-
-sudo apt install --reinstall ./dist/actit-pass-storage_0.1.0_amd64.deb
-```
-
-`docker:deb` собирает пакет в Ubuntu 20.04 контейнере, чтобы избежать ошибок на старых Linux.
-
-Собрать APK и deb подряд:
-
-```bash
-npm run docker:release
-```
-
-Эта команда собирает release APK и deb. Для быстрых повторных сборок без пересборки Docker image:
-
-```bash
-npm run docker:apk:fast
-npm run docker:deb:fast
-```
-
-Проверить проект внутри контейнера:
-
-```bash
-npm run docker:test
-```
-
-Все результаты складываются в `dist/`, которая подключена в контейнер как volume:
-
-```text
-dist/ActitPassStorage-android-debug.apk
-dist/actit-pass-storage_0.1.0_amd64.deb
-```
-
-Контейнерное окружение описано в:
-
-```text
-docker/build-env/Dockerfile
-docker/linux-deb/Dockerfile
-docker-compose.yml
-```
-
-Windows `setup.exe` собирается на Windows runner через GitHub Actions, потому что Flutter Windows desktop требует Windows SDK/MSVC и не кросс-собирается в Linux Docker:
-
-```text
-.github/workflows/windows_setup.yml
-```
-
-Ожидаемый артефакт workflow:
-
-```text
-ActitPassStorage-Setup-<version>.exe
-```
-
-## Релизы
-
-На каждый push в `master` workflow `.github/workflows/release.yml`:
-
-1. увеличивает patch-версию;
-2. коммитит обновленные версии с пометкой `[skip release]`;
-3. создает тег `vX.Y.Z`;
-4. собирает Windows setup, Android release APK и Linux deb;
-5. публикует файлы в GitHub Release.
-
-Версию можно поднять вручную:
-
-```bash
-npm run version:bump
-```
-
-## Локальные сборки без Docker
-
-Проверить наличие локальных инструментов:
-
-```bash
-npm run check:release-tools
-```
-
-Android APK:
-
-```bash
-npm run build:apk
-```
-
-Ожидаемый артефакт:
-
-```text
-dist/ActitPassStorage-android-debug.apk
-```
-
-Linux deb:
-
-```bash
-npm run build:deb
-```
-
-Ожидаемый артефакт:
-
-```text
-dist/actit-pass-storage_0.1.0_amd64.deb
-```
-
-Важно: Flutter Windows desktop собирается на Windows-хосте. На Linux-хосте локально собираются APK и deb после установки Flutter, Android SDK, Rust и Linux desktop dependencies.
-
-## Целевая промышленная версия
-
-Промышленная цель - Flutter + Rust:
-
-- Flutter UI в `app/`.
-- Rust ядро vault/sync в `core/`.
-- `flutter_rust_bridge` как мост между приложением и ядром.
+Always keep a separate backup of important `.swl` files, especially before
+imports, bulk edits, or deletions.
