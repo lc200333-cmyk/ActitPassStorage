@@ -45,11 +45,17 @@ void main() {
       'android/app/src/main/AndroidManifest.xml',
     ).readAsStringSync();
     expect(manifest, contains('android:label="Wallet APS"'));
-    expect(manifest, contains('android:icon="@mipmap/launcher_icon"'));
-    expect(manifest, contains('android:roundIcon="@mipmap/launcher_icon"'));
+    expect(
+      manifest,
+      contains('android:icon="@drawable/ic_launcher_foreground"'),
+    );
+    expect(
+      manifest,
+      contains('android:roundIcon="@drawable/ic_launcher_foreground"'),
+    );
     expect(
       File(
-        'android/app/src/main/res/mipmap-anydpi-v26/launcher_icon.xml',
+        'android/app/src/main/res/drawable/ic_launcher_foreground.xml',
       ).existsSync(),
       isTrue,
     );
@@ -70,6 +76,9 @@ void main() {
     final linuxPackage = File(
       '../tools/build_linux_deb.sh',
     ).readAsStringSync();
-    expect(linuxPackage, contains('docs/Wallet.png'));
+    expect(
+      linuxPackage,
+      contains('windows/runner/resources/app_icon.source.png'),
+    );
   });
 }

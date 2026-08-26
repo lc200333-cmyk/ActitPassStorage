@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
+import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
@@ -22,6 +23,24 @@ class MainActivity : FlutterActivity() {
     private var pendingCreateResult: MethodChannel.Result? = null
     private var walletChannel: MethodChannel? = null
     private var launchWalletConsumed = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val privateDirectories = buildList {
+            add(filesDir)
+            add(cacheDir)
+            externalCacheDir?.let(::add)
+            getExternalFilesDirs(null).filterNotNull().forEach(::add)
+        }
+        privateDirectories.forEach { directory ->
+            runCatching {
+                directory.mkdirs()
+                File(directory, ".nomedia").apply {
+                    if (!exists()) createNewFile()
+                }
+            }
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)

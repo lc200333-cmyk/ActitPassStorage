@@ -1866,9 +1866,12 @@ Future<void> openAttachmentBytesWithSystem(
   final safeName = fileName
       .replaceAll(RegExp(r'[\\/:*?<>|]'), '_')
       .replaceAll(String.fromCharCode(34), '_');
-  final file = File(
-    '${directory.path}${Platform.pathSeparator}actitpass_$safeName',
-  );
+  // FileProvider supplies the real MIME type. The service extension prevents
+  // gallery applications from treating the private working copy as a photo.
+  final temporaryName = Platform.isAndroid
+      ? 'actitpass_${safeName.hashCode.toUnsigned(32)}.apsblob'
+      : 'actitpass_$safeName';
+  final file = File('${directory.path}${Platform.pathSeparator}$temporaryName');
   await file.writeAsBytes(bytes, flush: true);
   if (Platform.isAndroid) {
     final opened = await spbWalletChannel.invokeMethod<bool>('openFile', {
@@ -6033,28 +6036,31 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 mainAxisSize: MainAxisSize.min,
                 children: [spbResourceIcon('icon_wallets_small.png', 40)],
               ),
-              title: GestureDetector(
-                key: const Key('spbWalletRoot'),
-                onTap: () => openSpbFolder(''),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 5,
-                    vertical: 3,
-                  ),
-                  decoration: selectedCategoryPath.isEmpty
-                      ? const BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [Color(0xffc9e5f8), Color(0xffeef8ff)],
-                          ),
-                        )
-                      : null,
-                  child: Text(
-                    selectedVaultTitle,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                      fontStyle: FontStyle.italic,
-                      decoration: TextDecoration.underline,
+              title: buildSpbCardDropTarget(
+                categoryPath: '',
+                child: GestureDetector(
+                  key: const Key('spbWalletRoot'),
+                  onTap: () => openSpbFolder(''),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 3,
+                    ),
+                    decoration: selectedCategoryPath.isEmpty
+                        ? const BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Color(0xffc9e5f8), Color(0xffeef8ff)],
+                            ),
+                          )
+                        : null,
+                    child: Text(
+                      selectedVaultTitle,
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                        fontStyle: FontStyle.italic,
+                        decoration: TextDecoration.underline,
+                      ),
                     ),
                   ),
                 ),
@@ -6133,28 +6139,31 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
-                title: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => openSpbFolder(folder.path),
-                  child: Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: 5,
-                      vertical: compactRows ? 0 : 3,
-                    ),
-                    decoration: selectedCategoryPath == folder.path
-                        ? const BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [Color(0xffb9dcf5), Color(0xffedf7fe)],
-                            ),
-                          )
-                        : null,
-                    child: Text(
-                      folder.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 19.8,
-                        fontWeight: FontWeight.normal,
+                title: buildSpbCardDropTarget(
+                  categoryPath: folder.path,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => openSpbFolder(folder.path),
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: compactRows ? 0 : 3,
+                      ),
+                      decoration: selectedCategoryPath == folder.path
+                          ? const BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [Color(0xffb9dcf5), Color(0xffedf7fe)],
+                              ),
+                            )
+                          : null,
+                      child: Text(
+                        folder.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 19.8,
+                          fontWeight: FontWeight.normal,
+                        ),
                       ),
                     ),
                   ),
@@ -6662,19 +6671,61 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   }
                   final item = cards[index - folders.length];
                   final template = templateFor(item.templateId);
+                  final cardEntry = buildSpbGridEntry(
+                    label: item.title,
+                    selected: selectedItemId == item.id,
+                    icon: spbSizedDataIcon(
+                      itemIconId(item, template),
+                      50.25,
+                      fallbackColor: itemPictogramColor(item, template),
+                    ),
+                    onTap: () => openCardPreviewDialog(item),
+                    onContextMenu: (position) =>
+                        showSpbCardMenu(item, position),
+                  );
                   return KeyedSubtree(
                     key: ValueKey('spbCentralCard-${item.id}'),
-                    child: buildSpbGridEntry(
-                      label: item.title,
-                      selected: selectedItemId == item.id,
-                      icon: spbSizedDataIcon(
-                        itemIconId(item, template),
-                        50.25,
-                        fallbackColor: itemPictogramColor(item, template),
+                    child: Draggable<SecretItem>(
+                      data: item,
+                      maxSimultaneousDrags: spbWallet == null ? 0 : 1,
+                      dragAnchorStrategy: pointerDragAnchorStrategy,
+                      feedback: Material(
+                        color: Colors.transparent,
+                        child: Container(
+                          width: 104,
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xffedf7fe),
+                            border: Border.all(color: const Color(0xff367ca8)),
+                            boxShadow: const [
+                              BoxShadow(color: Colors.black26, blurRadius: 6),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              spbSizedDataIcon(
+                                itemIconId(item, template),
+                                42,
+                                fallbackColor:
+                                    itemPictogramColor(item, template),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                item.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
-                      onTap: () => openCardPreviewDialog(item),
-                      onContextMenu: (position) =>
-                          showSpbCardMenu(item, position),
+                      childWhenDragging: Opacity(
+                        opacity: 0.35,
+                        child: cardEntry,
+                      ),
+                      child: cardEntry,
                     ),
                   );
                 },
@@ -7136,6 +7187,13 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     if (wallet == null || !ensureSpbWalletWritable()) return;
     final target = await showMoveTargetDialog(initialPath: item.category);
     if (target == null || target == item.category || !mounted) return;
+    await moveSpbCardTo(item, target);
+  }
+
+  Future<void> moveSpbCardTo(SecretItem item, String target) async {
+    final wallet = spbWallet;
+    if (wallet == null || !ensureSpbWalletWritable()) return;
+    if (target == item.category || !mounted) return;
     SessionUndoEntry? undoEntry;
     try {
       undoEntry = await captureSessionUndo(
@@ -7176,6 +7234,29 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       discardSessionUndo(undoEntry);
       setState(() => message = 'Не удалось переместить карточку: $error');
     }
+  }
+
+  Widget buildSpbCardDropTarget({
+    required String categoryPath,
+    required Widget child,
+  }) {
+    return DragTarget<SecretItem>(
+      onWillAcceptWithDetails: (details) =>
+          details.data.category != categoryPath && spbWallet != null,
+      onAcceptWithDetails: (details) {
+        unawaited(moveSpbCardTo(details.data, categoryPath));
+      },
+      builder: (context, candidates, rejected) => AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        decoration: candidates.isEmpty
+            ? null
+            : BoxDecoration(
+                color: const Color(0xffd7f4df),
+                border: Border.all(color: const Color(0xff16833c), width: 2),
+              ),
+        child: child,
+      ),
+    );
   }
 
   Future<void> moveSpbFolder(CategoryTreeNode folder) async {
@@ -7963,7 +8044,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                             ),
                           ),
                           item.title,
-                          () => openCardPreviewDialog(item),
+                          () => openFrequentCard(item),
                         ),
                     ],
                     expand: true,
@@ -8045,7 +8126,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                             ),
                           ),
                           item.title,
-                          () => openCardPreviewDialog(item),
+                          () => openFrequentCard(item),
                         ),
                     ],
                     sectionExpanded: true,
@@ -10492,7 +10573,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  onTap: () => openCardPreviewDialog(item),
+                  onTap: () => openFrequentCard(item),
                 );
               }),
           ],
@@ -10590,6 +10671,29 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     } else if (action == CardPreviewAction.delete) {
       await deleteItemWithConfirmation(latestItem);
     }
+  }
+
+  Future<void> openFrequentCard(SecretItem item) async {
+    await openCardPreviewDialog(item);
+    if (!mounted) return;
+
+    final latestItem = itemById(item.id);
+    final categoryPath = latestItem?.category ?? item.category;
+    final parts = categoryParts(categoryPath);
+    final parentPaths = <String>{};
+    for (var index = 1; index <= parts.length; index++) {
+      parentPaths.add(parts.take(index).join(' / '));
+    }
+
+    searchController.clear();
+    setState(() {
+      mobileTemplatesOpen = false;
+      spbSubmittedSearchQuery = '';
+      selectedCategoryPath = categoryPath;
+      selectedCategoryId = categoryIdsByPath[categoryPath];
+      expandedCategoryPaths.addAll(parentPaths);
+      selectedItemId = latestItem?.id;
+    });
   }
 
   Future<SecretItem?> addAttachmentFromPreview(SecretItem item) async {
@@ -10728,7 +10832,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             title: Text(item.title),
             subtitle: Text('${template.name} · открытий: ${item.hitCount}'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => openCardPreviewDialog(item),
+            onTap: () => openFrequentCard(item),
           ),
         );
       },
@@ -11184,7 +11288,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   ) async {
     final directory = await getTemporaryDirectory();
     final safeName = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-    final file = File('${directory.path}/actitpass_$safeName');
+    final temporaryName = Platform.isAndroid
+        ? 'actitpass_${safeName.hashCode.toUnsigned(32)}.apsblob'
+        : 'actitpass_$safeName';
+    final file = File(
+      '${directory.path}${Platform.pathSeparator}$temporaryName',
+    );
     await file.writeAsBytes(bytes, flush: true);
     final mimeType = isPdfAttachment(fileName)
         ? 'application/pdf'

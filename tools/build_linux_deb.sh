@@ -39,7 +39,8 @@ mkdir -p \
   "$PACKAGE_ROOT/usr/share/icons/hicolor/128x128/apps"
 
 cp -R "$APP_DIR/build/linux/x64/release/bundle/." "$PACKAGE_ROOT/opt/WalletAPS/"
-cp "$ROOT_DIR/docs/Wallet.png" "$PACKAGE_ROOT/usr/share/icons/hicolor/128x128/apps/wallet-aps.png"
+cp "$APP_DIR/windows/runner/resources/app_icon.source.png" \
+  "$PACKAGE_ROOT/usr/share/icons/hicolor/128x128/apps/wallet-aps.png"
 
 cat > "$PACKAGE_ROOT/DEBIAN/control" <<CONTROL
 Package: wallet-aps

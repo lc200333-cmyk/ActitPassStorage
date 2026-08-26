@@ -14,8 +14,8 @@ WINDOWS_APP_NAME="$(sed -n 's/^windows_name:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\
 [ -n "$WINDOWS_APP_NAME" ] || WINDOWS_APP_NAME="$APP_NAME"
 
 cd "$APP_DIR"
-dart run tool/generate_android_icon_source.dart
-dart run flutter_launcher_icons -f branding.yaml
+# Android uses a repository-native vector drawable. Do not regenerate raster
+# launcher assets: the Android package must not contain loose media files.
 dart run tool/generate_platform_icons.dart
 
 if [ -f android/app/src/main/AndroidManifest.xml ]; then
