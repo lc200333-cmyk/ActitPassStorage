@@ -3887,28 +3887,37 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xffececec),
-          surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-          titlePadding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
-          title: GestureDetector(
-            key: const Key('changePasswordDialogDragHandle'),
-            behavior: HitTestBehavior.opaque,
-            onPanStart: (_) {
-              unawaited(startLoginWindowDrag());
-            },
-            child: const SizedBox(
-              height: 38,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Изменить пароль'),
+        builder: (context, setDialogState) {
+          final media = MediaQuery.of(context);
+          final narrow = media.size.width < 600;
+          return AlertDialog(
+            key: const Key('changePasswordDialog'),
+            scrollable: true,
+            insetPadding: EdgeInsets.symmetric(
+              horizontal: narrow ? 4 : 40,
+              vertical: narrow ? 8 : 24,
+            ),
+            backgroundColor: const Color(0xffececec),
+            surfaceTintColor: Colors.transparent,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+            titlePadding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
+            title: GestureDetector(
+              key: const Key('changePasswordDialogDragHandle'),
+              behavior: HitTestBehavior.opaque,
+              onPanStart: (_) {
+                unawaited(startLoginWindowDrag());
+              },
+              child: const SizedBox(
+                height: 38,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Изменить пароль'),
+                ),
               ),
             ),
-          ),
-          content: SizedBox(
-            width: 420,
-            child: SingleChildScrollView(
+            content: SizedBox(
+              width: narrow ? double.maxFinite : 420,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -3977,78 +3986,87 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 ],
               ),
             ),
-          ),
-          actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
-          actions: [
-            IgnorePointer(
-              ignoring: saving,
-              child: Opacity(
-                opacity: saving ? 0.6 : 1,
-                child: SpbGradientActionButton(
-                  key: const Key('cancelChangePassword'),
-                  icon: Icons.close,
-                  tooltip: 'Отменить',
-                  colors: const [Color(0xffff5a5f), Color(0xffa90000)],
-                  onTap: () => Navigator.of(dialogContext).pop(),
+            actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+            actions: [
+              IgnorePointer(
+                ignoring: saving,
+                child: Opacity(
+                  opacity: saving ? 0.6 : 1,
+                  child: SpbGradientActionButton(
+                    key: const Key('cancelChangePassword'),
+                    icon: Icons.close,
+                    tooltip: 'Отменить',
+                    colors: const [Color(0xffff5a5f), Color(0xffa90000)],
+                    onTap: () => Navigator.of(dialogContext).pop(),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            IgnorePointer(
-              ignoring: saving,
-              child: Opacity(
-                opacity: saving ? 0.6 : 1,
-                child: SpbGradientActionButton(
-                  key: const Key('confirmChangePassword'),
-                  icon: Icons.check,
-                  tooltip: saving ? 'Сохранение…' : 'Сохранить',
-                  colors: const [Color(0xff5bc96d), Color(0xff08772f)],
-                  onTap: () async {
-                    if (oldController.text.isEmpty) {
-                      setDialogState(
-                        () => errorText = 'Введите старый пароль.',
+              const SizedBox(width: 8),
+              IgnorePointer(
+                ignoring: saving,
+                child: Opacity(
+                  opacity: saving ? 0.6 : 1,
+                  child: SpbGradientActionButton(
+                    key: const Key('confirmChangePassword'),
+                    icon: Icons.check,
+                    tooltip: saving ? 'Сохранение…' : 'Сохранить',
+                    colors: const [Color(0xff5bc96d), Color(0xff08772f)],
+                    onTap: () async {
+                      FocusScope.of(dialogContext).unfocus();
+                      await SystemChannels.textInput.invokeMethod<void>(
+                        'TextInput.hide',
                       );
-                      return;
-                    }
-                    if (newController.text.isEmpty) {
-                      setDialogState(() => errorText = 'Введите новый пароль.');
-                      return;
-                    }
-                    if (newController.text != repeatController.text) {
-                      setDialogState(
-                        () => errorText = 'Новые пароли не совпадают.',
-                      );
-                      return;
-                    }
-                    setDialogState(() {
-                      saving = true;
-                      errorText = null;
-                    });
-                    try {
-                      await replaceCurrentWalletPassword(
-                        oldPassword: oldController.text,
-                        newPassword: newController.text,
-                        passwordHint: hintController.text,
-                      );
-                      if (dialogContext.mounted) {
-                        Navigator.of(dialogContext).pop();
+                      await WidgetsBinding.instance.endOfFrame;
+                      final oldPassword = oldController.text;
+                      final newPassword = newController.text;
+                      final repeatedPassword = repeatController.text;
+                      if (oldPassword.isEmpty) {
+                        setDialogState(
+                          () => errorText = 'Введите старый пароль.',
+                        );
+                        return;
                       }
-                      showSpbOperationMessage('Пароль кошелька изменен.');
-                    } catch (_) {
-                      if (dialogContext.mounted) {
-                        setDialogState(() {
-                          saving = false;
-                          errorText =
-                              'Не удалось изменить пароль. Проверьте старый пароль.';
-                        });
+                      if (newPassword.isEmpty) {
+                        setDialogState(
+                            () => errorText = 'Введите новый пароль.');
+                        return;
                       }
-                    }
-                  },
+                      if (newPassword != repeatedPassword) {
+                        setDialogState(
+                          () => errorText = 'Новые пароли не совпадают.',
+                        );
+                        return;
+                      }
+                      setDialogState(() {
+                        saving = true;
+                        errorText = null;
+                      });
+                      try {
+                        await replaceCurrentWalletPassword(
+                          oldPassword: oldPassword,
+                          newPassword: newPassword,
+                          passwordHint: hintController.text,
+                        );
+                        if (dialogContext.mounted) {
+                          Navigator.of(dialogContext).pop();
+                        }
+                        showSpbOperationMessage('Пароль кошелька изменен.');
+                      } catch (_) {
+                        if (dialogContext.mounted) {
+                          setDialogState(() {
+                            saving = false;
+                            errorText =
+                                'Не удалось изменить пароль. Проверьте старый пароль.';
+                          });
+                        }
+                      }
+                    },
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
+            ],
+          );
+        },
       ),
     );
     oldController.dispose();
@@ -11972,10 +11990,13 @@ class PasswordStrengthBar extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 2,
           children: [
             const Text('Надежность пароля'),
-            const Spacer(),
             Text(labels[score]),
           ],
         ),
@@ -12018,6 +12039,12 @@ class PasswordField extends StatelessWidget {
     final field = TextField(
       controller: controller,
       obscureText: !visible,
+      autocorrect: false,
+      enableSuggestions: false,
+      keyboardType: TextInputType.visiblePassword,
+      textCapitalization: TextCapitalization.none,
+      smartDashesType: SmartDashesType.disabled,
+      smartQuotesType: SmartQuotesType.disabled,
       onChanged: onChanged,
       onSubmitted: onSubmitted,
       decoration: InputDecoration(

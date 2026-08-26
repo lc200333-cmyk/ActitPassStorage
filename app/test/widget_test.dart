@@ -960,6 +960,15 @@ void main() {
 
     final cancel = find.byKey(const Key('cancelChangePassword'));
     final save = find.byKey(const Key('confirmChangePassword'));
+    final newPasswordField = tester.widget<TextField>(
+      find.descendant(
+        of: find.byKey(const Key('changePasswordNew')),
+        matching: find.byType(TextField),
+      ),
+    );
+    expect(newPasswordField.autocorrect, isFalse);
+    expect(newPasswordField.enableSuggestions, isFalse);
+    expect(newPasswordField.keyboardType, TextInputType.visiblePassword);
     expect(tester.getSize(cancel), const Size(48, 48));
     expect(tester.getSize(save), const Size(48, 48));
     expect(
@@ -972,6 +981,49 @@ void main() {
     );
     await tester.tap(cancel);
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('change password fits narrow Android screen and keyboard',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    await tester.binding.setSurfaceSize(const Size(360, 640));
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      tester.view.resetViewInsets();
+      tester.binding.setSurfaceSize(null);
+    });
+
+    Widget host() => const MaterialApp(
+          home: VaultShell(initiallyUnlocked: true),
+        );
+
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+    final dynamic state = tester.state(find.byType(VaultShell));
+    state.openChangePasswordDialog();
+    await tester.pumpAndSettle();
+
+    final dialog = find.byKey(const Key('changePasswordDialog'));
+    expect(tester.getSize(dialog).width, greaterThanOrEqualTo(352));
+    expect(find.byKey(const Key('changePasswordOld')), findsOneWidget);
+    expect(find.byKey(const Key('changePasswordNew')), findsOneWidget);
+    expect(find.byKey(const Key('changePasswordRepeat')), findsOneWidget);
+    expect(find.byKey(const Key('changePasswordHint')), findsOneWidget);
+
+    tester.view.viewInsets = FakeViewPadding(
+      bottom: 260 * tester.view.devicePixelRatio,
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(
+      tester.getBottomLeft(find.byKey(const Key('confirmChangePassword'))).dy,
+      lessThanOrEqualTo(380),
+    );
+    await tester.ensureVisible(find.byKey(const Key('changePasswordHint')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    tester.view.resetViewInsets();
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('damaged cards produce a visible report instead of disappearing',

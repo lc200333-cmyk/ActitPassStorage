@@ -92,9 +92,13 @@ class MainActivity : FlutterActivity() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }
-        startActivityForResult(intent, openRequestCode)
+        startActivityForResult(
+            Intent.createChooser(intent, "Выберите файловый менеджер"),
+            openRequestCode
+        )
     }
 
     private fun createSpbWalletDocument(displayName: String, result: MethodChannel.Result) {
@@ -109,7 +113,10 @@ class MainActivity : FlutterActivity() {
             putExtra(Intent.EXTRA_TITLE, displayName)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }
-        startActivityForResult(intent, createRequestCode)
+        startActivityForResult(
+            Intent.createChooser(intent, "Выберите файловый менеджер для сохранения"),
+            createRequestCode
+        )
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {

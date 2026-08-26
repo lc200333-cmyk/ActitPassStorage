@@ -48,10 +48,11 @@ void main() {
 
     final changedPath =
         '${directory.path}${Platform.pathSeparator}password-changed.swl';
+    const crossPlatformPassword = 'Пароль-Android-Windows-42!';
     expect(
       cloneSwlVaultWithPassword({
         'path': changedPath,
-        'password': 'changed-password',
+        'password': crossPlatformPassword,
         'sourcePassword': 'new-password',
         'passwordHint': 'Новая подсказка',
         'baseBytes': File(targetPath).readAsBytesSync(),
@@ -62,7 +63,7 @@ void main() {
       () => SpbWalletDatabase.open(changedPath, 'new-password'),
       throwsA(isA<SpbWalletOpenException>()),
     );
-    final changed = SpbWalletDatabase.open(changedPath, 'changed-password');
+    final changed = SpbWalletDatabase.open(changedPath, crossPlatformPassword);
     expect(changed.loadSnapshot().cards.length, sourceSnapshot.cards.length);
     changed.close(flush: false);
     expect(
