@@ -2508,6 +2508,9 @@ bool cloneSwlVaultWithPassword(Map<String, dynamic> payload) {
       newPassword: password,
     );
     verification = SpbWalletDatabase.open(targetFile.path, password);
+    if (payload['renameNewWalletAboutFolder'] == true) {
+      renameNewWalletAboutFolder(verification);
+    }
     verification.savePasswordHint(passwordHint);
     verification.flushToDisk();
     verification.close(flush: false);
@@ -2524,8 +2527,47 @@ bool cloneSwlVaultWithPassword(Map<String, dynamic> payload) {
   }
 }
 
+void renameNewWalletAboutFolder(SpbWalletDatabase wallet) {
+  final categories = wallet.loadSnapshot().categories;
+  final byId = {for (final category in categories) category.id: category};
+  for (final category in categories) {
+    if (category.name.trim().toLowerCase() != 'о программе spb wallet') {
+      continue;
+    }
+    final names = <String>[category.name];
+    var parentId = category.parentId;
+    final visited = <String>{category.id};
+    while (parentId.isNotEmpty && visited.add(parentId)) {
+      final parent = byId[parentId];
+      if (parent == null) break;
+      names.insert(0, parent.name);
+      parentId = parent.parentId;
+    }
+    wallet.renameCategory(
+      names.join(' / '),
+      'О программе Wallet',
+      category.iconId,
+      colorId: category.colorId,
+    );
+  }
+}
+
 bool createSwlVaultFromBaseFile(Map<String, dynamic> payload) =>
-    cloneSwlVaultWithPassword({...payload, 'sourcePassword': '0000'});
+    cloneSwlVaultWithPassword({
+      ...payload,
+      'sourcePassword': '0000',
+      'renameNewWalletAboutFolder': true,
+    });
+
+String? normalizeNewVaultDirectorySelection(
+  String selectedPath,
+  FileSystemEntityType entityType,
+) {
+  final path = selectedPath.trim();
+  if (path.isEmpty || entityType == FileSystemEntityType.notFound) return null;
+  if (entityType == FileSystemEntityType.file) return File(path).parent.path;
+  return entityType == FileSystemEntityType.directory ? path : null;
+}
 
 int passwordStrengthScore(String password) {
   if (password.isEmpty) {
@@ -2595,21 +2637,25 @@ class DateTextInputFormatter extends TextInputFormatter {
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    var digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    final removedAutomaticDot = newValue.text.length < oldValue.text.length &&
+        oldValue.text.endsWith('.') &&
+        newValue.text == oldValue.text.substring(0, oldValue.text.length - 1);
+    if (removedAutomaticDot && digits.isNotEmpty) {
+      digits = digits.substring(0, digits.length - 1);
+    }
     final trimmed = digits.length > 8 ? digits.substring(0, 8) : digits;
-    final parts = <String>[];
+    final buffer = StringBuffer();
     if (trimmed.isNotEmpty) {
-      parts.add(trimmed.length <= 2 ? trimmed : trimmed.substring(0, 2));
+      buffer.write(trimmed.substring(0, min(2, trimmed.length)));
     }
+    if (trimmed.length >= 2) buffer.write('.');
     if (trimmed.length > 2) {
-      parts.add(
-        trimmed.length <= 4 ? trimmed.substring(2) : trimmed.substring(2, 4),
-      );
+      buffer.write(trimmed.substring(2, min(4, trimmed.length)));
     }
-    if (trimmed.length > 4) {
-      parts.add(trimmed.substring(4));
-    }
-    final text = parts.join('.');
+    if (trimmed.length >= 4) buffer.write('.');
+    if (trimmed.length > 4) buffer.write(trimmed.substring(4));
+    final text = buffer.toString();
     return TextEditingValue(
       text: text,
       selection: TextSelection.collapsed(offset: text.length),
@@ -3220,6 +3266,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     revealed.clear();
     loginHintVisible = false;
     loginPasswordHint = '';
+    showPassword = false;
     if (!mounted) return;
     setState(() {
       unlocked = false;
@@ -3474,15 +3521,35 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         });
         return;
       }
-      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+      var selectedDirectory = await FilePicker.platform.getDirectoryPath(
         dialogTitle: 'Назначить путь для новой базы',
         lockParentWindow: true,
       );
       if (selectedDirectory == null || selectedDirectory.trim().isEmpty) {
         return;
       }
+      if (Platform.isLinux) {
+        var entityType = await FileSystemEntity.type(
+          selectedDirectory,
+          followLinks: true,
+        );
+        if (entityType == FileSystemEntityType.notFound &&
+            await File(selectedDirectory).parent.exists()) {
+          entityType = FileSystemEntityType.file;
+        }
+        selectedDirectory = normalizeNewVaultDirectorySelection(
+          selectedDirectory,
+          entityType,
+        );
+        if (selectedDirectory == null) {
+          setDialogState(
+            () => dialogError = 'Выберите существующую папку для новой базы.',
+          );
+          return;
+        }
+      }
       setDialogState(() {
-        pathController.text = selectedDirectory;
+        pathController.text = selectedDirectory!;
         dialogError = null;
       });
     }
@@ -9406,7 +9473,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                             controller: passwordController,
                                             focusNode: passwordFocusNode,
                                             autofocus: true,
-                                            obscureText: true,
+                                            obscureText: !showPassword,
                                             enableSuggestions: false,
                                             autocorrect: false,
                                             keyboardType:
@@ -9414,12 +9481,29 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                             textInputAction:
                                                 TextInputAction.done,
                                             onSubmitted: (_) => unlock(),
-                                            decoration: const InputDecoration(
+                                            decoration: InputDecoration(
                                               isDense: true,
                                               filled: true,
                                               fillColor: Colors.white,
-                                              border: OutlineInputBorder(
+                                              border: const OutlineInputBorder(
                                                 borderRadius: BorderRadius.zero,
+                                              ),
+                                              suffixIcon: IconButton(
+                                                key: const Key(
+                                                  'loginPasswordVisibility',
+                                                ),
+                                                tooltip: showPassword
+                                                    ? 'Скрыть пароль'
+                                                    : 'Показать пароль',
+                                                icon: Icon(
+                                                  showPassword
+                                                      ? Icons.visibility_off
+                                                      : Icons.visibility,
+                                                ),
+                                                onPressed: () => setState(
+                                                  () => showPassword =
+                                                      !showPassword,
+                                                ),
                                               ),
                                             ),
                                           ),
@@ -10651,32 +10735,44 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   Future<void> openCardPreviewDialog(SecretItem item) async {
     await selectItem(item);
     if (!mounted) return;
-    final currentItem = itemById(item.id) ?? item;
-    final action = await showDialog<CardPreviewAction>(
-      context: context,
-      builder: (context) => CardPreviewDialog(
-        item: currentItem,
-        template: templateFor(currentItem.templateId),
-        loadAttachmentBytes: spbWallet == null
-            ? null
-            : (attachmentId) async =>
-                spbWallet!.readAttachmentBytes(attachmentId),
-        onAddAttachment: spbWallet == null ? null : addAttachmentFromPreview,
-      ),
-    );
-    if (!mounted) return;
-    final latestItem = itemById(currentItem.id) ?? currentItem;
-    if (action == CardPreviewAction.edit) {
-      await openItemDialog(item: latestItem);
-    } else if (action == CardPreviewAction.delete) {
-      await deleteItemWithConfirmation(latestItem);
+    var previewItem = itemById(item.id) ?? item;
+    while (true) {
+      if (!mounted) return;
+      final action = await showDialog<CardPreviewAction>(
+        context: context,
+        builder: (context) => CardPreviewDialog(
+          item: previewItem,
+          template: templateFor(previewItem.templateId),
+          loadAttachmentBytes: spbWallet == null
+              ? null
+              : (attachmentId) async =>
+                  spbWallet!.readAttachmentBytes(attachmentId),
+          onAddAttachment: spbWallet == null ? null : addAttachmentFromPreview,
+        ),
+      );
+      if (!mounted) return;
+      final latestItem = itemById(previewItem.id) ?? previewItem;
+      if (action == CardPreviewAction.edit) {
+        await openItemDialog(item: latestItem);
+        if (!mounted) return;
+        previewItem = itemById(latestItem.id) ?? latestItem;
+        continue;
+      }
+      if (action == CardPreviewAction.delete) {
+        await deleteItemWithConfirmation(latestItem);
+      }
+      previewItem = itemById(latestItem.id) ?? latestItem;
+      break;
     }
+    if (!mounted) return;
+    revealCardFolder(previewItem);
   }
 
   Future<void> openFrequentCard(SecretItem item) async {
     await openCardPreviewDialog(item);
-    if (!mounted) return;
+  }
 
+  void revealCardFolder(SecretItem item) {
     final latestItem = itemById(item.id);
     final categoryPath = latestItem?.category ?? item.category;
     final parts = categoryParts(categoryPath);
@@ -10688,6 +10784,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     searchController.clear();
     setState(() {
       mobileTemplatesOpen = false;
+      mobilePane = 1;
       spbSubmittedSearchQuery = '';
       selectedCategoryPath = categoryPath;
       selectedCategoryId = categoryIdsByPath[categoryPath];
@@ -11482,6 +11579,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
     final saved = await showDialog<SecretItem>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => ItemEditorDialog(
         templates: templates,
         categories: existingCategories(),
@@ -14260,7 +14358,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                           const SizedBox(width: 6),
                           SpbGradientActionButton(
                             key: const Key('cardEditorDeleteAttachmentButton'),
-                            icon: Icons.close,
+                            icon: Icons.delete,
                             tooltip: 'Удалить вложение',
                             colors: const [
                               Color(0xffff5a5f),

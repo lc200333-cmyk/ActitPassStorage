@@ -47,18 +47,39 @@ void main() {
     expect(manifest, contains('android:label="Wallet APS"'));
     expect(
       manifest,
-      contains('android:icon="@drawable/ic_launcher_foreground"'),
+      contains('android:icon="@mipmap/launcher_icon"'),
     );
     expect(
       manifest,
-      contains('android:roundIcon="@drawable/ic_launcher_foreground"'),
+      contains('android:roundIcon="@mipmap/launcher_icon"'),
     );
     expect(
       File(
-        'android/app/src/main/res/drawable/ic_launcher_foreground.xml',
+        'android/app/src/main/res/mipmap-anydpi-v26/launcher_icon.xml',
       ).existsSync(),
       isTrue,
     );
+    final androidSource = image.decodePng(
+      File('assets/branding/wallet_android.png').readAsBytesSync(),
+    );
+    expect(androidSource, isNotNull);
+    expect(androidSource!.numChannels, 4);
+    expect(androidSource.getPixel(0, 0).a, 0);
+    expect(androidSource.getPixel(androidSource.width - 1, 0).a, 0);
+    expect(androidSource.getPixel(0, androidSource.height - 1).a, 0);
+    expect(
+      androidSource
+          .getPixel(androidSource.width - 1, androidSource.height - 1)
+          .a,
+      0,
+    );
+    final androidLauncher = image.decodePng(
+      File(
+        'android/app/src/main/res/mipmap-xxxhdpi/launcher_icon.png',
+      ).readAsBytesSync(),
+    );
+    expect(androidLauncher, isNotNull);
+    expect(androidLauncher!.getPixel(0, 0).a, 0);
 
     final installer = File(
       '../tools/windows/ActitPassStorage.iss',

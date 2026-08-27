@@ -6,6 +6,58 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('date formatter inserts separators immediately after day and month', () {
+    final formatter = DateTextInputFormatter();
+    var value = TextEditingValue.empty;
+
+    TextEditingValue enter(String text) {
+      value = formatter.formatEditUpdate(
+        value,
+        TextEditingValue(
+          text: text,
+          selection: TextSelection.collapsed(offset: text.length),
+        ),
+      );
+      return value;
+    }
+
+    expect(enter('1').text, '1');
+    expect(enter('12').text, '12.');
+    expect(enter('12.3').text, '12.3');
+    expect(enter('12.34').text, '12.34.');
+    expect(enter('12.34.2026').text, '12.34.2026');
+    expect(enter('12.34.20267').text, '12.34.2026');
+
+    value = const TextEditingValue(
+      text: '12.',
+      selection: TextSelection.collapsed(offset: 3),
+    );
+    expect(enter('12').text, '1');
+  });
+
+  test('Linux new-vault picker normalizes a selected file to its folder', () {
+    final separator = Platform.pathSeparator;
+    final filePath = ['tmp', 'wallets', 'existing.swl'].join(separator);
+    expect(
+      normalizeNewVaultDirectorySelection(filePath, FileSystemEntityType.file),
+      ['tmp', 'wallets'].join(separator),
+    );
+    expect(
+      normalizeNewVaultDirectorySelection(
+        ['tmp', 'wallets'].join(separator),
+        FileSystemEntityType.directory,
+      ),
+      ['tmp', 'wallets'].join(separator),
+    );
+    expect(
+      normalizeNewVaultDirectorySelection(
+        filePath,
+        FileSystemEntityType.notFound,
+      ),
+      isNull,
+    );
+  });
+
   test('new wallet is cloned from MyWallet and encrypted with new password',
       () async {
     final baseFile = File('assets/base_wallet/MyWallet.swl');
@@ -36,6 +88,16 @@ void main() {
     expect(createdSnapshot.templates.length, sourceSnapshot.templates.length);
     expect(createdSnapshot.cards.length, sourceSnapshot.cards.length);
     expect(createdSnapshot.categories.length, sourceSnapshot.categories.length);
+    expect(
+      createdSnapshot.categories
+          .where((category) => category.name == 'О программе SPB Wallet'),
+      isEmpty,
+    );
+    expect(
+      createdSnapshot.categories
+          .where((category) => category.name == 'О программе Wallet'),
+      hasLength(1),
+    );
     expect(
       createdSnapshot.templates.map((template) => template.name).toSet(),
       sourceSnapshot.templates.map((template) => template.name).toSet(),

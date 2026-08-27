@@ -5,8 +5,8 @@
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:usesCleartextTraffic="false"
-        android:icon="@drawable/ic_launcher_foreground"
-        android:roundIcon="@drawable/ic_launcher_foreground">
+        android:icon="@mipmap/launcher_icon"
+        android:roundIcon="@mipmap/launcher_icon">
         <activity
             android:name=".MainActivity"
             android:exported="true"

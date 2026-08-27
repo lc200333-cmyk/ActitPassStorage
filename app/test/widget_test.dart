@@ -617,6 +617,13 @@ void main() {
 
     final deleteAttachment =
         find.byKey(const Key('cardEditorDeleteAttachmentButton'));
+    expect(
+      find.descendant(
+        of: deleteAttachment,
+        matching: find.byIcon(Icons.delete),
+      ),
+      findsOneWidget,
+    );
     await tester.ensureVisible(deleteAttachment);
     await tester.pumpAndSettle();
     await tester.tap(deleteAttachment);
@@ -900,7 +907,7 @@ void main() {
     await tester.binding.setSurfaceSize(null);
   });
 
-  testWidgets('viewed card remains highlighted after preview closes',
+  testWidgets('editor returns to preview and preview returns to card folder',
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     await tester.binding.setSurfaceSize(const Size(1280, 1010));
@@ -919,7 +926,7 @@ void main() {
       id: 'highlighted-card',
       templateId: template.id,
       title: 'Просмотренная карточка',
-      category: '',
+      category: 'Работа',
       colorId: template.colorId,
       values: const {},
       modifiedAt: DateTime.utc(2026),
@@ -927,6 +934,10 @@ void main() {
     state.setState(() {
       state.templates = [template];
       state.items = [card];
+      state.itemsById[card.id] = card;
+      state.categoryPaths.add('Работа');
+      state.categoryIdsByPath['Работа'] = 'work-folder';
+      state.expandedCategoryPaths.add('Работа');
     });
     await tester.pumpAndSettle();
     final String cardId = card.id;
@@ -934,9 +945,20 @@ void main() {
 
     await tester.tap(treeCard);
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('cardPreviewEditButton')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('cardCloseButton')), findsOneWidget);
+    await tester.tapAt(const Offset(2, 2));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('cardCloseButton')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('cardCloseButton')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('cardPreviewBackButton')), findsOneWidget);
     await tester.tap(find.byKey(const Key('cardPreviewBackButton')));
     await tester.pumpAndSettle();
 
+    expect(state.selectedCategoryPath, 'Работа');
+    expect(find.byKey(ValueKey('spbCentralCard-$cardId')), findsOneWidget);
     final tile = tester.widget<ListTile>(
       find.descendant(of: treeCard, matching: find.byType(ListTile)),
     );
@@ -1192,6 +1214,10 @@ void main() {
     expect(find.text('Пароль'), findsOneWidget);
     expect(find.byKey(const Key('passwordPrompt')), findsOneWidget);
     expect(find.byKey(const Key('passwordInput')), findsOneWidget);
+    expect(
+      find.byKey(const Key('loginPasswordVisibility')),
+      findsOneWidget,
+    );
     expect(find.text('CLR'), findsOneWidget);
     expect(find.text('<-'), findsOneWidget);
     expect(find.text('OK'), findsOneWidget);
@@ -1201,6 +1227,28 @@ void main() {
     expect(find.text('abc'), findsOneWidget);
     expect(find.text('123'), findsOneWidget);
     expect(find.text('#!?'), findsOneWidget);
+  });
+
+  testWidgets('login password eye toggles password visibility', (tester) async {
+    await tester.pumpWidget(const ActitPassApp());
+    await tester.pump();
+
+    TextField passwordField() => tester.widget<TextField>(
+          find.byKey(const Key('passwordInput')),
+        );
+
+    expect(passwordField().obscureText, isTrue);
+    expect(find.byIcon(Icons.visibility), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('loginPasswordVisibility')));
+    await tester.pump();
+    expect(passwordField().obscureText, isFalse);
+    expect(find.byIcon(Icons.visibility_off), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('loginPasswordVisibility')));
+    await tester.pump();
+    expect(passwordField().obscureText, isTrue);
+    expect(find.byIcon(Icons.visibility), findsOneWidget);
   });
 
   testWidgets('touch keypad edits the focused password', (tester) async {
