@@ -5187,6 +5187,15 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   static const _spbRightPanel = Color(0xffc7d9ea);
   static const _spbBorder = Color(0xffb7b7b7);
 
+  Widget spbWorkspaceScrollbarTheme(Widget child) {
+    return ScrollbarTheme(
+      data: Theme.of(context).scrollbarTheme.copyWith(
+            thickness: const WidgetStatePropertyAll<double>(10.88),
+          ),
+      child: child,
+    );
+  }
+
   Widget spbResourceIcon(String fileName, double size) => spbPackedImage(
         'spb://apk_icons/res/drawable-hdpi/$fileName',
         width: size,
@@ -5727,18 +5736,23 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                         children: [
                           SizedBox(
                             width: navigatorWidth,
-                            child: buildSpbNavigator(),
+                            child:
+                                spbWorkspaceScrollbarTheme(buildSpbNavigator()),
                           ),
                           const VerticalDivider(width: 1, thickness: 1),
                           Expanded(
-                            child: mobileTemplatesOpen
-                                ? buildSpbTemplateWorkspace()
-                                : buildSpbFolderGrid(),
+                            child: spbWorkspaceScrollbarTheme(
+                              mobileTemplatesOpen
+                                  ? buildSpbTemplateWorkspace()
+                                  : buildSpbFolderGrid(),
+                            ),
                           ),
                           const VerticalDivider(width: 1, thickness: 1),
                           SizedBox(
                             width: rightPanelWidth,
-                            child: buildSpbActionsPanel(desktop: true),
+                            child: spbWorkspaceScrollbarTheme(
+                              buildSpbActionsPanel(desktop: true),
+                            ),
                           ),
                         ],
                       ),
@@ -5868,17 +5882,19 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 child: spbSectionHeader(paneTitle, height: 42),
               ),
             Expanded(
-              child: mobileTemplatesOpen
-                  ? switch (mobilePane) {
-                      1 => buildSpbTemplateWorkspace(showHeader: false),
-                      2 => buildSpbActionsPanel(),
-                      _ => buildSpbTemplateTree(),
-                    }
-                  : switch (mobilePane) {
-                      1 => buildSpbFolderGrid(),
-                      2 => buildSpbActionsPanel(),
-                      _ => buildSpbTreeBody(showWalletRoot: false),
-                    },
+              child: spbWorkspaceScrollbarTheme(
+                mobileTemplatesOpen
+                    ? switch (mobilePane) {
+                        1 => buildSpbTemplateWorkspace(showHeader: false),
+                        2 => buildSpbActionsPanel(),
+                        _ => buildSpbTemplateTree(),
+                      }
+                    : switch (mobilePane) {
+                        1 => buildSpbFolderGrid(),
+                        2 => buildSpbActionsPanel(),
+                        _ => buildSpbTreeBody(showWalletRoot: false),
+                      },
+              ),
             ),
             if (mobilePane == 0) ...[
               buildSpbModeButton(
