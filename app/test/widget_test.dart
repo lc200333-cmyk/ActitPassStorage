@@ -829,6 +829,12 @@ void main() {
     await tester.tapAt(const Offset(2, 2));
     await tester.pumpAndSettle();
     final dynamic state = tester.state(find.byType(VaultShell));
+    await tester.enterText(desktopSearch, 'live-search');
+    await tester.pump();
+    expect(state.spbSubmittedSearchQuery, 'live-search');
+    await tester.enterText(desktopSearch, '');
+    await tester.pump();
+    expect(state.spbSubmittedSearchQuery, isEmpty);
     state.mobileTemplatesOpen = true;
     state.selectedTemplateId = state.templates.first.id;
     state.setState(() {});
@@ -1222,7 +1228,12 @@ void main() {
     expect(find.text('CLR'), findsOneWidget);
     expect(find.text('<-'), findsOneWidget);
     expect(find.text('OK'), findsOneWidget);
-    expect(find.text('Выход'), findsOneWidget);
+    expect(find.text('ВЫХОД'), findsOneWidget);
+    final exitText = find.descendant(
+      of: find.byKey(const Key('loginCancel')),
+      matching: find.byType(Text),
+    );
+    expect(tester.widget<Text>(exitText).style?.fontSize, 18);
     expect(find.byKey(const Key('createVault')), findsOneWidget);
     expect(find.text('ABC'), findsOneWidget);
     expect(find.text('abc'), findsOneWidget);

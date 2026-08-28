@@ -5262,7 +5262,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 18,
+                fontSize: 17,
                 fontWeight: bold ? FontWeight.bold : FontWeight.normal,
               ),
             ),
@@ -5289,7 +5289,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           child: TextField(
             key: const Key('spbSearchInput'),
             controller: searchController,
-            onChanged: (_) => setState(() {}),
+            onChanged: submitSpbSearch,
             onSubmitted: submitSpbSearch,
             textInputAction: TextInputAction.search,
             textAlignVertical: TextAlignVertical.bottom,
@@ -6056,7 +6056,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 18),
+                  style: const TextStyle(fontSize: 17),
                 ),
               ),
             ],
@@ -6149,7 +6149,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     child: Text(
                       selectedVaultTitle,
                       style: const TextStyle(
-                        fontSize: 24,
+                        fontSize: 23,
                         fontWeight: FontWeight.w700,
                         fontStyle: FontStyle.italic,
                         decoration: TextDecoration.underline,
@@ -6178,7 +6178,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     for (final folder in folders) {
       result.add(
         Padding(
-          padding: EdgeInsets.only(left: depth * 20.0),
+          padding: EdgeInsets.only(left: depth * 15.0),
           child: GestureDetector(
             onSecondaryTapDown: (details) =>
                 showSpbFolderMenu(folder, details.globalPosition),
@@ -6202,14 +6202,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     }
                   });
                 },
-                visualDensity: const VisualDensity(vertical: -3),
-                minTileHeight: compactRows ? 21.6 : null,
+                visualDensity: const VisualDensity(vertical: -3.25),
+                minTileHeight: compactRows ? 16.2 : 30,
                 tilePadding: const EdgeInsets.only(left: 6, right: 2),
                 childrenPadding: EdgeInsets.zero,
                 trailing: const SizedBox.shrink(),
                 leading: SizedBox(
                   width: 60,
-                  height: compactRows ? 24 : 40,
+                  height: compactRows ? 18 : 30,
                   child: OverflowBox(
                     minWidth: 60,
                     maxWidth: 60,
@@ -6221,7 +6221,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                         spbExpansionMark(
                           expandedCategoryPaths.contains(folder.path),
                         ),
-                        const SizedBox(width: 5),
+                        const SizedBox(width: 3.75),
                         spbSizedDataIcon(
                           folder.iconId ??
                               defaultIconForCategoryPath(folder.path),
@@ -6254,7 +6254,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 19.8,
+                          fontSize: 18.8,
                           fontWeight: FontWeight.normal,
                         ),
                       ),
@@ -6278,7 +6278,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       final template = templateFor(item.templateId);
       result.add(
         Padding(
-          padding: EdgeInsets.only(left: 34 + depth * 20.0),
+          padding: EdgeInsets.only(left: 25.5 + depth * 15.0),
           child: GestureDetector(
             key: ValueKey('spbTreeCard-${item.id}'),
             onSecondaryTapDown: (details) =>
@@ -6289,19 +6289,29 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               selected: selectedItemId == item.id,
               selectedTileColor: const Color(0xffcfe9fb),
               dense: true,
-              visualDensity: const VisualDensity(vertical: -3),
-              minTileHeight: compactRows ? 27 : null,
+              visualDensity: const VisualDensity(vertical: -3.25),
+              minTileHeight: compactRows ? 20.25 : 30,
               contentPadding: const EdgeInsets.symmetric(horizontal: 5),
-              leading: spbSizedDataIcon(
-                itemIconId(item, template),
-                40,
-                fallbackColor: itemPictogramColor(item, template),
+              leading: SizedBox(
+                width: 40,
+                height: compactRows ? 20.25 : 30,
+                child: OverflowBox(
+                  minWidth: 40,
+                  maxWidth: 40,
+                  minHeight: 40,
+                  maxHeight: 40,
+                  child: spbSizedDataIcon(
+                    itemIconId(item, template),
+                    40,
+                    fallbackColor: itemPictogramColor(item, template),
+                  ),
+                ),
               ),
               title: Text(
                 item.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 18),
+                style: const TextStyle(fontSize: 17),
               ),
               onTap: () => openCardPreviewDialog(item),
             ),
@@ -6346,7 +6356,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             ),
             title: Text(
               template.name,
-              style: const TextStyle(fontSize: 16),
+              style: const TextStyle(fontSize: 15),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -6487,10 +6497,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             child: GridView.builder(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
               gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 112,
-                mainAxisExtent: 105,
-                crossAxisSpacing: 5,
-                mainAxisSpacing: 8,
+                maxCrossAxisExtent: 89.04,
+                mainAxisExtent: 83.475,
+                crossAxisSpacing: 3.975,
+                mainAxisSpacing: 6.36,
               ),
               itemCount: visible.length,
               itemBuilder: (context, index) {
@@ -6715,7 +6725,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: Color(0xff18364d),
-                              fontSize: 19,
+                              fontSize: 18,
                               fontWeight: FontWeight.normal,
                             ),
                           ),
@@ -6740,10 +6750,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               child: GridView.builder(
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
                 gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 112,
-                  mainAxisExtent: 105,
-                  crossAxisSpacing: 5,
-                  mainAxisSpacing: 8,
+                  maxCrossAxisExtent: 89.04,
+                  mainAxisExtent: 83.475,
+                  crossAxisSpacing: 3.975,
+                  mainAxisSpacing: 6.36,
                 ),
                 itemCount: folders.length + cards.length,
                 itemBuilder: (context, index) {
@@ -6766,6 +6776,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   final template = templateFor(item.templateId);
                   final cardEntry = buildSpbGridEntry(
                     label: item.title,
+                    labelWidth: 73.3125,
                     selected: selectedItemId == item.id,
                     icon: spbSizedDataIcon(
                       itemIconId(item, template),
@@ -7398,6 +7409,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     VoidCallback? onDoubleTap,
     required ValueChanged<Offset> onContextMenu,
     bool selected = false,
+    double labelWidth = 63.75,
   }) {
     return GestureDetector(
       onSecondaryTapDown: (details) =>
@@ -7415,18 +7427,28 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   ),
                 )
               : null,
-          child: Column(
-            children: [
-              SizedBox(width: 68, height: 67, child: Center(child: icon)),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 15.3, height: 1.05),
-              ),
-            ],
+          child: OverflowBox(
+            alignment: Alignment.topCenter,
+            minWidth: 112,
+            maxWidth: 112,
+            minHeight: 105,
+            maxHeight: 105,
+            child: Column(
+              children: [
+                SizedBox(width: 68, height: 67, child: Center(child: icon)),
+                const SizedBox(height: 2),
+                SizedBox(
+                  width: labelWidth,
+                  child: Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 14.3, height: 1.05),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -8106,7 +8128,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 trailing: Text(
                   '$foundCount',
                   key: const Key('spbFoundCount'),
-                  style: const TextStyle(fontSize: 18),
+                  style: const TextStyle(fontSize: 17),
                 ),
               ),
               if (maximizeFound)
@@ -8199,7 +8221,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                   trailing: Text(
                     '$foundCount',
                     key: const Key('spbFoundCount'),
-                    style: const TextStyle(fontSize: 18),
+                    style: const TextStyle(fontSize: 17),
                   ),
                 ),
                 if (spbFoundExpanded && query.isNotEmpty)
@@ -8306,7 +8328,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           child: Text(
             'Совпадений нет',
             key: Key('spbNoSearchResults'),
-            style: TextStyle(fontSize: 16),
+            style: TextStyle(fontSize: 15),
           ),
         ),
       );
@@ -8363,10 +8385,20 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 6, 6, 5),
+        padding: const EdgeInsets.fromLTRB(10, 4.5, 6, 3.75),
         child: Row(
           children: [
-            SizedBox(width: 36, height: 36, child: Center(child: icon)),
+            SizedBox(
+              width: 36,
+              height: 27,
+              child: OverflowBox(
+                minWidth: 36,
+                maxWidth: 36,
+                minHeight: 36,
+                maxHeight: 36,
+                child: Center(child: icon),
+              ),
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -8376,7 +8408,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 17),
+                    style: const TextStyle(fontSize: 16),
                   ),
                   Text(
                     subtitle,
@@ -8384,7 +8416,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Color(0xff5f5f5f),
-                      fontSize: 13,
+                      fontSize: 12,
                     ),
                   ),
                 ],
@@ -8456,7 +8488,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 18),
+              style: const TextStyle(fontSize: 17),
             ),
           ),
           if (trailing != null) trailing,
@@ -8492,7 +8524,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 18),
+              style: const TextStyle(fontSize: 17),
             ),
           )
         : buildSpbCollapsibleHeader(
@@ -8508,20 +8540,26 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         InkWell(
           onTap: action.$3,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(10, 7, 6, 4),
+            padding: const EdgeInsets.fromLTRB(10, 5.25, 6, 3),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
                   width: 40,
-                  height: 40,
-                  child: Center(child: action.$1),
+                  height: 30,
+                  child: OverflowBox(
+                    minWidth: 40,
+                    maxWidth: 40,
+                    minHeight: 40,
+                    maxHeight: 40,
+                    child: Center(child: action.$1),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     action.$2,
-                    style: const TextStyle(fontSize: 17, height: 1.12),
+                    style: const TextStyle(fontSize: 16, height: 1.12),
                   ),
                 ),
               ],
@@ -9697,9 +9735,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                     Expanded(
                                       child: passwordKey(
                                         key: const Key('loginCancel'),
-                                        label: 'Выход',
+                                        label: 'ВЫХОД',
                                         height: 40,
-                                        fontSize: 15,
+                                        fontSize: 18,
                                         top: redTop,
                                         bottom: redBottom,
                                         onPressed: () {
