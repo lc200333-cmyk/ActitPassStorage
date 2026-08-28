@@ -5236,8 +5236,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
 
   Widget spbSectionHeader(
     String title, {
+    Widget? leading,
     Widget? trailing,
     double height = 34,
+    bool bold = false,
   }) {
     return Container(
       height: height,
@@ -5250,12 +5252,19 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       ),
       child: Row(
         children: [
+          if (leading != null) ...[
+            leading,
+            const SizedBox(width: 7),
+          ],
           Expanded(
             child: Text(
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 18),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+              ),
             ),
           ),
           if (trailing != null) trailing,
@@ -5819,22 +5828,28 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
               padding: const EdgeInsets.symmetric(horizontal: 14),
               child: Row(
                 children: [
-                  spbResourceIcon('icon_wallets_small.png', 40),
-                  if (mobileTemplatesOpen || mobilePane != 0) ...[
-                    const SizedBox(width: 7),
-                    Expanded(
-                      child: Text(
-                        selectedVaultTitle,
-                        key: const Key('spbMobileWalletTitle'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                        ),
+                  Image.asset(
+                    'assets/branding/wallet_android.png',
+                    key: const Key('spbMobileAppIcon'),
+                    width: 40,
+                    height: 40,
+                    cacheWidth: 128,
+                    fit: BoxFit.contain,
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      selectedVaultTitle,
+                      key: const Key('spbMobileWalletTitle'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ],
+                  ),
                 ],
               ),
             ),
@@ -5981,7 +5996,18 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 selectedCategoryId = null;
               });
             },
-            child: spbSectionHeader(selectedVaultTitle),
+            child: spbSectionHeader(
+              selectedVaultTitle,
+              leading: Image.asset(
+                'assets/branding/wallet_android.png',
+                key: const Key('spbDesktopAppIcon'),
+                width: 28,
+                height: 28,
+                cacheWidth: 96,
+                fit: BoxFit.contain,
+              ),
+              bold: true,
+            ),
           ),
           Expanded(
             child: mobileTemplatesOpen
@@ -7921,7 +7947,14 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           showCardLoadFailureReport,
         ),
       (
-        spbResourceIcon('icon_new_wallet.png', 40),
+        Image.asset(
+          'assets/branding/wallet_android.png',
+          key: const Key('spbCreateWalletAppIcon'),
+          width: 40,
+          height: 40,
+          cacheWidth: 128,
+          fit: BoxFit.contain,
+        ),
         'Создать кошелёк',
         createNewVaultFromLogin,
       ),
@@ -9443,13 +9476,26 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                 FittedBox(
                                   fit: BoxFit.scaleDown,
                                   alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    passwordPromptText,
+                                  child: Text.rich(
+                                    TextSpan(
+                                      children: [
+                                        TextSpan(
+                                          text: selectedVaultTitle,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        if (selectedVaultModifiedText
+                                            case final modified?)
+                                          TextSpan(text: ', $modified'),
+                                      ],
+                                    ),
                                     key: const Key('passwordPrompt'),
                                     maxLines: 1,
                                     style: const TextStyle(
                                       fontSize: 16,
                                       color: Color(0xff16212a),
+                                      fontWeight: FontWeight.normal,
                                     ),
                                   ),
                                 ),
@@ -9609,44 +9655,20 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                 Row(
                                   children: [
                                     Expanded(
-                                      child: PopupMenuButton<String>(
-                                        key: const Key('fileMenu'),
-                                        tooltip: 'Файл',
-                                        onSelected: (value) {
-                                          if (value == 'open') {
-                                            pickSpbWalletFile();
-                                          }
-                                        },
-                                        itemBuilder: (context) => const [
-                                          PopupMenuItem(
-                                            value: 'open',
-                                            child: Row(
-                                              children: [
-                                                Icon(
-                                                  Icons.folder_open_outlined,
-                                                ),
-                                                SizedBox(width: 10),
-                                                Text('Открыть файл…'),
-                                              ],
-                                            ),
+                                      child: SizedBox(
+                                        width: double.infinity,
+                                        height: 48,
+                                        child: passwordKey(
+                                          key: const Key('fileMenu'),
+                                          label: 'Открыть файл',
+                                          child: const Icon(
+                                            Icons.folder_outlined,
+                                            color: Colors.white,
+                                            size: 25,
                                           ),
-                                        ],
-                                        child: SizedBox(
-                                          width: double.infinity,
                                           height: 48,
-                                          child: IgnorePointer(
-                                            child: passwordKey(
-                                              label: 'Открыть файл',
-                                              child: const Icon(
-                                                Icons.folder_outlined,
-                                                color: Colors.white,
-                                                size: 25,
-                                              ),
-                                              height: 48,
-                                              fontSize: 18,
-                                              onPressed: () {},
-                                            ),
-                                          ),
+                                          fontSize: 18,
+                                          onPressed: pickSpbWalletFile,
                                         ),
                                       ),
                                     ),
@@ -9675,7 +9697,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                     Expanded(
                                       child: passwordKey(
                                         key: const Key('loginCancel'),
-                                        label: 'Отмена',
+                                        label: 'Выход',
                                         height: 40,
                                         fontSize: 15,
                                         top: redTop,

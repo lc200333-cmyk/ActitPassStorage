@@ -802,6 +802,7 @@ void main() {
     expect(find.text('Мои карточки'), findsNWidgets(2));
     expect(find.text('Задачи'), findsOneWidget);
     expect(find.text('Создать кошелёк'), findsOneWidget);
+    expect(find.byKey(const Key('spbCreateWalletAppIcon')), findsOneWidget);
     expect(find.text('Создать новую папку'), findsOneWidget);
     expect(find.text('Сделать архивную копию'), findsOneWidget);
     final undo = find.byTooltip('Отменить изменения этой сессии');
@@ -1100,8 +1101,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('spbMobilePaneHeader')), findsOneWidget,
           reason: 'Размер $size должен использовать мобильную компоновку.');
-      expect(find.byKey(const Key('spbMobileWalletTitle')), findsNothing,
-          reason: 'Название кошелька не должно занимать место в списке.');
+      expect(find.byKey(const Key('spbMobileWalletTitle')), findsOneWidget);
+      expect(find.byKey(const Key('spbMobileAppIcon')), findsOneWidget);
       expect(tester.takeException(), isNull, reason: 'Размер $size');
       await tester.pumpWidget(const SizedBox.shrink());
     }
@@ -1221,7 +1222,7 @@ void main() {
     expect(find.text('CLR'), findsOneWidget);
     expect(find.text('<-'), findsOneWidget);
     expect(find.text('OK'), findsOneWidget);
-    expect(find.text('Отмена'), findsOneWidget);
+    expect(find.text('Выход'), findsOneWidget);
     expect(find.byKey(const Key('createVault')), findsOneWidget);
     expect(find.text('ABC'), findsOneWidget);
     expect(find.text('abc'), findsOneWidget);
@@ -1372,14 +1373,13 @@ void main() {
     expect(find.byKey(const Key('keypad1')), findsOneWidget);
   });
 
-  testWidgets('file button opens its menu', (tester) async {
+  testWidgets('file button opens the picker directly without a menu',
+      (tester) async {
     await tester.pumpWidget(const ActitPassApp());
     await tester.pump();
 
-    await tester.tap(find.byKey(const Key('fileMenu')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Открыть файл…'), findsOneWidget);
+    expect(find.byKey(const Key('fileMenu')), findsOneWidget);
+    expect(find.byType(PopupMenuButton<String>), findsNothing);
   });
 
   testWidgets('switching vault clears password and returns to login',
