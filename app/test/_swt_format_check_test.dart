@@ -368,7 +368,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(
-      find.text('Карточка меню').last,
+      find.byKey(const Key('spbCentralCard-menu-card')),
       buttons: kSecondaryMouseButton,
     );
     await tester.pumpAndSettle();
