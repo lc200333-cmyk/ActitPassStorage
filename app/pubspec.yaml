@@ -2,7 +2,7 @@ name: actit_pass_storage
 description: "Wallet APS: локальный менеджер паролей, заметок и карточек."
 publish_to: "none"
 # Application version updates and release builds are managed by the Release workflow.
-version: 0.3.6+41
+version: 0.3.7+42
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
