@@ -172,6 +172,35 @@ Future<void> copyCardFieldValue(String value) async {
     );
 }
 
+bool get usesDesktopCardTextControls => Platform.isWindows || Platform.isLinux;
+
+Widget desktopCardTextContextMenu(
+  BuildContext context,
+  EditableTextState editableTextState,
+) {
+  final value = editableTextState.textEditingValue;
+  final selection = value.selection;
+  final selectedText = selection.isValid && !selection.isCollapsed
+      ? selection.textInside(value.text)
+      : '';
+  final items = [...editableTextState.contextMenuButtonItems];
+  if (selectedText.isNotEmpty) {
+    items.add(
+      ContextMenuButtonItem(
+        label: 'Share',
+        onPressed: () async {
+          editableTextState.hideToolbar();
+          await copyCardFieldValue(selectedText);
+        },
+      ),
+    );
+  }
+  return AdaptiveTextSelectionToolbar.buttonItems(
+    anchors: editableTextState.contextMenuAnchors,
+    buttonItems: items,
+  );
+}
+
 class ActitPassApp extends StatelessWidget {
   const ActitPassApp({this.initialVaultPath, super.key});
 
@@ -6956,10 +6985,75 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     label: item.title,
                     labelWidth: 73.3125,
                     selected: selectedItemId == item.id,
-                    icon: spbSizedDataIcon(
-                      itemIconId(item, template),
-                      50.25,
-                      fallbackColor: itemPictogramColor(item, template),
+                    icon: SizedBox(
+                      width: 50.25,
+                      height: 50.25,
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        alignment: Alignment.center,
+                        children: [
+                          spbSizedDataIcon(
+                            itemIconId(item, template),
+                            50.25,
+                            fallbackColor: itemPictogramColor(item, template),
+                          ),
+                          if (item.attachments.any(
+                            (attachment) => !attachment.deleted,
+                          ))
+                            Positioned(
+                              key: ValueKey('cardAttachmentArrow-${item.id}'),
+                              right: 2,
+                              bottom: 2,
+                              width: 16.33125,
+                              height: 14.586,
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  for (final offset in const [
+                                    Offset(-2, 0),
+                                    Offset(2, 0),
+                                    Offset(0, -2),
+                                    Offset(0, 2),
+                                    Offset(-1.414, -1.414),
+                                    Offset(1.414, -1.414),
+                                    Offset(-1.414, 1.414),
+                                    Offset(1.414, 1.414),
+                                  ])
+                                    Transform.translate(
+                                      offset: offset,
+                                      child: Image.asset(
+                                        'assets/branding/attachment_arrow.png',
+                                        width: 16.33125,
+                                        height: 14.586,
+                                        fit: BoxFit.fill,
+                                        color: Colors.white,
+                                        colorBlendMode: BlendMode.srcIn,
+                                      ),
+                                    ),
+                                  ShaderMask(
+                                    blendMode: BlendMode.srcIn,
+                                    shaderCallback: (bounds) =>
+                                        const LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Color(0xffff4fa3),
+                                        Color(0xffe6007e),
+                                        Color(0xffa8005b),
+                                      ],
+                                    ).createShader(bounds),
+                                    child: Image.asset(
+                                      'assets/branding/attachment_arrow.png',
+                                      width: 16.33125,
+                                      height: 14.586,
+                                      fit: BoxFit.fill,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                     onTap: () => openCardPreviewDialog(item),
                     onContextMenu: (position) =>
@@ -8574,7 +8668,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 maxWidth: 36,
                 minHeight: 36,
                 maxHeight: 36,
-                child: Center(child: icon),
+                child: Center(
+                  child: Transform.scale(scale: 0.9, child: icon),
+                ),
               ),
             ),
             const SizedBox(width: 8),
@@ -8730,7 +8826,9 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     maxWidth: 40,
                     minHeight: 40,
                     maxHeight: 40,
-                    child: Center(child: action.$1),
+                    child: Center(
+                      child: Transform.scale(scale: 0.9, child: action.$1),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -13889,8 +13987,9 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
           height: fullScreen ? media.height : min(media.height - 24, 760),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onSecondaryTapDown: (details) =>
-                showCopyAllMenu(details.globalPosition),
+            onSecondaryTapDown: usesDesktopCardTextControls
+                ? null
+                : (details) => showCopyAllMenu(details.globalPosition),
             onLongPressStart: (details) =>
                 showCopyAllMenu(details.globalPosition),
             child: Column(
@@ -13981,6 +14080,9 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
                                 initialValue:
                                     currentItem.values[field.id] ?? '',
                                 readOnly: true,
+                                contextMenuBuilder: usesDesktopCardTextControls
+                                    ? desktopCardTextContextMenu
+                                    : null,
                                 obscureText: fieldDefinitionIsSecret(field) &&
                                     !revealedFields.contains(field.id),
                                 minLines:
@@ -13998,30 +14100,86 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
                                     vertical: 8,
                                   ),
                                   suffixIconConstraints:
-                                      const BoxConstraints.tightFor(
-                                    width: 40,
+                                      BoxConstraints.tightFor(
+                                    width: fieldDefinitionIsSecret(field)
+                                        ? 72
+                                        : 36,
                                     height: 40,
                                   ),
-                                  suffixIcon: fieldDefinitionIsSecret(field)
-                                      ? IconButton(
-                                          tooltip:
-                                              revealedFields.contains(field.id)
+                                  suffixIcon: usesDesktopCardTextControls
+                                      ? Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (fieldDefinitionIsSecret(field))
+                                              SizedBox(
+                                                width: 36,
+                                                child: IconButton(
+                                                  padding: EdgeInsets.zero,
+                                                  tooltip: revealedFields
+                                                          .contains(field.id)
+                                                      ? 'Скрыть'
+                                                      : 'Показать',
+                                                  icon: Icon(
+                                                    revealedFields
+                                                            .contains(field.id)
+                                                        ? Icons.visibility_off
+                                                        : Icons.visibility,
+                                                    size: 19,
+                                                  ),
+                                                  onPressed: () => setState(() {
+                                                    revealedFields
+                                                            .contains(field.id)
+                                                        ? revealedFields
+                                                            .remove(field.id)
+                                                        : revealedFields
+                                                            .add(field.id);
+                                                  }),
+                                                ),
+                                              ),
+                                            SizedBox(
+                                              width: 36,
+                                              child: IconButton(
+                                                key: ValueKey(
+                                                    'cardPreviewCopy-${field.id}'),
+                                                padding: EdgeInsets.zero,
+                                                tooltip: 'Копировать',
+                                                icon: const Icon(
+                                                  Icons.copy_outlined,
+                                                  size: 17,
+                                                  color: Color(0xff777777),
+                                                ),
+                                                onPressed: () =>
+                                                    copyCardFieldValue(
+                                                  currentItem
+                                                          .values[field.id] ??
+                                                      '',
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                      : fieldDefinitionIsSecret(field)
+                                          ? IconButton(
+                                              tooltip: revealedFields
+                                                      .contains(field.id)
                                                   ? 'Скрыть'
                                                   : 'Показать',
-                                          icon: Icon(
-                                            revealedFields.contains(field.id)
-                                                ? Icons.visibility_off
-                                                : Icons.visibility,
-                                          ),
-                                          onPressed: () => setState(() {
-                                            revealedFields.contains(field.id)
-                                                ? revealedFields.remove(
-                                                    field.id,
-                                                  )
-                                                : revealedFields.add(field.id);
-                                          }),
-                                        )
-                                      : null,
+                                              icon: Icon(
+                                                revealedFields
+                                                        .contains(field.id)
+                                                    ? Icons.visibility_off
+                                                    : Icons.visibility,
+                                              ),
+                                              onPressed: () => setState(() {
+                                                revealedFields
+                                                        .contains(field.id)
+                                                    ? revealedFields
+                                                        .remove(field.id)
+                                                    : revealedFields
+                                                        .add(field.id);
+                                              }),
+                                            )
+                                          : null,
                                 ),
                               ),
                             ),
@@ -14711,6 +14869,9 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
               key: const Key('cardTitleField'),
               controller: title,
               onTap: rememberCurrentAction,
+              contextMenuBuilder: usesDesktopCardTextControls
+                  ? desktopCardTextContextMenu
+                  : null,
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: 'Название карточки',
@@ -14841,6 +15002,8 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
       key: ValueKey('cardField-${field.id}'),
       controller: controller,
       onTap: rememberCurrentAction,
+      contextMenuBuilder:
+          usesDesktopCardTextControls ? desktopCardTextContextMenu : null,
       obscureText: fieldDefinitionIsSecret(field) && !visible,
       keyboardType:
           multiline ? TextInputType.multiline : keyboardTypeForField(field),
@@ -15229,6 +15392,9 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
             child: TextField(
               controller: category,
               onTap: rememberCurrentAction,
+              contextMenuBuilder: usesDesktopCardTextControls
+                  ? desktopCardTextContextMenu
+                  : null,
               decoration: const InputDecoration(
                 labelText: 'Новая папка / каталог',
                 hintText: 'Например: Финансы / Банк',
