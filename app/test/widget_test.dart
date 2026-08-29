@@ -829,6 +829,10 @@ void main() {
     await tester.tapAt(const Offset(2, 2));
     await tester.pumpAndSettle();
     final dynamic state = tester.state(find.byType(VaultShell));
+    expect(state.spbSearchMatches('Привет мир', 'ghbdtn'), isTrue);
+    expect(state.spbSearchMatches('Привет мир', 'privet'), isTrue);
+    expect(state.spbSearchMatches('Привет мир', 'превет'), isTrue);
+    expect(state.spbSearchMatches('Привет мир', 'account'), isFalse);
     await tester.enterText(desktopSearch, 'live-search');
     await tester.pump();
     expect(state.spbSubmittedSearchQuery, 'live-search');
@@ -1228,12 +1232,13 @@ void main() {
     expect(find.text('CLR'), findsOneWidget);
     expect(find.text('<-'), findsOneWidget);
     expect(find.text('OK'), findsOneWidget);
-    expect(find.text('ВЫХОД'), findsOneWidget);
-    final exitText = find.descendant(
-      of: find.byKey(const Key('loginCancel')),
-      matching: find.byType(Text),
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('loginCancel')),
+        matching: find.byIcon(Icons.power_settings_new),
+      ),
+      findsOneWidget,
     );
-    expect(tester.widget<Text>(exitText).style?.fontSize, 18);
     expect(find.byKey(const Key('createVault')), findsOneWidget);
     expect(find.text('ABC'), findsOneWidget);
     expect(find.text('abc'), findsOneWidget);

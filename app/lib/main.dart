@@ -2723,6 +2723,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   double? spbNavigatorWidth;
   double? spbActionsPanelWidth;
   String spbSubmittedSearchQuery = '';
+  bool spbExactSearch = false;
   bool spbTasksExpanded = true;
   bool spbFoundExpanded = true;
   bool spbFrequentExpanded = true;
@@ -5298,7 +5299,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           child: TextField(
             key: const Key('spbSearchInput'),
             controller: searchController,
-            onChanged: submitSpbSearch,
+            onChanged: updateSpbSearch,
             onSubmitted: submitSpbSearch,
             textInputAction: TextInputAction.search,
             textAlignVertical: TextAlignVertical.bottom,
@@ -5380,7 +5381,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                     offset: const Offset(-1, 0),
                     child: buildSpbSearchButton(
                       key: const Key('spbForceCloseButton'),
-                      icon: Icons.close,
+                      icon: Icons.power_settings_new,
                       tooltip: 'Сохранить базу и закрыть программу',
                       gradient: const [Color(0xffff5a5f), Color(0xffa90000)],
                       onTap: exitApplication,
@@ -5440,7 +5441,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                         offset: const Offset(-1, 0),
                         child: buildSpbSearchButton(
                           key: const Key('spbForceCloseButton'),
-                          icon: Icons.close,
+                          icon: Icons.power_settings_new,
                           tooltip: 'Сохранить базу и закрыть программу',
                           gradient: const [
                             Color(0xffff5a5f),
@@ -5639,12 +5640,25 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   void submitSpbSearch(String value) {
-    setState(() => spbSubmittedSearchQuery = value.trim());
+    setState(() {
+      spbSubmittedSearchQuery = value.trim();
+      spbExactSearch = true;
+    });
+  }
+
+  void updateSpbSearch(String value) {
+    setState(() {
+      spbSubmittedSearchQuery = value.trim();
+      spbExactSearch = false;
+    });
   }
 
   void clearSearch() {
     searchController.clear();
-    setState(() => spbSubmittedSearchQuery = '');
+    setState(() {
+      spbSubmittedSearchQuery = '';
+      spbExactSearch = false;
+    });
   }
 
   Widget? buildSearchClearButton(Key key) {
@@ -5659,6 +5673,145 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     );
   }
 
+  static const _englishKeyboard = "`qwertyuiop[]asdfghjkl;'zxcvbnm,.";
+  static const _russianKeyboard = 'ёйцукенгшщзхъфывапролджэячсмитьбю';
+
+  String spbSwapKeyboardLayout(String value) {
+    final buffer = StringBuffer();
+    for (final rune in value.toLowerCase().runes) {
+      final character = String.fromCharCode(rune);
+      final englishIndex = _englishKeyboard.indexOf(character);
+      if (englishIndex >= 0) {
+        buffer.write(_russianKeyboard[englishIndex]);
+        continue;
+      }
+      final russianIndex = _russianKeyboard.indexOf(character);
+      buffer.write(
+        russianIndex >= 0 ? _englishKeyboard[russianIndex] : character,
+      );
+    }
+    return buffer.toString();
+  }
+
+  String spbTransliterate(String value) {
+    const replacements = <String, String>{
+      'а': 'a',
+      'б': 'b',
+      'в': 'v',
+      'г': 'g',
+      'д': 'd',
+      'е': 'e',
+      'ё': 'e',
+      'ж': 'zh',
+      'з': 'z',
+      'и': 'i',
+      'й': 'y',
+      'к': 'k',
+      'л': 'l',
+      'м': 'm',
+      'н': 'n',
+      'о': 'o',
+      'п': 'p',
+      'р': 'r',
+      'с': 's',
+      'т': 't',
+      'у': 'u',
+      'ф': 'f',
+      'х': 'h',
+      'ц': 'ts',
+      'ч': 'ch',
+      'ш': 'sh',
+      'щ': 'sch',
+      'ъ': '',
+      'ы': 'y',
+      'ь': '',
+      'э': 'e',
+      'ю': 'yu',
+      'я': 'ya',
+    };
+    final buffer = StringBuffer();
+    for (final rune in value.toLowerCase().runes) {
+      final character = String.fromCharCode(rune);
+      buffer.write(replacements[character] ?? character);
+    }
+    return buffer.toString();
+  }
+
+  Set<String> spbSearchVariants(String value) {
+    final normalized = value.toLowerCase().trim();
+    final swapped = spbSwapKeyboardLayout(normalized);
+    return {
+      normalized,
+      swapped,
+      spbTransliterate(normalized),
+      spbTransliterate(swapped),
+    }..removeWhere((entry) => entry.isEmpty);
+  }
+
+  int spbEditDistance(String left, String right) {
+    var previous = List<int>.generate(right.length + 1, (index) => index);
+    for (var leftIndex = 0; leftIndex < left.length; leftIndex++) {
+      final current = <int>[leftIndex + 1];
+      for (var rightIndex = 0; rightIndex < right.length; rightIndex++) {
+        final substitution = previous[rightIndex] +
+            (left[leftIndex] == right[rightIndex] ? 0 : 1);
+        current.add(
+          min(
+            min(current[rightIndex] + 1, previous[rightIndex + 1] + 1),
+            substitution,
+          ),
+        );
+      }
+      previous = current;
+    }
+    return previous.last;
+  }
+
+  bool spbWordsHaveSimilarSpelling(String text, String query) {
+    final textWords = spbTransliterate(text)
+        .split(RegExp(r'[^a-z0-9]+'))
+        .where((word) => word.isNotEmpty)
+        .toList();
+    final queryWords = spbTransliterate(query)
+        .split(RegExp(r'[^a-z0-9]+'))
+        .where((word) => word.length >= 4)
+        .toList();
+    if (queryWords.isEmpty) return false;
+    return queryWords.every((queryWord) {
+      final tolerance = queryWord.length >= 8 ? 2 : 1;
+      return textWords.any(
+        (textWord) =>
+            (textWord.length - queryWord.length).abs() <= tolerance &&
+            spbEditDistance(textWord, queryWord) <= tolerance,
+      );
+    });
+  }
+
+  bool spbSearchMatches(String text, String query) {
+    final textVariants = spbSearchVariants(text);
+    final queryVariants = spbSearchVariants(query);
+    for (final queryVariant in queryVariants) {
+      if (textVariants
+          .any((textVariant) => textVariant.contains(queryVariant))) {
+        return true;
+      }
+      if (textVariants.any(
+        (textVariant) => spbWordsHaveSimilarSpelling(textVariant, queryVariant),
+      )) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool spbExactSearchMatches(Iterable<String> values, String query) {
+    final normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.isEmpty) return false;
+    return values.any(
+      (value) => value.trim().toLowerCase() == normalizedQuery,
+    );
+  }
+
   List<String> spbMatchingFolderPaths(String query) {
     if (query.isEmpty) return const [];
     final allPaths = <String>{};
@@ -5668,22 +5821,31 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         allPaths.add(parts.take(index).join(' / '));
       }
     }
-    final normalizedQuery = query.toLowerCase();
-    return allPaths
-        .where((path) => path.toLowerCase().contains(normalizedQuery))
-        .toList()
+    return allPaths.where((path) {
+      if (!spbExactSearch) return spbSearchMatches(path, query);
+      final parts = categoryParts(path);
+      return spbExactSearchMatches(
+        [path, if (parts.isNotEmpty) parts.last],
+        query,
+      );
+    }).toList()
       ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
   }
 
   List<SecretItem> spbMatchingCards(String query) {
     if (query.isEmpty) return const [];
-    final normalizedQuery = query.toLowerCase();
     return items.where((item) {
       final template = templateFor(item.templateId);
-      final searchableText = '${item.title} ${item.category} ${template.name} '
-              '${item.values.values.join(' ')}'
-          .toLowerCase();
-      return searchableText.contains(normalizedQuery);
+      final searchableValues = <String>[
+        item.title,
+        item.category,
+        template.name,
+        ...item.values.values,
+      ];
+      if (spbExactSearch) {
+        return spbExactSearchMatches(searchableValues, query);
+      }
+      return spbSearchMatches(searchableValues.join(' '), query);
     }).toList()
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
   }
@@ -8380,7 +8542,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
             subtitle: item.category.trim().isEmpty
                 ? 'Карточка'
                 : 'Карточка • ${item.category}',
-            onTap: () => openCardPreviewDialog(item),
+            onTap: () => openCardPreviewDialog(item, preserveSearch: true),
           ),
       ],
     );
@@ -9475,6 +9637,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     const redTop = Color(0xffd32b31);
     const redBottom = Color(0xff7f0609);
     const modeTop = Color(0xffb96b25);
+    const greenTop = Color(0xff43a047);
+    const greenBottom = Color(0xff1b5e20);
     const modeBottom = Color(0xff6d3107);
 
     return Scaffold(
@@ -9722,6 +9886,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                           ),
                                           height: 48,
                                           fontSize: 18,
+                                          top: const Color(0xffffdc58),
+                                          bottom: const Color(0xffc58a00),
                                           onPressed: pickSpbWalletFile,
                                         ),
                                       ),
@@ -9734,6 +9900,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                         height: 40,
                                         fontSize: 24,
                                         fontWeight: FontWeight.bold,
+                                        top: const Color(0xffffdc58),
+                                        bottom: const Color(0xffc58a00),
                                         onPressed: createNewVaultFromLogin,
                                       ),
                                     ),
@@ -9744,6 +9912,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                         label: 'OK',
                                         height: 40,
                                         fontSize: 18,
+                                        top: greenTop,
+                                        bottom: greenBottom,
                                         onPressed: unlock,
                                       ),
                                     ),
@@ -9751,7 +9921,12 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                                     Expanded(
                                       child: passwordKey(
                                         key: const Key('loginCancel'),
-                                        label: 'ВЫХОД',
+                                        label: '',
+                                        child: const Icon(
+                                          Icons.power_settings_new,
+                                          color: Colors.white,
+                                          size: 25,
+                                        ),
                                         height: 40,
                                         fontSize: 18,
                                         top: redTop,
@@ -10808,7 +10983,10 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> openCardPreviewDialog(SecretItem item) async {
+  Future<void> openCardPreviewDialog(
+    SecretItem item, {
+    bool preserveSearch = false,
+  }) async {
     await selectItem(item);
     if (!mounted) return;
     var previewItem = itemById(item.id) ?? item;
@@ -10841,7 +11019,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       break;
     }
     if (!mounted) return;
-    revealCardFolder(previewItem);
+    if (!preserveSearch) revealCardFolder(previewItem);
   }
 
   Future<void> openFrequentCard(SecretItem item) async {
