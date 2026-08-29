@@ -37,6 +37,7 @@ const spbIconBundleAsset = 'assets/spb_icons.bundle';
 const thirdPartyIconBundleAsset =
     'assets/third_party/icons_unique_visual_studio.zip';
 const additionalThirdPartyIconBundleAsset = 'assets/third_party/icos.zip';
+const newThirdPartyIconBundleAsset = 'assets/third_party/new_icons.zip';
 List<String> spb64PngIconAssets = [];
 Future<List<String>>? spb64PngIconAssetsFuture;
 Map<String, Uint8List> spbBundledIconPngs = {};
@@ -86,6 +87,7 @@ Future<List<String>> loadThirdPartyIconAssets() {
     for (final assetName in const [
       thirdPartyIconBundleAsset,
       additionalThirdPartyIconBundleAsset,
+      newThirdPartyIconBundleAsset,
     ]) {
       final data = await rootBundle.load(assetName);
       final bytes = data.buffer.asUint8List(
@@ -95,18 +97,31 @@ Future<List<String>> loadThirdPartyIconAssets() {
       final archive = ZipDecoder().decodeBytes(bytes, verify: true);
       for (final file in archive.files) {
         if (!file.isFile) continue;
-        final normalizedName = file.name.replaceAll('\\', '/');
-        if (!normalizedName.toLowerCase().endsWith('.png')) continue;
+        var normalizedName = file.name.replaceAll('\\', '/');
+        final lowerName = normalizedName.toLowerCase();
+        Uint8List iconBytes;
+        if (lowerName.endsWith('.png')) {
+          iconBytes = Uint8List.fromList(file.content);
+        } else if (assetName == newThirdPartyIconBundleAsset &&
+            lowerName.endsWith('.bmp')) {
+          final decoded = image.decodeImage(Uint8List.fromList(file.content));
+          if (decoded == null) continue;
+          iconBytes = Uint8List.fromList(image.encodePng(decoded));
+          normalizedName =
+              '${normalizedName.substring(0, normalizedName.length - 4)}.png';
+        } else {
+          continue;
+        }
         if (assetName == thirdPartyIconBundleAsset &&
             !normalizedName.startsWith('output/png/')) {
           continue;
         }
         final catalogName = assetName == additionalThirdPartyIconBundleAsset
             ? 'icos/$normalizedName'
-            : normalizedName;
-        packedIcons['third-party://$catalogName'] = Uint8List.fromList(
-          file.content,
-        );
+            : assetName == newThirdPartyIconBundleAsset
+                ? 'new-icons/$normalizedName'
+                : normalizedName;
+        packedIcons['third-party://$catalogName'] = iconBytes;
       }
     }
     thirdPartyIconPngs = packedIcons;
@@ -11102,11 +11117,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           onAddAttachment: spbWallet == null ? null : addAttachmentFromPreview,
         ),
       );
-      if (!mounted) return;
+      if (!mounted || !unlocked) return;
       final latestItem = itemById(previewItem.id) ?? previewItem;
       if (action == CardPreviewAction.edit) {
         await openItemDialog(item: latestItem);
-        if (!mounted) return;
+        if (!mounted || !unlocked) return;
         previewItem = itemById(latestItem.id) ?? latestItem;
         continue;
       }
@@ -11116,7 +11131,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       previewItem = itemById(latestItem.id) ?? latestItem;
       break;
     }
-    if (!mounted) return;
+    if (!mounted || !unlocked) return;
     if (!preserveSearch) revealCardFolder(previewItem);
   }
 
@@ -11944,7 +11959,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 spbWallet!.readAttachmentBytes(attachmentId),
       ),
     );
-    if (item != null && mounted) {
+    if (!mounted || !unlocked) return null;
+    if (item != null) {
       setState(() => selectedItemId = item.id);
     }
     if (saved == null) return null;

@@ -36,6 +36,8 @@ flutter:
     - assets/third_party/icons_unique_visual_studio.zip
     # Additional user-provided third-party icons from docs/icos.zip.
     - assets/third_party/icos.zip
+    # Additional icons supplied in New Icon.zip.
+    - assets/third_party/new_icons.zip
     # Original template library. Legacy databases refer to stable identities.
     - assets/spb_wallet_libraries/templates/
     # Base wallet used when the user creates a new encrypted .swl database.

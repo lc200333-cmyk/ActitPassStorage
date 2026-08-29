@@ -82,6 +82,10 @@ jobs:
         shell: bash
         run: |
           BUMP="${{ github.event.inputs.bump || 'patch' }}"
+          COMMIT_MESSAGE="$(git log -1 --pretty=%B)"
+          if [[ "$COMMIT_MESSAGE" =~ \[release[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)\] ]]; then
+            BUMP="${BASH_REMATCH[1]}"
+          fi
           VERSION="$(node tools/bump_version.js "$BUMP")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"

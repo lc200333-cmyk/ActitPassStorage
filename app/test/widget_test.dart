@@ -9,11 +9,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('third-party Visual Studio icon bundle is available',
-      (tester) async {
+  testWidgets('third-party icon bundles are available', (tester) async {
     final icons = await loadThirdPartyIconAssets();
 
-    expect(icons, hasLength(1388));
+    expect(icons, hasLength(2453));
     expect(
       icons,
       contains('third-party://output/png/icos/icon_01.png'),
@@ -24,6 +23,14 @@ void main() {
     );
     expect(icons, contains('third-party://icos/icon_01.png'));
     expect(icons, contains('third-party://icos/icon_16.png'));
+    expect(
+      icons,
+      contains('third-party://new-icons/New Icon/Photo.png'),
+    );
+    expect(
+      icons,
+      contains('third-party://new-icons/New Icon/Print.png'),
+    );
     expect(thirdPartyIconPngs[icons.first], isNotEmpty);
   });
 
