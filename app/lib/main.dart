@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image/image.dart' as image;
+import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'data/spb_wallet_repository.dart';
@@ -11102,11 +11103,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
           onAddAttachment: spbWallet == null ? null : addAttachmentFromPreview,
         ),
       );
-      if (!mounted) return;
+      if (!mounted || !unlocked) return;
       final latestItem = itemById(previewItem.id) ?? previewItem;
       if (action == CardPreviewAction.edit) {
         await openItemDialog(item: latestItem);
-        if (!mounted) return;
+        if (!mounted || !unlocked) return;
         previewItem = itemById(latestItem.id) ?? latestItem;
         continue;
       }
@@ -11116,7 +11117,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       previewItem = itemById(latestItem.id) ?? latestItem;
       break;
     }
-    if (!mounted) return;
+    if (!mounted || !unlocked) return;
     if (!preserveSearch) revealCardFolder(previewItem);
   }
 
@@ -11944,7 +11945,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
                 spbWallet!.readAttachmentBytes(attachmentId),
       ),
     );
-    if (item != null && mounted) {
+    if (!mounted || !unlocked) return null;
+    if (item != null) {
       setState(() => selectedItemId = item.id);
     }
     if (saved == null) return null;
@@ -14336,6 +14338,286 @@ class SpbGradientActionButton extends StatelessWidget {
   }
 }
 
+Future<({Uint8List bytes, String fileName})?> captureWithWindowsCamera() async {
+  final picturesResult = await Process.run(
+    'powershell.exe',
+    const [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      '[Environment]::GetFolderPath([Environment+SpecialFolder]::MyPictures)',
+    ],
+  );
+  final picturesPath = picturesResult.stdout.toString().trim();
+  if (picturesPath.isEmpty) return null;
+  final candidates = [
+    Directory('$picturesPath${Platform.pathSeparator}Camera Roll'),
+    Directory('$picturesPath${Platform.pathSeparator}Фотоплёнка'),
+  ];
+  final existing = <String>{};
+  for (final directory in candidates) {
+    if (!directory.existsSync()) continue;
+    for (final entry in directory.listSync()) {
+      if (entry is File) existing.add(entry.path);
+    }
+  }
+  final startedAt = DateTime.now();
+  await Process.start('explorer.exe', const ['microsoft.windows.camera:']);
+  for (var attempt = 0; attempt < 240; attempt++) {
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    File? newest;
+    for (final directory in candidates) {
+      if (!directory.existsSync()) continue;
+      for (final entry in directory.listSync()) {
+        if (entry is! File || existing.contains(entry.path)) continue;
+        final lower = entry.path.toLowerCase();
+        if (!const ['.jpg', '.jpeg', '.png', '.heic'].any(lower.endsWith)) {
+          continue;
+        }
+        final modified = entry.lastModifiedSync();
+        if (modified.isBefore(startedAt.subtract(const Duration(seconds: 2)))) {
+          continue;
+        }
+        if (newest == null || modified.isAfter(newest.lastModifiedSync())) {
+          newest = entry;
+        }
+      }
+    }
+    if (newest != null) {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      return (
+        bytes: await newest.readAsBytes(),
+        fileName: newest.uri.pathSegments.last
+      );
+    }
+  }
+  return null;
+}
+
+Future<({Uint8List bytes, String fileName})?> captureAndEditCardPhoto(
+  BuildContext context,
+) async {
+  Uint8List? capturedBytes;
+  var fileName = 'photo_${DateTime.now().millisecondsSinceEpoch}.jpg';
+  if (Platform.isWindows) {
+    final captured = await captureWithWindowsCamera();
+    capturedBytes = captured?.bytes;
+    if (captured != null) fileName = captured.fileName;
+  } else {
+    try {
+      final captured = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.rear,
+        imageQuality: 100,
+      );
+      if (captured == null) return null;
+      capturedBytes = await captured.readAsBytes();
+      if (captured.name.trim().isNotEmpty) fileName = captured.name;
+    } on UnsupportedError {
+      // Desktop image_picker implementations may not expose a camera delegate.
+    } on PlatformException {
+      // If the operating system has no camera handler, allow selecting the photo.
+    }
+  }
+
+  if (capturedBytes == null && (Platform.isWindows || Platform.isLinux)) {
+    final picked = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Выберите фотографию из приложения камеры',
+      type: FileType.image,
+      withData: true,
+    );
+    final file = picked?.files.single;
+    if (file == null) return null;
+    capturedBytes = file.bytes ??
+        (file.path == null ? null : await File(file.path!).readAsBytes());
+    fileName = file.name;
+  }
+  if (capturedBytes == null || capturedBytes.isEmpty || !context.mounted) {
+    return null;
+  }
+  final edited = await showDialog<Uint8List>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => PhotoCropRotateDialog(bytes: capturedBytes!),
+  );
+  if (edited == null) return null;
+  return (bytes: edited, fileName: fileName);
+}
+
+class PhotoCropRotateDialog extends StatefulWidget {
+  const PhotoCropRotateDialog({required this.bytes, super.key});
+
+  final Uint8List bytes;
+
+  @override
+  State<PhotoCropRotateDialog> createState() => _PhotoCropRotateDialogState();
+}
+
+class _PhotoCropRotateDialogState extends State<PhotoCropRotateDialog> {
+  late image.Image workingImage;
+  double cropLeft = 0;
+  double cropTop = 0;
+  double cropRight = 0;
+  double cropBottom = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final decoded = image.decodeImage(widget.bytes);
+    if (decoded == null) {
+      throw const FormatException('Не удалось прочитать фотографию.');
+    }
+    workingImage = image.bakeOrientation(decoded);
+  }
+
+  image.Image croppedImage() {
+    final x = (workingImage.width * cropLeft).round();
+    final y = (workingImage.height * cropTop).round();
+    final right = (workingImage.width * cropRight).round();
+    final bottom = (workingImage.height * cropBottom).round();
+    return image.copyCrop(
+      workingImage,
+      x: x,
+      y: y,
+      width: max(1, workingImage.width - x - right),
+      height: max(1, workingImage.height - y - bottom),
+    );
+  }
+
+  Uint8List previewBytes() =>
+      Uint8List.fromList(image.encodeJpg(croppedImage(), quality: 90));
+
+  void rotate(double angle) {
+    setState(() {
+      workingImage = image.copyRotate(croppedImage(), angle: angle);
+      cropLeft = cropTop = cropRight = cropBottom = 0;
+    });
+  }
+
+  Widget cropSlider(
+    String label,
+    double value,
+    ValueChanged<double> onChanged,
+  ) {
+    return Row(
+      children: [
+        SizedBox(width: 65, child: Text(label)),
+        Expanded(
+          child: Slider(
+            value: value,
+            min: 0,
+            max: 0.4,
+            divisions: 40,
+            onChanged: onChanged,
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return Dialog(
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.zero,
+        side: BorderSide(color: Color(0xff7f8d98)),
+      ),
+      child: SizedBox(
+        width: min(size.width - 24, 680),
+        height: min(size.height - 24, 760),
+        child: Column(
+          children: [
+            Container(
+              height: 48,
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+                ),
+                border: Border(bottom: BorderSide(color: Color(0xff7f8d98))),
+              ),
+              child: const Text(
+                'Редактирование фотографии',
+                style: TextStyle(fontSize: 18),
+              ),
+            ),
+            Expanded(
+              child: Container(
+                color: const Color(0xff303030),
+                padding: const EdgeInsets.all(10),
+                alignment: Alignment.center,
+                child: Image.memory(previewBytes(), fit: BoxFit.contain),
+              ),
+            ),
+            Container(
+              color: const Color(0xfff4f4f4),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Column(
+                children: [
+                  cropSlider('Слева', cropLeft,
+                      (value) => setState(() => cropLeft = value)),
+                  cropSlider('Справа', cropRight,
+                      (value) => setState(() => cropRight = value)),
+                  cropSlider('Сверху', cropTop,
+                      (value) => setState(() => cropTop = value)),
+                  cropSlider('Снизу', cropBottom,
+                      (value) => setState(() => cropBottom = value)),
+                ],
+              ),
+            ),
+            Container(
+              height: 64,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: const BoxDecoration(
+                color: Color(0xffdce8f1),
+                border: Border(top: BorderSide(color: Color(0xff7f8d98))),
+              ),
+              child: Row(
+                children: [
+                  SpbGradientActionButton(
+                    icon: Icons.rotate_left,
+                    tooltip: 'Повернуть влево',
+                    colors: const [Color(0xff777777), Color(0xff303030)],
+                    onTap: () => rotate(-90),
+                  ),
+                  const SizedBox(width: 6),
+                  SpbGradientActionButton(
+                    icon: Icons.rotate_right,
+                    tooltip: 'Повернуть вправо',
+                    colors: const [Color(0xff777777), Color(0xff303030)],
+                    onTap: () => rotate(90),
+                  ),
+                  const Spacer(),
+                  SpbGradientActionButton(
+                    icon: Icons.check,
+                    tooltip: 'Применить',
+                    colors: const [Color(0xff5bc96d), Color(0xff08772f)],
+                    onTap: () => Navigator.pop(
+                      context,
+                      Uint8List.fromList(
+                        image.encodeJpg(croppedImage(), quality: 94),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  SpbGradientActionButton(
+                    icon: Icons.close,
+                    tooltip: 'Отмена',
+                    colors: const [Color(0xffff5a5f), Color(0xffa90000)],
+                    onTap: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class CardEditorSnapshot {
   const CardEditorSnapshot({
     required this.templateId,
@@ -14766,6 +15048,14 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                           colors: const [Color(0xff5b9dff), Color(0xff0752b5)],
                           onTap: addAttachment,
                         ),
+                        const SizedBox(width: 6),
+                        SpbGradientActionButton(
+                          key: const Key('cardEditorCaptureAttachmentButton'),
+                          icon: Icons.photo_camera_outlined,
+                          tooltip: 'Сфотографировать вложение',
+                          colors: const [Color(0xff777777), Color(0xff303030)],
+                          onTap: captureAttachmentPhoto,
+                        ),
                         if (activeAttachments.isNotEmpty) ...[
                           const SizedBox(width: 6),
                           SpbGradientActionButton(
@@ -14820,7 +15110,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Container(
               key: const Key('cardBoundIcon'),
@@ -14845,8 +15135,24 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                 color: pictogramColorForBackground(editorBackgroundColor),
               ),
             ),
-            const SizedBox(width: 14),
-            Expanded(child: cardIconPickers()),
+            const SizedBox(width: 7),
+            SizedBox.square(
+              dimension: 48,
+              child: SpbGrayPickerButton(
+                key: const Key('cardEditorCaptureIconButton'),
+                label: 'фото',
+                icon: Icons.photo_camera_outlined,
+                tooltip: 'Сфотографировать иконку',
+                onTap: captureCardIconPhoto,
+              ),
+            ),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: cardIconPickers(),
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 12),
@@ -15543,6 +15849,36 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
             attachment,
       ];
     });
+  }
+
+  Future<void> captureAttachmentPhoto() async {
+    final photo = await captureAndEditCardPhoto(context);
+    if (photo == null || !mounted) return;
+    rememberCurrentAction();
+    setState(() {
+      attachments = [
+        ...attachments,
+        SecretAttachment(
+          id: '',
+          fileName: photo.fileName.toLowerCase().endsWith('.jpg') ||
+                  photo.fileName.toLowerCase().endsWith('.jpeg')
+              ? photo.fileName
+              : 'photo_${DateTime.now().millisecondsSinceEpoch}.jpg',
+          size: photo.bytes.length,
+          pendingBytes: photo.bytes,
+        ),
+      ];
+    });
+  }
+
+  Future<void> captureCardIconPhoto() async {
+    final photo = await captureAndEditCardPhoto(context);
+    if (photo == null || !mounted) return;
+    final decoded = image.decodeImage(photo.bytes);
+    if (decoded == null) return;
+    rememberCurrentAction();
+    final normalized = normalizeUserIconPng(decoded);
+    setState(() => iconId = registerEmbeddedIcon(normalized));
   }
 
   Future<void> addAttachment() async {

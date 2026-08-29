@@ -17,6 +17,7 @@ dependencies:
   pointycastle: ^3.9.1
   sqlite3: ^2.7.6
   sqlite3_flutter_libs: ^0.5.32
+  image_picker: ^1.2.3
 
 dev_dependencies:
   flutter_test:
