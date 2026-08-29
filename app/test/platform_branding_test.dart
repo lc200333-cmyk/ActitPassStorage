@@ -63,6 +63,10 @@ void main() {
       File('assets/branding/wallet_android.png').readAsBytesSync(),
     );
     expect(androidSource, isNotNull);
+    expect(
+      File('assets/branding/wallet_android.png').readAsBytesSync(),
+      orderedEquals(sourceBytes),
+    );
     expect(androidSource!.numChannels, 4);
     expect(androidSource.getPixel(0, 0).a, 0);
     expect(androidSource.getPixel(androidSource.width - 1, 0).a, 0);
@@ -82,11 +86,17 @@ void main() {
     expect(androidLauncher!.getPixel(0, 0).a, 0);
 
     final installer = File(
-      '../tools/windows/ActitPassStorage.iss',
+      '../tools/windows/Wallet-APS.iss',
     ).readAsStringSync();
     expect(installer, contains('app_icon.ico'));
     expect(installer, contains('#define MyAppName "Wallet APS"'));
     expect(installer, contains('#define MyAppExeName "wallet_aps.exe"'));
+    expect(
+      installer,
+      contains('AppPublisherURL=https://github.com/lc200333-cmyk/Wallet-APS'),
+    );
+    expect(installer, contains(r'UninstallFilesDir={app}\Uninstall'));
+    expect(installer, contains('UninstallDisplayIcon={uninstallexe}'));
     final runner = File('windows/runner/main.cpp').readAsStringSync();
     expect(runner, contains('window.Create(L"Wallet APS"'));
     final resources = File('windows/runner/Runner.rc').readAsStringSync();

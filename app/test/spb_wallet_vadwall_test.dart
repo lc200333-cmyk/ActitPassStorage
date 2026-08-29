@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:actit_pass_storage/main.dart';
-import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
+import 'package:wallet_aps/main.dart';
+import 'package:wallet_aps/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

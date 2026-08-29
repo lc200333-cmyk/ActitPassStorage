@@ -60,7 +60,7 @@ if (fs.existsSync(file(cargoPath))) {
   );
 }
 
-const issPath = 'tools/windows/ActitPassStorage.iss';
+const issPath = 'tools/windows/Wallet-APS.iss';
 write(
   issPath,
   read(issPath).replace(

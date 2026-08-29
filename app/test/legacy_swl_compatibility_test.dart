@@ -1,8 +1,8 @@
 import 'dart:io';
-import 'package:actit_pass_storage/main.dart';
-import 'package:actit_pass_storage/spb_wallet/spb_wallet_attachment_codec.dart';
-import 'package:actit_pass_storage/spb_wallet/spb_wallet_crypto.dart';
-import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
+import 'package:wallet_aps/main.dart';
+import 'package:wallet_aps/spb_wallet/spb_wallet_attachment_codec.dart';
+import 'package:wallet_aps/spb_wallet/spb_wallet_crypto.dart';
+import 'package:wallet_aps/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
 import 'package:sqlite3/sqlite3.dart';
@@ -18,7 +18,7 @@ final _legacyFixturesAvailable = [
 
 Future<(Directory, File)> _copyFixture(String name) async {
   final directory =
-      await Directory.systemTemp.createTemp('actitpass_legacy_fixture_');
+      await Directory.systemTemp.createTemp('wallet_aps_legacy_fixture_');
   final target = File(
     '${directory.path}${Platform.pathSeparator}$name',
   );
@@ -292,7 +292,7 @@ void main() {
 
   test('fresh export schema uses original SPB metadata and triggers', () async {
     final directory =
-        await Directory.systemTemp.createTemp('actitpass_fresh_legacy_');
+        await Directory.systemTemp.createTemp('wallet_aps_fresh_legacy_');
     final path = '${directory.path}${Platform.pathSeparator}fresh.swl';
     final wallet = SpbWalletDatabase.create(path, _password);
     wallet.close();

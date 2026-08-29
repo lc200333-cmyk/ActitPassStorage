@@ -46,8 +46,7 @@ dist/
 *.AppImage
 *.tar.gz
 *.zip
-!app/assets/third_party/icons_unique_visual_studio.zip
-!app/assets/third_party/new_icons.zip
+!app/assets/third_party/NewIcons.zip
 
 # Flutter/Dart generated state
 .dart_tool/

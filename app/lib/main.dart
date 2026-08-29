@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
@@ -29,15 +30,12 @@ void main(List<String> arguments) {
             File(argument).existsSync(),
         orElse: () => null,
       );
-  runApp(ActitPassApp(initialVaultPath: initialVaultPath));
+  runApp(WalletApsApp(initialVaultPath: initialVaultPath));
 }
 
 final rootScaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 const spbIconBundleAsset = 'assets/spb_icons.bundle';
-const thirdPartyIconBundleAsset =
-    'assets/third_party/icons_unique_visual_studio.zip';
-const additionalThirdPartyIconBundleAsset = 'assets/third_party/icos.zip';
-const newThirdPartyIconBundleAsset = 'assets/third_party/new_icons.zip';
+const thirdPartyIconBundleAsset = 'assets/third_party/NewIcons.zip';
 List<String> spb64PngIconAssets = [];
 Future<List<String>>? spb64PngIconAssetsFuture;
 Map<String, Uint8List> spbBundledIconPngs = {};
@@ -83,46 +81,20 @@ Future<List<String>> loadSpb64PngIconAssets() {
 
 Future<List<String>> loadThirdPartyIconAssets() {
   return thirdPartyIconAssetsFuture ??= () async {
+    final data = await rootBundle.load(thirdPartyIconBundleAsset);
+    final bytes = data.buffer.asUint8List(
+      data.offsetInBytes,
+      data.lengthInBytes,
+    );
+    final archive = ZipDecoder().decodeBytes(bytes, verify: true);
     final packedIcons = <String, Uint8List>{};
-    for (final assetName in const [
-      thirdPartyIconBundleAsset,
-      additionalThirdPartyIconBundleAsset,
-      newThirdPartyIconBundleAsset,
-    ]) {
-      final data = await rootBundle.load(assetName);
-      final bytes = data.buffer.asUint8List(
-        data.offsetInBytes,
-        data.lengthInBytes,
+    for (final file in archive.files) {
+      if (!file.isFile) continue;
+      final normalizedName = file.name.replaceAll('\\', '/');
+      if (!normalizedName.toLowerCase().endsWith('.png')) continue;
+      packedIcons['third-party://$normalizedName'] = Uint8List.fromList(
+        file.content,
       );
-      final archive = ZipDecoder().decodeBytes(bytes, verify: true);
-      for (final file in archive.files) {
-        if (!file.isFile) continue;
-        var normalizedName = file.name.replaceAll('\\', '/');
-        final lowerName = normalizedName.toLowerCase();
-        Uint8List iconBytes;
-        if (lowerName.endsWith('.png')) {
-          iconBytes = Uint8List.fromList(file.content);
-        } else if (assetName == newThirdPartyIconBundleAsset &&
-            lowerName.endsWith('.bmp')) {
-          final decoded = image.decodeImage(Uint8List.fromList(file.content));
-          if (decoded == null) continue;
-          iconBytes = Uint8List.fromList(image.encodePng(decoded));
-          normalizedName =
-              '${normalizedName.substring(0, normalizedName.length - 4)}.png';
-        } else {
-          continue;
-        }
-        if (assetName == thirdPartyIconBundleAsset &&
-            !normalizedName.startsWith('output/png/')) {
-          continue;
-        }
-        final catalogName = assetName == additionalThirdPartyIconBundleAsset
-            ? 'icos/$normalizedName'
-            : assetName == newThirdPartyIconBundleAsset
-                ? 'new-icons/$normalizedName'
-                : normalizedName;
-        packedIcons['third-party://$catalogName'] = iconBytes;
-      }
     }
     thirdPartyIconPngs = packedIcons;
     thirdPartyIconAssets = packedIcons.keys.toList(growable: false)
@@ -198,26 +170,48 @@ Widget desktopCardTextContextMenu(
   final selectedText = selection.isValid && !selection.isCollapsed
       ? selection.textInside(value.text)
       : '';
-  final items = [...editableTextState.contextMenuButtonItems];
-  if (selectedText.isNotEmpty) {
-    items.add(
-      ContextMenuButtonItem(
-        label: 'Share',
-        onPressed: () async {
-          editableTextState.hideToolbar();
-          await copyCardFieldValue(selectedText);
-        },
-      ),
-    );
-  }
+  final defaultItems = {
+    for (final item in editableTextState.contextMenuButtonItems)
+      item.type: item,
+  };
+  final items = selectedText.isEmpty
+      ? editableTextState.contextMenuButtonItems
+      : <ContextMenuButtonItem>[
+          ContextMenuButtonItem(
+            type: ContextMenuButtonType.cut,
+            label: 'Cut',
+            onPressed: defaultItems[ContextMenuButtonType.cut]?.onPressed,
+          ),
+          ContextMenuButtonItem(
+            type: ContextMenuButtonType.copy,
+            label: 'Copy',
+            onPressed: () async {
+              editableTextState.hideToolbar();
+              await copyCardFieldValue(selectedText);
+            },
+          ),
+          ContextMenuButtonItem(
+            type: ContextMenuButtonType.paste,
+            label: 'Paste',
+            onPressed: defaultItems[ContextMenuButtonType.paste]?.onPressed,
+          ),
+          ContextMenuButtonItem(
+            type: ContextMenuButtonType.share,
+            label: 'Share',
+            onPressed: () async {
+              editableTextState.hideToolbar();
+              await copyCardFieldValue(selectedText);
+            },
+          ),
+        ];
   return AdaptiveTextSelectionToolbar.buttonItems(
     anchors: editableTextState.contextMenuAnchors,
     buttonItems: items,
   );
 }
 
-class ActitPassApp extends StatelessWidget {
-  const ActitPassApp({this.initialVaultPath, super.key});
+class WalletApsApp extends StatelessWidget {
+  const WalletApsApp({this.initialVaultPath, super.key});
 
   final String? initialVaultPath;
 
@@ -1902,6 +1896,43 @@ String attachmentMimeType(String fileName) {
   return 'application/octet-stream';
 }
 
+({String fileName, Uint8List bytes}) gallerySafeAttachmentExport(
+  String originalFileName,
+  Uint8List bytes, {
+  bool? isAndroid,
+}) {
+  final lowerName = originalFileName.toLowerCase();
+  final isGalleryImage = const <String>[
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.gif',
+    '.webp',
+    '.bmp',
+    '.heic',
+    '.heif',
+    '.tif',
+    '.tiff',
+    '.avif',
+    '.dng',
+    '.svg',
+  ].any(lowerName.endsWith);
+  if (!(isAndroid ?? Platform.isAndroid) || !isGalleryImage) {
+    return (fileName: originalFileName, bytes: bytes);
+  }
+  final safeOriginal = originalFileName
+      .replaceAll(RegExp(r'[\\/:*?<>|]'), '_')
+      .replaceAll(String.fromCharCode(34), '_')
+      .trim();
+  final archiveName = safeOriginal.isEmpty ? 'attachment' : safeOriginal;
+  final baseName = archiveName.replaceFirst(RegExp(r'\.[^.]+$'), '');
+  final archive = Archive()..addFile(ArchiveFile.bytes(archiveName, bytes));
+  return (
+    fileName: '${baseName.isEmpty ? 'attachment' : baseName}.apsattachment.zip',
+    bytes: Uint8List.fromList(ZipEncoder().encode(archive)),
+  );
+}
+
 Future<void> openAttachmentBytesWithSystem(
   String fileName,
   Uint8List bytes,
@@ -1913,8 +1944,8 @@ Future<void> openAttachmentBytesWithSystem(
   // FileProvider supplies the real MIME type. The service extension prevents
   // gallery applications from treating the private working copy as a photo.
   final temporaryName = Platform.isAndroid
-      ? 'actitpass_${safeName.hashCode.toUnsigned(32)}.apsblob'
-      : 'actitpass_$safeName';
+      ? 'wallet_aps_${safeName.hashCode.toUnsigned(32)}.apsblob'
+      : 'wallet_aps_$safeName';
   final file = File('${directory.path}${Platform.pathSeparator}$temporaryName');
   await file.writeAsBytes(bytes, flush: true);
   if (Platform.isAndroid) {
@@ -2049,7 +2080,7 @@ String syntheticSpbIconIdForUi(String uiIconId) {
   }
   var first = 2166136261;
   var second = 2166136261 ^ 0x9e3779b9;
-  for (final codeUnit in 'actitpass-icon:$uiIconId'.codeUnits) {
+  for (final codeUnit in 'wallet-aps-icon:$uiIconId'.codeUnits) {
     first ^= codeUnit;
     first = (first * 16777619) & 0xffffffff;
     second ^= codeUnit + 31;
@@ -2312,8 +2343,8 @@ enum EntryMode { openSwl, createSwl }
 enum VirtualKeyboardMode { numeric, uppercase, lowercase, symbols }
 
 const spbDescriptionFieldId = '__spb_description';
-const spbWalletChannel = MethodChannel('actit_pass_storage/spb_wallet');
-const windowChannel = MethodChannel('actit_pass_storage/window');
+const spbWalletChannel = MethodChannel('wallet_aps/spb_wallet');
+const windowChannel = MethodChannel('wallet_aps/window');
 
 bool isNotesLabel(String label) {
   final normalized = label.trim().toLowerCase();
@@ -2831,8 +2862,18 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     return File('${directory.path}/$normalizedVaultBaseName.swl');
   }
 
-  Future<File> recentVaultsFile() async =>
-      File('${(await appStateDirectory()).path}/actitpass_recent_swl.json');
+  Future<File> recentVaultsFile() async {
+    final stateDirectory = await appStateDirectory();
+    final current = File('${stateDirectory.path}/wallet_aps_recent_swl.json');
+    if (!current.existsSync()) {
+      // One-time compatibility copy for installations created before renaming.
+      final legacy = File('${stateDirectory.path}/actitpass_recent_swl.json');
+      if (legacy.existsSync()) {
+        await legacy.copy(current.path);
+      }
+    }
+    return current;
+  }
 
   Future<Directory> appStateDirectory() async {
     if (Platform.isAndroid) {
@@ -2853,7 +2894,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     final base = Platform.isAndroid
         ? await appStateDirectory()
         : await getApplicationDocumentsDirectory();
-    final directory = Directory('${base.path}/ActitPassStorage');
+    final directory = Directory('${base.path}/Wallet APS');
     if (!directory.existsSync()) {
       directory.createSync(recursive: true);
     }
@@ -5691,9 +5732,20 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   }
 
   void updateSpbSearch(String value) {
+    final query = value.trim();
+    final size = MediaQuery.sizeOf(context);
+    final portraitTablet =
+        size.height > size.width && min(size.width, size.height) >= 600;
+    final narrowLayout =
+        size.width < 700 || size.height < 500 || portraitTablet;
     setState(() {
-      spbSubmittedSearchQuery = value.trim();
+      spbSubmittedSearchQuery = query;
       spbExactSearch = false;
+      if (query.isNotEmpty &&
+          (defaultTargetPlatform == TargetPlatform.android || narrowLayout)) {
+        mobileTemplatesOpen = false;
+        mobilePane = 1;
+      }
     });
   }
 
@@ -7836,7 +7888,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     final file = targetPath == null
         ? File(
             '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}'
-            'actitpass_export_${DateTime.now().microsecondsSinceEpoch}.swl',
+            'wallet_aps_export_${DateTime.now().microsecondsSinceEpoch}.swl',
           )
         : File(targetPath);
     final exportWallet = SpbWalletDatabase.create(file.path, password);
@@ -8073,7 +8125,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
         final directory = await getTemporaryDirectory();
         temporary = File(
           '${directory.path}${Platform.pathSeparator}'
-          'actitpass_import_${DateTime.now().microsecondsSinceEpoch}.swl',
+          'wallet_aps_import_${DateTime.now().microsecondsSinceEpoch}.swl',
         );
         await temporary.writeAsBytes(bytes, flush: true);
         sourcePath = temporary.path;
@@ -11753,8 +11805,8 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     final directory = await getTemporaryDirectory();
     final safeName = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
     final temporaryName = Platform.isAndroid
-        ? 'actitpass_${safeName.hashCode.toUnsigned(32)}.apsblob'
-        : 'actitpass_$safeName';
+        ? 'wallet_aps_${safeName.hashCode.toUnsigned(32)}.apsblob'
+        : 'wallet_aps_$safeName';
     final file = File(
       '${directory.path}${Platform.pathSeparator}$temporaryName',
     );
@@ -11795,10 +11847,11 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
       final bytes = Uint8List.fromList(
         wallet.readAttachmentBytes(attachment.id),
       );
+      final export = gallerySafeAttachmentExport(attachment.fileName, bytes);
       final path = await FilePicker.platform.saveFile(
         dialogTitle: 'Сохранить вложение',
-        fileName: attachment.fileName,
-        bytes: bytes,
+        fileName: export.fileName,
+        bytes: export.bytes,
       );
       if (path != null && !Platform.isAndroid && !Platform.isIOS) {
         final file = File(path);
@@ -12233,7 +12286,7 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
     }
     try {
       final payload = const JsonEncoder.withIndent('  ').convert({
-        'format': 'ActitPassStorage.SWT',
+        'format': 'WalletAPS.SWT',
         'version': 1,
         'template': template.toJson(),
       });
@@ -13748,15 +13801,45 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
 
   String allCardText() {
     final lines = <String>[
-      'Название: ${currentItem.title}',
-      if (currentItem.category.trim().isNotEmpty)
-        'Категория: ${currentItem.category}',
+      'Название:',
+      currentItem.title,
+      if (currentItem.category.trim().isNotEmpty) ...[
+        'Категория:',
+        currentItem.category,
+      ],
     ];
     for (final field in fieldsForItem(widget.template, currentItem)) {
       final value = currentItem.values[field.id]?.trim() ?? '';
-      if (value.isNotEmpty) lines.add('${field.label}: $value');
+      if (value.isNotEmpty) lines.addAll(['${field.label}:', value]);
     }
     return lines.join('\n');
+  }
+
+  bool pointIsInsidePreviewTextField(Offset globalPosition) {
+    var inside = false;
+    void visit(Element element) {
+      if (inside) return;
+      if (element.widget is EditableText) {
+        final renderObject = element.renderObject;
+        if (renderObject is RenderBox && renderObject.hasSize) {
+          final bounds =
+              renderObject.localToGlobal(Offset.zero) & renderObject.size;
+          inside = bounds.contains(globalPosition);
+        }
+      }
+      if (!inside) element.visitChildren(visit);
+    }
+
+    (context as Element).visitChildren(visit);
+    return inside;
+  }
+
+  void handlePreviewPointerDown(PointerDownEvent event) {
+    if (event.buttons & kSecondaryMouseButton == 0 ||
+        pointIsInsidePreviewTextField(event.position)) {
+      return;
+    }
+    showCopyAllMenu(event.position);
   }
 
   Future<void> showCopyAllMenu(Offset globalPosition) async {
@@ -13811,10 +13894,11 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
     try {
       final bytes = await attachmentBytes(attachment);
       if (bytes.isEmpty) return;
+      final export = gallerySafeAttachmentExport(attachment.fileName, bytes);
       final path = await FilePicker.platform.saveFile(
         dialogTitle: 'Сохранить вложение',
-        fileName: attachment.fileName,
-        bytes: bytes,
+        fileName: export.fileName,
+        bytes: export.bytes,
       );
       if (path != null && !Platform.isAndroid && !Platform.isIOS) {
         final file = File(path);
@@ -13851,13 +13935,6 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
       ),
     );
     if (selected != null) await saveAttachment(selected);
-  }
-
-  Future<void> addAttachment() async {
-    final callback = widget.onAddAttachment;
-    if (callback == null) return;
-    final updated = await callback(currentItem);
-    if (updated != null && mounted) setState(() => currentItem = updated);
   }
 
   Widget previewAttachmentNames() {
@@ -14001,181 +14078,136 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
           key: const Key('cardPreviewSurface'),
           width: fullScreen ? media.width : min(media.width - 24, 720),
           height: fullScreen ? media.height : min(media.height - 24, 760),
-          child: GestureDetector(
+          child: Listener(
             behavior: HitTestBehavior.opaque,
-            onSecondaryTapDown: usesDesktopCardTextControls
-                ? null
-                : (details) => showCopyAllMenu(details.globalPosition),
-            onLongPressStart: (details) =>
-                showCopyAllMenu(details.globalPosition),
-            child: Column(
-              children: [
-                Container(
-                  height: 48,
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+            onPointerDown: handlePreviewPointerDown,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onLongPressStart: (details) =>
+                  showCopyAllMenu(details.globalPosition),
+              child: Column(
+                children: [
+                  Container(
+                    height: 48,
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xffa9c9e3), Color(0xffe9f1f8)],
+                      ),
+                      border: Border(
+                        bottom: BorderSide(color: Color(0xff7f8d98)),
+                      ),
                     ),
-                    border: Border(
-                      bottom: BorderSide(color: Color(0xff7f8d98)),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          currentItem.title,
-                          key: const Key('cardPreviewTitle'),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 18),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            currentItem.title,
+                            key: const Key('cardPreviewTitle'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 18),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        formatCardModifiedAt(currentItem.modifiedAt),
-                        key: const Key('cardPreviewModifiedAt'),
-                        maxLines: 1,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: DecoratedBox(
-                    decoration: cardSurfaceDecoration(
-                      color: color.bg,
-                      backgroundImage: backgroundImage,
+                        const SizedBox(width: 10),
+                        Text(
+                          formatCardModifiedAt(currentItem.modifiedAt),
+                          key: const Key('cardPreviewModifiedAt'),
+                          maxLines: 1,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ],
                     ),
-                    child: SingleChildScrollView(
-                      padding: EdgeInsets.fromLTRB(
-                        14,
-                        14,
-                        14,
-                        18 + MediaQuery.viewInsetsOf(context).bottom,
+                  ),
+                  Expanded(
+                    child: DecoratedBox(
+                      decoration: cardSurfaceDecoration(
+                        color: color.bg,
+                        backgroundImage: backgroundImage,
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Center(
-                            child: Container(
-                              key: const Key('cardPreviewIcon'),
-                              width: 112,
-                              height: 112,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                border: Border.all(
-                                  color: const Color(0xff82929d),
-                                  width: 2,
-                                ),
-                                borderRadius: BorderRadius.circular(5),
-                                boxShadow: const [
-                                  BoxShadow(
-                                    color: Color(0x26000000),
-                                    offset: Offset(1, 2),
-                                    blurRadius: 5,
+                      child: SingleChildScrollView(
+                        padding: EdgeInsets.fromLTRB(
+                          14,
+                          14,
+                          14,
+                          18 + MediaQuery.viewInsetsOf(context).bottom,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Center(
+                              child: Container(
+                                key: const Key('cardPreviewIcon'),
+                                width: 112,
+                                height: 112,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  border: Border.all(
+                                    color: const Color(0xff82929d),
+                                    width: 2,
                                   ),
-                                ],
-                              ),
-                              child: templateIconWidget(
-                                itemIconId(currentItem, widget.template),
-                                size: 88,
-                                color: pictogramColorForBackground(color.bg),
+                                  borderRadius: BorderRadius.circular(5),
+                                  boxShadow: const [
+                                    BoxShadow(
+                                      color: Color(0x26000000),
+                                      offset: Offset(1, 2),
+                                      blurRadius: 5,
+                                    ),
+                                  ],
+                                ),
+                                child: templateIconWidget(
+                                  itemIconId(currentItem, widget.template),
+                                  size: 88,
+                                  color: pictogramColorForBackground(color.bg),
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 16),
-                          for (final field in orderedVisibleFields)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: TextFormField(
-                                key: ValueKey('cardPreviewField-${field.id}'),
-                                initialValue:
-                                    currentItem.values[field.id] ?? '',
-                                readOnly: true,
-                                contextMenuBuilder: usesDesktopCardTextControls
-                                    ? desktopCardTextContextMenu
-                                    : null,
-                                obscureText: fieldDefinitionIsSecret(field) &&
-                                    !revealedFields.contains(field.id),
-                                minLines:
-                                    field.type == 'multiline_note' ? 3 : 1,
-                                maxLines:
-                                    field.type == 'multiline_note' ? null : 1,
-                                decoration: InputDecoration(
-                                  labelText: field.label,
-                                  border: const OutlineInputBorder(),
-                                  filled: true,
-                                  fillColor: color.bg,
-                                  isDense: true,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 8,
-                                  ),
-                                  suffixIconConstraints:
-                                      BoxConstraints.tightFor(
-                                    width: fieldDefinitionIsSecret(field)
-                                        ? 72
-                                        : 36,
-                                    height: 40,
-                                  ),
-                                  suffixIcon: usesDesktopCardTextControls
-                                      ? Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            if (fieldDefinitionIsSecret(field))
-                                              SizedBox(
-                                                width: 36,
-                                                child: IconButton(
-                                                  padding: EdgeInsets.zero,
-                                                  tooltip: revealedFields
-                                                          .contains(field.id)
-                                                      ? 'Скрыть'
-                                                      : 'Показать',
-                                                  icon: Icon(
-                                                    revealedFields
-                                                            .contains(field.id)
-                                                        ? Icons.visibility_off
-                                                        : Icons.visibility,
-                                                    size: 19,
-                                                  ),
-                                                  onPressed: () => setState(() {
-                                                    revealedFields
-                                                            .contains(field.id)
-                                                        ? revealedFields
-                                                            .remove(field.id)
-                                                        : revealedFields
-                                                            .add(field.id);
-                                                  }),
-                                                ),
-                                              ),
-                                            SizedBox(
-                                              width: 36,
-                                              child: IconButton(
-                                                key: ValueKey(
-                                                    'cardPreviewCopy-${field.id}'),
-                                                padding: EdgeInsets.zero,
-                                                tooltip: 'Копировать',
-                                                icon: const Icon(
-                                                  Icons.copy_outlined,
-                                                  size: 17,
-                                                  color: Color(0xff777777),
-                                                ),
-                                                onPressed: () =>
-                                                    copyCardFieldValue(
-                                                  currentItem
-                                                          .values[field.id] ??
-                                                      '',
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        )
-                                      : fieldDefinitionIsSecret(field)
-                                          ? IconButton(
+                            const SizedBox(height: 16),
+                            for (final field in orderedVisibleFields)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: TextFormField(
+                                  key: ValueKey('cardPreviewField-${field.id}'),
+                                  initialValue:
+                                      currentItem.values[field.id] ?? '',
+                                  readOnly: true,
+                                  contextMenuBuilder:
+                                      usesDesktopCardTextControls
+                                          ? desktopCardTextContextMenu
+                                          : null,
+                                  obscureText: fieldDefinitionIsSecret(field) &&
+                                      !revealedFields.contains(field.id),
+                                  minLines:
+                                      field.type == 'multiline_note' ? 3 : 1,
+                                  maxLines:
+                                      field.type == 'multiline_note' ? null : 1,
+                                  decoration: InputDecoration(
+                                    labelText: field.label,
+                                    border: const OutlineInputBorder(),
+                                    filled: true,
+                                    fillColor: color.bg,
+                                    isDense: true,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                    suffixIconConstraints:
+                                        BoxConstraints.tightFor(
+                                      width: fieldDefinitionIsSecret(field)
+                                          ? 72
+                                          : 36,
+                                      height: 40,
+                                    ),
+                                    suffixIcon: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (fieldDefinitionIsSecret(field))
+                                          SizedBox(
+                                            width: 36,
+                                            child: IconButton(
+                                              padding: EdgeInsets.zero,
                                               tooltip: revealedFields
                                                       .contains(field.id)
                                                   ? 'Скрыть'
@@ -14185,6 +14217,7 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
                                                         .contains(field.id)
                                                     ? Icons.visibility_off
                                                     : Icons.visibility,
+                                                size: 19,
                                               ),
                                               onPressed: () => setState(() {
                                                 revealedFields
@@ -14194,106 +14227,116 @@ class _CardPreviewDialogState extends State<CardPreviewDialog> {
                                                     : revealedFields
                                                         .add(field.id);
                                               }),
-                                            )
-                                          : null,
+                                            ),
+                                          ),
+                                        SizedBox(
+                                          width: 36,
+                                          child: IconButton(
+                                            key: ValueKey(
+                                                'cardPreviewCopy-${field.id}'),
+                                            padding: EdgeInsets.zero,
+                                            tooltip: 'Копировать',
+                                            icon: const Icon(
+                                              Icons.copy_outlined,
+                                              size: 17,
+                                              color: Color(0xff777777),
+                                            ),
+                                            onPressed: () => copyCardFieldValue(
+                                              currentItem.values[field.id] ??
+                                                  '',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          if (availableAttachments.any(
-                            (attachment) => !isInlineImage(attachment.fileName),
-                          )) ...[
-                            previewAttachmentNames(),
-                            const SizedBox(height: 8),
+                            if (availableAttachments.any(
+                              (attachment) =>
+                                  !isInlineImage(attachment.fileName),
+                            )) ...[
+                              previewAttachmentNames(),
+                              const SizedBox(height: 8),
+                            ],
+                            for (final attachment in availableAttachments.where(
+                              (attachment) =>
+                                  isInlineImage(attachment.fileName),
+                            ))
+                              inlineAttachmentPreview(attachment, color.bg),
                           ],
-                          for (final attachment in availableAttachments.where(
-                            (attachment) => isInlineImage(attachment.fileName),
-                          ))
-                            inlineAttachmentPreview(attachment, color.bg),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-                Container(
-                  padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
-                  decoration: const BoxDecoration(
-                    color: Color(0xffdce8f1),
-                    border: Border(top: BorderSide(color: Color(0xff7f8d98))),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Row(
-                        children: [
-                          if (widget.onAddAttachment != null &&
-                              availableAttachments.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
+                    decoration: const BoxDecoration(
+                      color: Color(0xffdce8f1),
+                      border: Border(top: BorderSide(color: Color(0xff7f8d98))),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Row(
+                          children: [
+                            if (availableAttachments.isNotEmpty)
+                              SpbGradientActionButton(
+                                key: const Key(
+                                    'cardPreviewSaveAttachmentButton'),
+                                icon: Icons.folder_outlined,
+                                tooltip: 'Сохранить вложение',
+                                colors: const [
+                                  Color(0xff555555),
+                                  Color(0xff050505),
+                                ],
+                                onTap: chooseAttachmentToSave,
+                              ),
+                            const Spacer(),
                             SpbGradientActionButton(
-                              key: const Key('cardPreviewAddAttachmentButton'),
-                              icon: Icons.add,
-                              tooltip: 'Загрузить вложение',
+                              key: const Key('cardPreviewEditButton'),
+                              icon: Icons.edit,
+                              tooltip: 'Редактировать карточку',
                               colors: const [
-                                Color(0xff5b9dff),
-                                Color(0xff0752b5),
+                                Color(0xff5bc96d),
+                                Color(0xff08772f),
                               ],
-                              onTap: addAttachment,
-                            ),
-                          const Spacer(),
-                          if (availableAttachments.isNotEmpty) ...[
-                            SpbGradientActionButton(
-                              key: const Key('cardPreviewSaveAttachmentButton'),
-                              icon: Icons.folder_outlined,
-                              tooltip: 'Сохранить вложение',
-                              colors: const [
-                                Color(0xff5b9dff),
-                                Color(0xff0752b5),
-                              ],
-                              onTap: chooseAttachmentToSave,
+                              onTap: () => Navigator.pop(
+                                  context, CardPreviewAction.edit),
                             ),
                             const SizedBox(width: 6),
-                          ],
-                          SpbGradientActionButton(
-                            key: const Key('cardPreviewEditButton'),
-                            icon: Icons.edit,
-                            tooltip: 'Редактировать карточку',
-                            colors: const [
-                              Color(0xff5bc96d),
-                              Color(0xff08772f),
-                            ],
-                            onTap: () =>
-                                Navigator.pop(context, CardPreviewAction.edit),
-                          ),
-                          const SizedBox(width: 6),
-                          SpbGradientActionButton(
-                            key: const Key('cardPreviewDeleteButton'),
-                            icon: Icons.delete_outline,
-                            tooltip: 'Удалить карточку',
-                            colors: const [
-                              Color(0xffffdc58),
-                              Color(0xffc58a00),
-                            ],
-                            onTap: () => Navigator.pop(
-                              context,
-                              CardPreviewAction.delete,
+                            SpbGradientActionButton(
+                              key: const Key('cardPreviewDeleteButton'),
+                              icon: Icons.delete_outline,
+                              tooltip: 'Удалить карточку',
+                              colors: const [
+                                Color(0xffffdc58),
+                                Color(0xffc58a00),
+                              ],
+                              onTap: () => Navigator.pop(
+                                context,
+                                CardPreviewAction.delete,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 6),
-                          SpbGradientActionButton(
-                            key: const Key('cardPreviewBackButton'),
-                            icon: Icons.close,
-                            tooltip: 'Выйти из просмотра',
-                            colors: const [
-                              Color(0xffff5a5f),
-                              Color(0xffa90000),
-                            ],
-                            onTap: () =>
-                                Navigator.pop(context, CardPreviewAction.back),
-                          ),
-                        ],
-                      ),
-                    ],
+                            const SizedBox(width: 6),
+                            SpbGradientActionButton(
+                              key: const Key('cardPreviewBackButton'),
+                              icon: Icons.close,
+                              tooltip: 'Выйти из просмотра',
+                              colors: const [
+                                Color(0xffff5a5f),
+                                Color(0xffa90000),
+                              ],
+                              onTap: () => Navigator.pop(
+                                  context, CardPreviewAction.back),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -15624,10 +15667,11 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
     try {
       final data = await editorAttachmentBytes(attachment);
       if (data.isEmpty) return;
+      final export = gallerySafeAttachmentExport(attachment.fileName, data);
       final path = await FilePicker.platform.saveFile(
         dialogTitle: 'Сохранить вложение',
-        fileName: attachment.fileName,
-        bytes: data,
+        fileName: export.fileName,
+        bytes: export.bytes,
       );
       if (path != null && !Platform.isAndroid && !Platform.isIOS) {
         final file = File(path);

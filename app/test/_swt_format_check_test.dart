@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:actit_pass_storage/main.dart';
-import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
+import 'package:wallet_aps/main.dart';
+import 'package:wallet_aps/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,7 +23,7 @@ void main() {
 
   test('permanently deleting a template removes its dependent cards', () {
     final directory =
-        Directory.systemTemp.createTempSync('actitpass_template_delete_');
+        Directory.systemTemp.createTempSync('wallet_aps_template_delete_');
     addTearDown(() => directory.deleteSync(recursive: true));
     final database = SpbWalletDatabase.create(
       '${directory.path}${Platform.pathSeparator}template-delete.swl',
@@ -310,7 +310,7 @@ void main() {
       },
       modifiedAt: DateTime(2026),
     );
-    final directory = Directory.systemTemp.createTempSync('actitpass_export_');
+    final directory = Directory.systemTemp.createTempSync('wallet_aps_export_');
     addTearDown(() => directory.deleteSync(recursive: true));
 
     final protectedPath = '${directory.path}${Platform.pathSeparator}card.swl';

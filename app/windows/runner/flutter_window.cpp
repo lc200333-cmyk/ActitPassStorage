@@ -48,7 +48,7 @@ bool FlutterWindow::OnCreate() {
   window_channel_ =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           flutter_controller_->engine()->messenger(),
-          "actit_pass_storage/window",
+          "wallet_aps/window",
           &flutter::StandardMethodCodec::GetInstance());
   window_channel_->SetMethodCallHandler(
       [this](const flutter::MethodCall<flutter::EncodableValue>& call,

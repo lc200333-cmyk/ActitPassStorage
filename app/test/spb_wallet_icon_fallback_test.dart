@@ -1,13 +1,13 @@
 import 'dart:io';
 
-import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
+import 'package:wallet_aps/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
 
 void main() {
   test('template keeps its embedded icon and exact background color', () async {
     final directory = await Directory.systemTemp.createTemp(
-      'actitpass_template_style_',
+      'wallet_aps_template_style_',
     );
     final path = '${directory.path}${Platform.pathSeparator}template.swl';
     final wallet = SpbWalletDatabase.create(path, 'style-password');
@@ -45,7 +45,7 @@ void main() {
 
   test('card and folder keep their embedded custom icons', () async {
     final directory = await Directory.systemTemp.createTemp(
-      'actitpass_card_folder_icons_',
+      'wallet_aps_card_folder_icons_',
     );
     final path = '${directory.path}${Platform.pathSeparator}icons.swl';
     final wallet = SpbWalletDatabase.create(path, 'icon-password');
@@ -110,7 +110,7 @@ void main() {
 
   test('missing card and folder icons use original SPB Wallet icons', () async {
     final directory = await Directory.systemTemp.createTemp(
-      'actitpass_icon_fallback_',
+      'wallet_aps_icon_fallback_',
     );
     final path = '${directory.path}${Platform.pathSeparator}icons.swl';
     final wallet = SpbWalletDatabase.create(path, 'test-password');
@@ -182,7 +182,7 @@ void main() {
 
   test('read-only open and close preserve the database timestamp', () async {
     final directory = await Directory.systemTemp.createTemp(
-      'actitpass_read_only_',
+      'wallet_aps_read_only_',
     );
     final file = File(
       '${directory.path}${Platform.pathSeparator}read-only.swl',
@@ -222,7 +222,7 @@ void main() {
 
   test('in-memory undo snapshot restores changed card data', () async {
     final directory = await Directory.systemTemp.createTemp(
-      'actitpass_undo_snapshot_',
+      'wallet_aps_undo_snapshot_',
     );
     final path = '${directory.path}${Platform.pathSeparator}undo.swl';
     final wallet = SpbWalletDatabase.create(path, 'undo-password');

@@ -5,6 +5,8 @@ Windows, Android, and Linux. It works with password-protected `.swl` vaults
 and is compatible with SPB Wallet data, so your vault remains a file that you
 control.
 
+Project repository: [Wallet-APS](https://github.com/lc200333-cmyk/Wallet-APS).
+
 ## Download
 
 The latest builds are available from GitHub Releases:

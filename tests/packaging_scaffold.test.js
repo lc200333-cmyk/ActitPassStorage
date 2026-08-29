@@ -24,7 +24,7 @@ function exists(relativePath) {
   'docker/build-env/Dockerfile',
   'docker/linux-deb/Dockerfile',
   'docker-compose.yml',
-  'tools/windows/ActitPassStorage.iss',
+  'tools/windows/Wallet-APS.iss',
   '.github/workflows/windows_setup.yml',
   '.github/workflows/release.yml',
   'tools/bump_version.js',
@@ -80,6 +80,11 @@ assert.ok(debScript.includes('flutter build linux --release'));
 assert.ok(debScript.includes('dpkg-deb --build'));
 assert.ok(debScript.includes('wallet-aps_${VERSION}_${ARCH}.deb'));
 assert.ok(debScript.includes('Wallet-APS-linux-amd64.deb'));
+
+const installer = read('tools/windows/Wallet-APS.iss');
+assert.ok(installer.includes('AppPublisherURL=https://github.com/lc200333-cmyk/Wallet-APS'));
+assert.ok(installer.includes('UninstallFilesDir={app}\\Uninstall'));
+assert.ok(installer.includes('UninstallDisplayIcon={uninstallexe}'));
 
 const workflow = read('.github/workflows/windows_setup.yml');
 assert.ok(workflow.includes('windows-latest'));

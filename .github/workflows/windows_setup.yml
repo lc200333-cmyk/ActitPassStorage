@@ -50,7 +50,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "tools\windows\ActitPassStorage.iss"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "tools\windows\Wallet-APS.iss"
 
       - name: Upload setup.exe
         uses: actions/upload-artifact@v4

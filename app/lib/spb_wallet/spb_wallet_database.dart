@@ -572,7 +572,7 @@ class SpbWalletDatabase {
       cardId,
     ]);
     _db.execute('DELETE FROM spbwlt_Card WHERE hex(ID) = ?', [cardId]);
-    if (_hasActitPassStateTable()) {
+    if (_hasLegacyStateTable()) {
       _db.execute('DELETE FROM actitpass_State WHERE StateKey IN (?, ?)', [
         'card_layout_$cardId',
         'card_modified_$cardId',
@@ -864,7 +864,7 @@ class SpbWalletDatabase {
   }
 
   void saveRecentlyOpenedCardIds(Iterable<String> cardIds) {
-    _ensureActitPassStateTable();
+    _ensureLegacyStateTable();
     _db.execute(
       'INSERT OR REPLACE INTO actitpass_State (StateKey, StateValue) VALUES (?, ?)',
       ['recently_opened_cards', jsonEncode(cardIds.take(10).toList())],
@@ -872,7 +872,7 @@ class SpbWalletDatabase {
   }
 
   String loadPasswordHint() {
-    _ensureActitPassStateTable();
+    _ensureLegacyStateTable();
     final rows = _db.select(
       'SELECT StateValue FROM actitpass_State WHERE StateKey = ? LIMIT 1',
       ['password_hint'],
@@ -881,7 +881,7 @@ class SpbWalletDatabase {
   }
 
   void savePasswordHint(String hint) {
-    _ensureActitPassStateTable();
+    _ensureLegacyStateTable();
     final value = hint.trim();
     if (value.isEmpty) {
       _db.execute('DELETE FROM actitpass_State WHERE StateKey = ?', [
@@ -895,7 +895,7 @@ class SpbWalletDatabase {
     );
   }
 
-  void _ensureActitPassStateTable() {
+  void _ensureLegacyStateTable() {
     _db.execute('''
 CREATE TABLE IF NOT EXISTS actitpass_State (
   StateKey TEXT NOT NULL PRIMARY KEY,
@@ -985,13 +985,13 @@ CREATE TABLE IF NOT EXISTS actitpass_State (
     return null;
   }
 
-  bool _hasActitPassStateTable() => _db.select(
+  bool _hasLegacyStateTable() => _db.select(
         '''SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1''',
         ['actitpass_State'],
       ).isNotEmpty;
 
   Map<String, CardLayoutState> _loadCardStates() {
-    if (!_hasActitPassStateTable()) return const {};
+    if (!_hasLegacyStateTable()) return const {};
     final states = <String, CardLayoutState>{};
     for (final row in _db.select(
       '''SELECT StateKey, StateValue FROM actitpass_State WHERE StateKey LIKE 'card_layout_%' OR StateKey LIKE 'card_modified_%' ''',
@@ -1016,7 +1016,7 @@ CREATE TABLE IF NOT EXISTS actitpass_State (
   }
 
   void _saveCardState(SpbWalletCardDraft draft) {
-    _ensureActitPassStateTable();
+    _ensureLegacyStateTable();
     _db.execute(
       'INSERT OR REPLACE INTO actitpass_State (StateKey, StateValue) VALUES (?, ?)',
       [
@@ -1306,7 +1306,7 @@ CREATE INDEX IF NOT EXISTS idx_CardViewField_View ON spbwlt_CardViewField (CardV
 
   void _saveCategoryColor(String categoryId, String? colorId) {
     if (colorId == null || colorId.isEmpty) return;
-    _ensureActitPassStateTable();
+    _ensureLegacyStateTable();
     _db.execute(
       'INSERT OR REPLACE INTO actitpass_State (StateKey, StateValue) VALUES (?, ?)',
       ['category_color_$categoryId', colorId],
@@ -1363,7 +1363,7 @@ CREATE INDEX IF NOT EXISTS idx_CardViewField_View ON spbwlt_CardViewField (CardV
   }
 
   void _saveTemplateCategory(String templateId, String categoryPath) {
-    _ensureActitPassStateTable();
+    _ensureLegacyStateTable();
     final key = 'template_category_$templateId';
     if (categoryPath.trim().isEmpty) {
       _db.execute('DELETE FROM actitpass_State WHERE StateKey = ?', [key]);

@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
+import 'package:wallet_aps/spb_wallet/spb_wallet_database.dart';
 
 void main(List<String> arguments) {
   if (arguments.length != 1) {

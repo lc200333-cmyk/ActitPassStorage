@@ -1,4 +1,4 @@
-import 'package:actit_pass_storage/main.dart';
+import 'package:wallet_aps/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -58,7 +58,7 @@ void main() {
         profile.physicalSize.height / profile.devicePixelRatio,
       );
 
-      await tester.pumpWidget(const ActitPassApp());
+      await tester.pumpWidget(const WalletApsApp());
       await tester.pump();
       expect(
         find.byKey(const Key('compactPortraitScale')),
@@ -134,7 +134,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.view.resetPhysicalSize);
 
-      await tester.pumpWidget(const ActitPassApp());
+      await tester.pumpWidget(const WalletApsApp());
       await tester.pump();
       expect(
         find.byKey(const Key('compactPortraitScale')),

@@ -39,9 +39,9 @@ if [ -f linux/runner/my_application.cc ]; then
     linux/runner/my_application.cc
 fi
 
-if [ -f "$ROOT_DIR/tools/windows/ActitPassStorage.iss" ]; then
+if [ -f "$ROOT_DIR/tools/windows/Wallet-APS.iss" ]; then
   sed -i "s/#define MyAppName \"[^\"]*\"/#define MyAppName \"$WINDOWS_APP_NAME\"/" \
-    "$ROOT_DIR/tools/windows/ActitPassStorage.iss"
+    "$ROOT_DIR/tools/windows/Wallet-APS.iss"
 fi
 
 echo "Брендинг применён: $APP_NAME"

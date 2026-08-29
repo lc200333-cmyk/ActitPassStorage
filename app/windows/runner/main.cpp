@@ -26,7 +26,7 @@ void RegisterSwlFileAssociation() {
     return;
   }
   const std::wstring classes = L"Software\\Classes\\";
-  const std::wstring prog_id = L"ActitPassStorage.swl";
+  const std::wstring prog_id = L"WalletAPS.swl";
   SetRegistryString(HKEY_CURRENT_USER, classes + L".swl", nullptr, prog_id);
   SetRegistryString(HKEY_CURRENT_USER, classes + L".swl", L"Content Type",
                     L"application/x-spb-wallet");

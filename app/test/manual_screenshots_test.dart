@@ -1,13 +1,13 @@
 import 'dart:io';
 
-import 'package:actit_pass_storage/main.dart';
-import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
+import 'package:wallet_aps/main.dart';
+import 'package:wallet_aps/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-final _demoFixture = File('../.tmp/ActitPassStorage-demo.swl');
+final _demoFixture = File('../.tmp/Wallet-APS-demo.swl');
 final _skipManualGoldens = !_demoFixture.existsSync();
 
 void main() {

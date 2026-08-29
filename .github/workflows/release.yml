@@ -96,7 +96,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json app/pubspec.yaml core/Cargo.toml tools/windows/ActitPassStorage.iss tools/build_linux_deb.sh
+          git add package.json package-lock.json app/pubspec.yaml core/Cargo.toml tools/windows/Wallet-APS.iss tools/build_linux_deb.sh
           git commit -m "chore: release v$VERSION [skip release]"
           git tag -a "v$VERSION" -m "Wallet APS v$VERSION"
           git push origin HEAD:master
@@ -143,7 +143,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "tools\windows\ActitPassStorage.iss"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "tools\windows\Wallet-APS.iss"
           Copy-Item "dist\Wallet-APS-Setup-${{ needs.version.outputs.version }}.exe" "dist\Wallet-APS-Setup.exe"
 
       - name: Upload Windows artifact

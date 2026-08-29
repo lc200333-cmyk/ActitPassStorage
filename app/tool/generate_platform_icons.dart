@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:actit_pass_storage/data/legacy_swl/legacy_swl_codec.dart';
+import 'package:wallet_aps/data/legacy_swl/legacy_swl_codec.dart';
 
 void main() {
   final source = File('windows/runner/resources/app_icon.source.png');

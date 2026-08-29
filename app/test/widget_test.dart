@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:actit_pass_storage/main.dart';
-import 'package:actit_pass_storage/spb_wallet/spb_wallet_database.dart';
+import 'package:wallet_aps/main.dart';
+import 'package:wallet_aps/spb_wallet/spb_wallet_database.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -9,31 +9,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('third-party icon bundles are available', (tester) async {
+  testWidgets('replacement third-party icon bundle is available',
+      (tester) async {
     final icons = await loadThirdPartyIconAssets();
 
-    expect(icons, hasLength(2453));
-    expect(
-      icons,
-      contains('third-party://output/png/icos/icon_01.png'),
-    );
-    expect(
-      icons,
-      contains('third-party://output/png/icos/icon_16.png'),
-    );
-    expect(icons, contains('third-party://icos/icon_01.png'));
-    expect(icons, contains('third-party://icos/icon_16.png'));
-    expect(
-      icons,
-      contains('third-party://new-icons/New Icon/Photo.png'),
-    );
-    expect(
-      icons,
-      contains('third-party://new-icons/New Icon/Print.png'),
-    );
+    expect(icons, hasLength(957));
+    expect(icons, contains('third-party://NewIcons/Icons0001.png'));
+    expect(icons, contains('third-party://NewIcons/Icons0957.png'));
     expect(thirdPartyIconPngs[icons.first], isNotEmpty);
   });
-
   test('selected template icon survives the stored IconID round trip', () {
     const selected = 'spb://third_party/custom_icon.png';
     final previousAssets = spb64PngIconAssets;
@@ -498,6 +482,152 @@ void main() {
     await tester.binding.setSurfaceSize(null);
   });
 
+  testWidgets('desktop selected text menu shows Cut Copy Paste Share',
+      (tester) async {
+    final controller = TextEditingController(text: 'Alpha Beta');
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 320,
+              child: TextField(
+                key: const Key('desktopContextMenuField'),
+                controller: controller,
+                contextMenuBuilder: desktopCardTextContextMenu,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('desktopContextMenuField')));
+    controller.selection = const TextSelection(baseOffset: 0, extentOffset: 5);
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const Key('desktopContextMenuField')),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cut'), findsOneWidget);
+    expect(find.text('Copy'), findsOneWidget);
+    expect(find.text('Paste'), findsOneWidget);
+    expect(find.text('Share'), findsOneWidget);
+  });
+  testWidgets('preview selected field keeps its desktop text menu',
+      (tester) async {
+    const field = FieldDefinition(
+      id: 'value',
+      label: 'Поле',
+      type: 'text',
+    );
+    const template = CardTemplate(
+      id: 'context-template',
+      name: 'Контекстное меню',
+      iconId: 'key',
+      colorId: 'blue',
+      fields: [field],
+    );
+    final item = SecretItem(
+      id: 'context-card',
+      templateId: template.id,
+      title: 'Карточка',
+      category: '',
+      colorId: template.colorId,
+      values: const {'value': 'Alpha Beta'},
+      modifiedAt: DateTime(2026),
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: CardPreviewDialog(item: item, template: template)),
+    );
+    await tester.pumpAndSettle();
+
+    final previewField = find.byKey(const ValueKey('cardPreviewField-value'));
+    final editable = find.descendant(
+      of: previewField,
+      matching: find.byType(EditableText),
+    );
+    final editableState = tester.state<EditableTextState>(editable);
+    await tester.tap(previewField);
+    await tester.pump();
+    editableState.userUpdateTextEditingValue(
+      const TextEditingValue(
+        text: 'Alpha Beta',
+        selection: TextSelection(baseOffset: 0, extentOffset: 5),
+      ),
+      SelectionChangedCause.keyboard,
+    );
+    await tester.pump();
+    await tester.tapAt(
+      tester.getTopLeft(previewField) + const Offset(24, 24),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cut'), findsOneWidget);
+    expect(find.text('Copy'), findsOneWidget);
+    expect(find.text('Paste'), findsOneWidget);
+    expect(find.text('Share'), findsOneWidget);
+    expect(find.byKey(const Key('copyAllCardFieldsAction')), findsNothing);
+  });
+  testWidgets('every populated preview field has a gray copy action',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final template = builtInTemplates().first;
+    final copiedField = template.fields.first;
+    final emptyField = template.fields[1];
+    final item = SecretItem(
+      id: 'field-copy-preview-card',
+      templateId: template.id,
+      title: 'Копирование поля',
+      category: '',
+      colorId: template.colorId,
+      values: {
+        copiedField.id: 'Значение для буфера',
+        emptyField.id: '',
+      },
+      modifiedAt: DateTime(2026),
+    );
+    String? copiedText;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copiedText =
+            (call.arguments as Map<dynamic, dynamic>)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: CardPreviewDialog(item: item, template: template)),
+    );
+    await tester.pumpAndSettle();
+
+    final copyButton =
+        find.byKey(ValueKey('cardPreviewCopy-${copiedField.id}'));
+    expect(copyButton, findsOneWidget);
+    expect(
+      find.byKey(ValueKey('cardPreviewCopy-${emptyField.id}')),
+      findsNothing,
+    );
+    final icon = tester.widget<Icon>(
+      find.descendant(
+          of: copyButton, matching: find.byIcon(Icons.copy_outlined)),
+    );
+    expect(icon.color, const Color(0xff777777));
+
+    await tester.tap(copyButton);
+    await tester.pump();
+    expect(copiedText, 'Значение для буфера');
+    debugDefaultTargetPlatformOverride = null;
+  });
   testWidgets('card preview copies all labeled values from context menu',
       (tester) async {
     final template = builtInTemplates().first;
@@ -531,17 +661,26 @@ void main() {
       MaterialApp(home: CardPreviewDialog(item: item, template: template)),
     );
     await tester.pumpAndSettle();
-    await tester.longPress(find.byKey(const Key('cardPreviewTitle')));
+    await tester.tap(
+      find.byKey(const Key('cardPreviewIcon')),
+      buttons: kSecondaryMouseButton,
+    );
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('copyAllCardFieldsAction')), findsOneWidget);
     await tester.tap(find.byKey(const Key('copyAllCardFieldsAction')));
     await tester.pumpAndSettle();
 
-    expect(copiedText, contains('Название: Карточка для копирования'));
-    expect(copiedText, contains('Категория: Работа'));
-    expect(copiedText, contains('${template.fields[0].label}: Пользователь'));
-    expect(copiedText, contains('${template.fields[1].label}: Секрет'));
+    expect(copiedText, contains('Название:\nКарточка для копирования'));
+    expect(copiedText, contains('Категория:\nРабота'));
+    expect(copiedText, contains('${template.fields[0].label}:\nПользователь'));
+    expect(copiedText, contains('${template.fields[1].label}:\nСекрет'));
+
+    await tester.longPress(find.byKey(const Key('cardPreviewIcon')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('copyAllCardFieldsAction')), findsOneWidget);
+    await tester.tapAt(const Offset(2, 2));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('card attachment controls use requested colors and file names',
@@ -656,7 +795,22 @@ void main() {
     );
     expect(
       find.byKey(const Key('cardPreviewAddAttachmentButton')),
-      findsOneWidget,
+      findsNothing,
+    );
+    final previewSaveButton = tester.widget<SpbGradientActionButton>(
+      find.byKey(const Key('cardPreviewSaveAttachmentButton')),
+    );
+    expect(
+      previewSaveButton.colors,
+      const [Color(0xff555555), Color(0xff050505)],
+    );
+    expect(
+      tester
+          .getCenter(find.byKey(const Key('cardPreviewSaveAttachmentButton')))
+          .dx,
+      lessThan(
+        tester.getCenter(find.byKey(const Key('cardPreviewEditButton'))).dx,
+      ),
     );
     final previewName = find.byKey(
       const ValueKey('cardPreviewAttachment-описание.txt'),
@@ -861,6 +1015,51 @@ void main() {
     await tester.tapAt(const Offset(2, 2));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+    debugDefaultTargetPlatformOverride = null;
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('mobile search opens the center pane and shows matching cards',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    await tester.binding.setSurfaceSize(const Size(576, 1024));
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      tester.binding.setSurfaceSize(null);
+    });
+
+    await tester.pumpWidget(
+      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
+    );
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(find.byType(VaultShell));
+    final CardTemplate template = state.templates.first as CardTemplate;
+    state.setState(() {
+      state.items = <SecretItem>[
+        SecretItem(
+          id: 'mobile-search-card',
+          templateId: template.id,
+          title: 'Alpha Search Card',
+          category: '',
+          colorId: template.colorId,
+          values: const <String, String>{},
+          modifiedAt: DateTime(2026),
+        ),
+      ];
+    });
+    await tester.pump();
+
+    expect(state.mobilePane, 0);
+    await tester.enterText(
+      find.byKey(const Key('spbSearchInput')),
+      'Alpha Search',
+    );
+    await tester.pumpAndSettle();
+
+    expect(state.mobilePane, 1);
+    expect(find.byKey(const Key('spbCentralWorkspace')), findsOneWidget);
+    expect(find.text('Alpha Search Card'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
     await tester.binding.setSurfaceSize(null);
   });
@@ -1210,7 +1409,7 @@ void main() {
     });
     for (final size in const [Size(320, 640), Size(360, 800), Size(412, 915)]) {
       await tester.binding.setSurfaceSize(size);
-      await tester.pumpWidget(const ActitPassApp());
+      await tester.pumpWidget(const WalletApsApp());
       await tester.pump();
       expect(find.byKey(const Key('passwordInput')), findsOneWidget);
       expect(
@@ -1226,7 +1425,7 @@ void main() {
   });
 
   testWidgets('renders vault entry screen', (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
 
     expect(find.text('Пароль'), findsOneWidget);
@@ -1254,7 +1453,7 @@ void main() {
   });
 
   testWidgets('login password eye toggles password visibility', (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
 
     TextField passwordField() => tester.widget<TextField>(
@@ -1276,7 +1475,7 @@ void main() {
   });
 
   testWidgets('touch keypad edits the focused password', (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
 
     final field = tester.widget<TextField>(
@@ -1301,7 +1500,7 @@ void main() {
   });
 
   testWidgets('physical keyboard input is accepted', (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
 
     await tester.enterText(
@@ -1317,7 +1516,7 @@ void main() {
 
   testWidgets('ABC mode enters uppercase letters and returns to digits',
       (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
 
     await tester.tap(find.byKey(const Key('keypadModeUppercase')));
@@ -1345,7 +1544,7 @@ void main() {
   });
 
   testWidgets('abc mode enters lowercase letters', (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
 
     await tester.tap(find.byKey(const Key('keypadModeLowercase')));
@@ -1370,7 +1569,7 @@ void main() {
 
   testWidgets('symbol mode enters special characters and returns to digits',
       (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
 
     await tester.tap(find.byKey(const Key('keypadModeSymbols')));
@@ -1398,7 +1597,7 @@ void main() {
 
   testWidgets('file button opens the picker directly without a menu',
       (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
 
     expect(find.byKey(const Key('fileMenu')), findsOneWidget);
@@ -1459,7 +1658,7 @@ void main() {
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(720, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
 
     await tester.pump(const Duration(minutes: 4, seconds: 59));
@@ -1471,7 +1670,7 @@ void main() {
 
   testWidgets('new vault dialog never reuses the current password',
       (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
     await tester.enterText(
       find.byKey(const Key('passwordInput')),
@@ -1521,7 +1720,7 @@ void main() {
 
   testWidgets('login password hint is shown only while yellow button is held',
       (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
 
     expect(find.byKey(const Key('loginPasswordHintButton')), findsOneWidget);
@@ -1576,7 +1775,7 @@ void main() {
   });
 
   testWidgets('login error is shown below all action buttons', (tester) async {
-    await tester.pumpWidget(const ActitPassApp());
+    await tester.pumpWidget(const WalletApsApp());
     await tester.pump();
 
     await tester.tap(find.byKey(const Key('loginOk')));
