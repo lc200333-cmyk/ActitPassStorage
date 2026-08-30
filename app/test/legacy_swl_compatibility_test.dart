@@ -157,18 +157,27 @@ void main() {
 
   test('legacy repair restores current wallet ID relationships', () async {
     final (directory, copy) = await _copyFixture('Мой кошелёк1.swl');
+    SpbWalletDatabase? wallet;
     try {
-      final wallet = SpbWalletDatabase.open(copy.path, _password);
+      wallet = SpbWalletDatabase.open(copy.path, _password);
       final before = wallet.inspectIntegrity();
-      expect(before.orphanCards, 1);
-      expect(before.orphanValues, 15);
+      // Canonical hex comparison recognises the legacy BLOB/TEXT IDs as the
+      // same logical IDs. Their incompatible storage classes are reported by
+      // blobIds and normalized only by explicit repair.
+      expect(before.orphanCards, 0);
+      expect(before.orphanValues, 0);
       expect(before.blobIds, greaterThan(0));
       expect(before.nonIntegerColors, greaterThan(0));
       expect(before.pngIcons, 2);
 
-      final repaired = wallet.repairLegacyCompatibility();
-      expect(repaired.orphanCards, 1);
-      expect(repaired.orphanValues, 15);
+      final repairBackup = await wallet.createRepairBackup(
+        '${copy.path}.verified-backup.swl',
+      );
+      final repaired = await wallet.repairLegacyCompatibility(
+        backup: repairBackup,
+      );
+      expect(repaired.orphanCards, 0);
+      expect(repaired.orphanValues, 0);
       expect(wallet.inspectIntegrity().hasProblems, isFalse);
 
       final snapshot = wallet.loadSnapshot();
@@ -179,6 +188,7 @@ void main() {
       expect(template.fields, hasLength(15));
       expect(warranty.fieldValues, hasLength(15));
       wallet.close();
+      wallet = null;
 
       final raw = sqlite3.open(copy.path, mode: OpenMode.readOnly);
       try {
@@ -204,6 +214,7 @@ void main() {
         raw.dispose();
       }
     } finally {
+      wallet?.close(flush: false);
       await directory.delete(recursive: true);
     }
   }, skip: !_legacyFixturesAvailable);

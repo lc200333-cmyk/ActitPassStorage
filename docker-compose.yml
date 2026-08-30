@@ -37,6 +37,10 @@ services:
       FLUTTER_HOME: /opt/flutter
       PUB_CACHE: /root/.pub-cache
       GRADLE_USER_HOME: /root/.gradle
+      ANDROID_KEYSTORE_PATH: ${ANDROID_KEYSTORE_PATH:-}
+      ANDROID_KEY_ALIAS: ${ANDROID_KEY_ALIAS:-}
+      ANDROID_KEY_PASSWORD: ${ANDROID_KEY_PASSWORD:-}
+      ANDROID_STORE_PASSWORD: ${ANDROID_STORE_PASSWORD:-}
       HOST_UID: ${HOST_UID:-1000}
       HOST_GID: ${HOST_GID:-1000}
     volumes:

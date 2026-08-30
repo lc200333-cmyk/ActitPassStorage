@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <provider
+            android:name="com.lc200333cmyk.walletaps.TestWalletDocumentsProvider"
+            android:authorities="com.example.actit_pass_storage.test.documents"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>

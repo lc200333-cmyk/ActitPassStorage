@@ -2,6 +2,7 @@ import 'package:sqlite3/sqlite3.dart';
 
 import '../spb_wallet/spb_wallet_attachment_codec.dart';
 import '../spb_wallet/spb_wallet_crypto.dart';
+import '../spb_wallet/wallet_image_codec.dart';
 
 abstract final class WalletRekeyService {
   static const Map<String, List<String>> _encryptedTextColumns = {
@@ -18,7 +19,6 @@ abstract final class WalletRekeyService {
   static const Map<String, List<String>> _encryptedPayloadColumns = {
     'spbwlt_CardAttachment': ['Data'],
     'spbwlt_Icon': ['Data'],
-    'spbwlt_Image': ['Data'],
   };
 
   static void rekeyFile(
@@ -31,6 +31,8 @@ abstract final class WalletRekeyService {
     final newCrypto = SpbWalletCrypto(newPassword);
     final oldAttachments = SpbWalletAttachmentCodec(oldCrypto);
     final newAttachments = SpbWalletAttachmentCodec(newCrypto);
+    final oldImages = WalletImageCodec(oldAttachments);
+    final newImages = WalletImageCodec(newAttachments);
     try {
       _validatePassword(database, oldCrypto);
       database.execute('BEGIN IMMEDIATE');
@@ -67,6 +69,27 @@ abstract final class WalletRekeyService {
                 [newAttachments.encode(plain), row['source_rowid']],
               );
             }
+          }
+        }
+        if (_hasTable(database, 'spbwlt_Image') &&
+            _columns(database, 'spbwlt_Image').contains('Data')) {
+          final rows = database.select(
+            'SELECT rowid AS source_rowid, Data FROM spbwlt_Image '
+            'WHERE Data IS NOT NULL',
+          );
+          for (final row in rows) {
+            final payload = oldImages.decode(row['Data']);
+            if (payload.encoding == WalletImageEncoding.raw) continue;
+            database.execute(
+              'UPDATE spbwlt_Image SET Data = ? WHERE rowid = ?',
+              [
+                newImages.encode(
+                  payload.bytes,
+                  WalletImageEncoding.encrypted,
+                ),
+                row['source_rowid'],
+              ],
+            );
           }
         }
         final integrity =

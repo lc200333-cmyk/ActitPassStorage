@@ -96,7 +96,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json app/pubspec.yaml core/Cargo.toml tools/windows/Wallet-APS.iss tools/build_linux_deb.sh
+          git add package.json package-lock.json app/pubspec.yaml core/Cargo.toml core/Cargo.lock tools/windows/Wallet-APS.iss tools/build_linux_deb.sh
           git commit -m "chore: release v$VERSION [skip release]"
           git tag -a "v$VERSION" -m "Wallet APS v$VERSION"
           git push origin HEAD:master
@@ -162,12 +162,74 @@ jobs:
         with:
           ref: ${{ needs.version.outputs.tag }}
 
+      - name: Prepare and verify Android release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_CERT_SHA256: ${{ secrets.ANDROID_CERT_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_KEY_PASSWORD"
+          test -n "$ANDROID_STORE_PASSWORD"
+          test -n "$ANDROID_CERT_SHA256"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/android/release-keystore.jks
+          keytool -exportcert \
+            -keystore app/android/release-keystore.jks \
+            -storepass "$ANDROID_STORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" \
+            -rfc > /tmp/wallet-aps-release.pem
+          ACTUAL="$(openssl x509 -in /tmp/wallet-aps-release.pem -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          EXPECTED="$(printf '%s' "$ANDROID_CERT_SHA256" | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')"
+          test "$ACTUAL" = "$EXPECTED"
+
       - name: Build release APK in Docker
+        env:
+          ANDROID_KEYSTORE_PATH: /workspace/app/android/release-keystore.jks
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
         shell: bash
         run: |
           mkdir -p dist
           docker compose build build-apk
           HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose run --rm -e BUILD_MODE=release build-apk
+
+      - name: Remove Android release keystore
+        if: always()
+        shell: bash
+        run: rm -f app/android/release-keystore.jks /tmp/wallet-aps-release.pem
+
+      - name: Download previous Android release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p /tmp/wallet-aps-previous
+          gh release download --pattern Wallet-APS-android.apk --dir /tmp/wallet-aps-previous
+
+      - name: Set up Flutter for Android instrumentation tests
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Verify Android in-place upgrade
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          script: |
+            bash tools/verify_android_upgrade.sh /tmp/wallet-aps-previous/Wallet-APS-android.apk dist/Wallet-APS-android.apk
+            adb uninstall com.example.actit_pass_storage >/dev/null
+            cd app
+            flutter pub get
+            cd android
+            ./gradlew connectedDebugAndroidTest --no-daemon
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4

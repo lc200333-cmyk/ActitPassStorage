@@ -112,4 +112,18 @@ void main() {
       contains('windows/runner/resources/app_icon.source.png'),
     );
   });
+
+  test('Android release requires a persistent signing key', () {
+    final gradle = File('android/app/build.gradle.kts').readAsStringSync();
+    final workflow =
+        File('../.github/workflows/release.yml').readAsStringSync();
+    expect(gradle, contains('ANDROID_KEYSTORE_PATH'));
+    expect(gradle, contains('ANDROID_KEY_ALIAS'));
+    expect(gradle, contains('ANDROID_KEY_PASSWORD'));
+    expect(gradle, contains('ANDROID_STORE_PASSWORD'));
+    expect(gradle, isNot(contains('signingConfigs.getByName("debug")')));
+    expect(workflow, contains('ANDROID_KEYSTORE_BASE64'));
+    expect(workflow, contains('ANDROID_CERT_SHA256'));
+    expect(workflow, contains('verify_android_upgrade.sh'));
+  });
 }

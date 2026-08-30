@@ -60,6 +60,22 @@ if (fs.existsSync(file(cargoPath))) {
   );
 }
 
+const cargoLockPath = 'core/Cargo.lock';
+if (fs.existsSync(file(cargoLockPath))) {
+  let cargoLock = read(cargoLockPath);
+  for (const packageName of ['ffi_api', 'sync_core', 'vault_core']) {
+    const packageVersion = new RegExp(
+      '(name = "' + packageName + '"[^]*?version = ")[^"]+(")',
+      'g',
+    );
+    cargoLock = cargoLock.replace(
+      packageVersion,
+      '$1' + version + '$2',
+    );
+  }
+  write(cargoLockPath, cargoLock);
+}
+
 const issPath = 'tools/windows/Wallet-APS.iss';
 write(
   issPath,

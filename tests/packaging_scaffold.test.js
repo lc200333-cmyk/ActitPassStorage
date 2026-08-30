@@ -12,6 +12,18 @@ function exists(relativePath) {
   assert.ok(fs.existsSync(path.join(root, relativePath)), `missing ${relativePath}`);
 }
 
+function readTree(relativeDirectory, extension) {
+  const directory = path.join(root, relativeDirectory);
+  return fs.readdirSync(directory, { withFileTypes: true })
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((entry) => {
+      const relativeEntry = path.join(relativeDirectory, entry.name);
+      if (entry.isDirectory()) return readTree(relativeEntry, extension);
+      return entry.name.endsWith(extension) ? read(relativeEntry) : '';
+    })
+    .join(String.fromCharCode(10));
+}
+
 [
   'app/pubspec.yaml',
   'app/lib/main.dart',
@@ -30,12 +42,11 @@ function exists(relativePath) {
   'tools/bump_version.js',
 ].forEach(exists);
 
-const app = read('app/lib/main.dart');
+const app = readTree('app/lib', '.dart');
 [
   'Wallet APS',
   'Открыть кошелёк',
   'Создать кошелёк',
-  'Последние файлы',
   'Банковская карта',
   'Номер карты',
   'CVV',
@@ -104,6 +115,11 @@ const releaseWorkflow = read('.github/workflows/release.yml');
   'Wallet-APS-linux-amd64.deb',
   'softprops/action-gh-release',
 ].forEach((needle) => assert.ok(releaseWorkflow.includes(needle), `release workflow missing ${needle}`));
+
+assert.ok(releaseWorkflow.includes('core/Cargo.lock'));
+
+const versionScript = read('tools/bump_version.js');
+assert.ok(versionScript.includes("const cargoLockPath = 'core/Cargo.lock'"));
 
 const dockerfile = read('docker/build-env/Dockerfile');
 [
