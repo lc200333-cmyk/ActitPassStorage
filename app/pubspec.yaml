@@ -2,7 +2,7 @@ name: wallet_aps
 description: "Wallet APS: локальный менеджер паролей, заметок и карточек."
 publish_to: "none"
 # Version updates and cross-platform builds are managed by Release Actions.
-version: 0.4.10+48
+version: 0.4.11+49
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
