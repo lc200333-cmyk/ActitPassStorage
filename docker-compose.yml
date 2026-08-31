@@ -51,7 +51,7 @@ services:
       - gradle-cache:/root/.gradle
       - cargo-cache:/root/.cargo
       - rustup-cache:/root/.rustup
-    command: bash -lc "trap 'chown -R $${HOST_UID}:$${HOST_GID} /workspace/dist /workspace/app/android /workspace/app/build /workspace/app/.dart_tool 2>/dev/null || true' EXIT; tools/build_android_apk.sh"
+    command: bash -lc "trap 'chown -R $${HOST_UID}:$${HOST_GID} /workspace/dist /workspace/app 2>/dev/null || true' EXIT; tools/build_android_apk.sh"
 
   build-deb:
     image: wallet-aps-linux-deb-env:latest
