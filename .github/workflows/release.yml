@@ -205,7 +205,7 @@ jobs:
         run: rm -f app/android/release-keystore.jks /tmp/wallet-aps-release.pem
 
       - name: Download previous Android release
-        if: needs.version.outputs.tag != 'v0.4.11'
+        if: needs.version.outputs.tag != 'v0.4.12'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -219,7 +219,7 @@ jobs:
           channel: stable
 
       - name: Verify Android in-place upgrade
-        if: needs.version.outputs.tag != 'v0.4.11'
+        if: needs.version.outputs.tag != 'v0.4.12'
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -228,17 +228,15 @@ jobs:
           script: |
             bash tools/verify_android_upgrade.sh /tmp/wallet-aps-previous/Wallet-APS-android.apk dist/Wallet-APS-android.apk
             adb uninstall com.example.actit_pass_storage >/dev/null
-            cd app
-            flutter pub get
-            cd android
-            ./gradlew connectedDebugAndroidTest --no-daemon
+            cd app && flutter pub get
+            cd app/android && ./gradlew connectedDebugAndroidTest --no-daemon
 
       # Releases through v0.4.10 used temporary debug certificates that were
       # not preserved. Android cannot upgrade those APKs to the permanent key.
-      # v0.4.11 establishes the permanent signing baseline once; every later
+      # v0.4.12 establishes the permanent signing baseline once; every later
       # release must pass the normal in-place upgrade check above.
       - name: Establish permanent Android signing baseline
-        if: needs.version.outputs.tag == 'v0.4.11'
+        if: needs.version.outputs.tag == 'v0.4.12'
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -248,10 +246,8 @@ jobs:
             adb install dist/Wallet-APS-android.apk
             adb shell pm path com.example.actit_pass_storage >/dev/null
             adb uninstall com.example.actit_pass_storage >/dev/null
-            cd app
-            flutter pub get
-            cd android
-            ./gradlew connectedDebugAndroidTest --no-daemon
+            cd app && flutter pub get
+            cd app/android && ./gradlew connectedDebugAndroidTest --no-daemon
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
