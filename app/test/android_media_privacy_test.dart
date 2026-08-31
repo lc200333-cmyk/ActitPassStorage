@@ -76,4 +76,10 @@ void main() {
     expect(appSource, isNot(contains('getExternalStorageDirectory')));
     expect(appSource, isNot(contains('getExternalStorageDirectories')));
   });
+
+  test('Synology-synchronized project and build tree are hidden from Gallery',
+      () {
+    expect(File('../.nomedia').existsSync(), isTrue);
+    expect(File('.nomedia').existsSync(), isTrue);
+  });
 }
