@@ -7,81 +7,26 @@ import 'package:sqlite3/sqlite3.dart';
 
 import '../data/legacy_swl/legacy_swl_codec.dart';
 import '../domain/card_layout.dart';
-import '../services/vault_persistence.dart';
 import '../services/wallet_integrity_service.dart';
-import '../services/wallet_migration_service.dart';
 import 'spb_wallet_attachment_codec.dart';
 import 'spb_wallet_crypto.dart';
-import 'wallet_image_codec.dart';
 
 class SpbWalletUndoSnapshot {
-  SpbWalletUndoSnapshot._(this.filePath, this.byteLength);
+  SpbWalletUndoSnapshot._(this._database);
 
-  final String filePath;
-  final int byteLength;
+  final Database _database;
   bool _disposed = false;
-
-  bool get isDisposed => _disposed;
 
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    final file = File(filePath);
-    if (file.existsSync()) file.deleteSync();
+    _database.dispose();
   }
-}
-
-/// Proof that a byte-verified, SQLite-consistent backup exists for this
-/// working wallet. Instances can only be created by [SpbWalletDatabase].
-class WalletRepairBackup {
-  const WalletRepairBackup._({
-    required this.path,
-    required this.sourcePath,
-    required this.length,
-    required this.sha256,
-  });
-
-  final String path;
-  final String sourcePath;
-  final int length;
-  final String sha256;
-
-  Future<void> _verifyFor(String expectedSourcePath) async {
-    if (_canonicalPath(sourcePath) != _canonicalPath(expectedSourcePath)) {
-      throw StateError('Резервная копия создана для другой базы.');
-    }
-    final file = File(path);
-    if (!await file.exists() || await file.length() != length) {
-      throw StateError('Проверенная резервная копия отсутствует или изменена.');
-    }
-    if (await sha256File(file) != sha256) {
-      throw StateError('SHA-256 резервной копии не совпадает.');
-    }
-    Database? verification;
-    try {
-      verification = sqlite3.open(path, mode: OpenMode.readOnly);
-      final result = verification
-          .select('PRAGMA quick_check')
-          .map((row) => row.values.first.toString())
-          .toList(growable: false);
-      if (result.length != 1 || result.single.toLowerCase() != 'ok') {
-        throw StateError('Резервная копия не прошла SQLite quick_check.');
-      }
-    } finally {
-      verification?.dispose();
-    }
-  }
-
-  static String _canonicalPath(String value) =>
-      File(value).absolute.path.replaceAll('\\', '/').toLowerCase();
 }
 
 class SpbWalletDatabase {
   SpbWalletDatabase._(this.path, this._db, this.crypto)
-      : attachmentCodec = SpbWalletAttachmentCodec(crypto),
-        imageCodec = WalletImageCodec(SpbWalletAttachmentCodec(crypto)),
-        _directIdLookups = WalletMigrationService.readVersion(_db) >=
-            WalletMigrationService.currentVersion;
+      : attachmentCodec = SpbWalletAttachmentCodec(crypto);
 
   static const String defaultCardIconId = '62767D3E1BC8E2C8';
   static const String defaultFolderIconId = '0C1E037B56E9E59B';
@@ -90,10 +35,7 @@ class SpbWalletDatabase {
   final Database _db;
   final SpbWalletCrypto crypto;
   final SpbWalletAttachmentCodec attachmentCodec;
-  final WalletImageCodec imageCodec;
   Map<String, Uint8List>? _embeddedIconCache;
-  int _transactionDepth = 0;
-  bool _directIdLookups;
 
   // Тот же разделитель, что и в _categoryPath() при сборке пути для чтения.
   // Голый '/' не подходит: имя папки может содержать этот символ (например
@@ -127,76 +69,18 @@ class SpbWalletDatabase {
 
   static String makeId() => _makeSpbId();
 
-  WalletIntegrityReport inspectIntegrity() {
-    Database? readOnly;
-    try {
-      readOnly = sqlite3.open(path, mode: OpenMode.readOnly);
-      return WalletIntegrityService.inspect(
-        readOnly,
-        crypto: crypto,
-        attachments: attachmentCodec,
-        images: imageCodec,
-      );
-    } finally {
-      readOnly?.dispose();
-    }
-  }
+  WalletIntegrityReport inspectIntegrity() =>
+      WalletIntegrityService.inspect(_db, attachments: attachmentCodec);
 
-  Future<WalletRepairBackup> createRepairBackup(String destinationPath) async {
-    final destination = File(destinationPath);
-    if (await destination.exists()) {
-      throw StateError('Файл резервной копии уже существует.');
-    }
-    await destination.parent.create(recursive: true);
-    final snapshot = await createVerifiedSnapshot(
-      revision: -1,
-      stagingDirectory: destination.parent.path,
-    );
-    try {
-      if (!snapshot.isValid) {
-        throw StateError(
-          'Рабочая база не прошла SQLite quick_check: ${snapshot.quickCheck}',
-        );
-      }
-      await File(snapshot.path).copy(destination.path);
-      final length = await destination.length();
-      final digest = await sha256File(destination);
-      if (length != snapshot.length || digest != snapshot.sha256) {
-        if (await destination.exists()) await destination.delete();
-        throw StateError('Резервная копия не совпадает со снимком базы.');
-      }
-      return WalletRepairBackup._(
-        path: destination.path,
-        sourcePath: path,
-        length: length,
-        sha256: digest,
-      );
-    } finally {
-      await snapshot.dispose();
-    }
-  }
-
-  Future<WalletIntegrityReport> repairLegacyCompatibility({
-    required WalletRepairBackup backup,
-    void Function(String stage)? faultInjector,
-  }) async {
-    await backup._verifyFor(path);
-    final report = WalletIntegrityService.repair(
-      _db,
-      crypto,
-      attachmentCodec,
-      imageCodec,
-      faultInjector: faultInjector,
-    );
+  WalletIntegrityReport repairLegacyCompatibility() {
+    final report = WalletIntegrityService.repair(_db, crypto, attachmentCodec);
     _embeddedIconCache = null;
-    _directIdLookups = WalletMigrationService.readVersion(_db) >=
-        WalletMigrationService.currentVersion;
     return report;
   }
 
   bool hasTemplate(String templateId) => _db.select(
-        'SELECT 1 FROM spbwlt_Template WHERE ${_idEquals('ID')} LIMIT 1',
-        [_idArgument(templateId)],
+        'SELECT 1 FROM spbwlt_Template WHERE hex(ID)=? LIMIT 1',
+        [templateId],
       ).isNotEmpty;
 
   static SpbWalletDatabase create(String path, String password) {
@@ -208,9 +92,7 @@ class SpbWalletDatabase {
     final wallet = SpbWalletDatabase._(path, db, SpbWalletCrypto(password));
     wallet._createSchema();
     wallet._seedMeta();
-    wallet.setImageEncodingPolicy(WalletImageEncoding.encrypted);
-    WalletMigrationService.initializeCurrent(db);
-    wallet._directIdLookups = true;
+    wallet._ensurePerformanceIndexes();
     return wallet;
   }
 
@@ -238,8 +120,7 @@ class SpbWalletDatabase {
   SpbWalletSnapshot loadSnapshot() {
     final loadIssues = <WalletLoadIssue>[];
     final categories = _loadCategories(_loadCategoryColors(), loadIssues);
-    final categoryPaths = _buildCategoryPaths(categories);
-    final templates = _loadTemplates(categoryPaths, loadIssues);
+    final templates = _loadTemplates(categories, loadIssues);
     final embeddedIconPngs = _loadEmbeddedIconPngs(loadIssues);
     final cardStates = _loadCardStates();
     final fieldValuesByCard = _loadAllCardFieldValues(loadIssues);
@@ -248,7 +129,7 @@ class SpbWalletDatabase {
     final cardLoadFailures = <SpbWalletCardLoadFailure>[];
 
     for (final row in _db.select(
-      'SELECT hex(spbwlt_Card.ID) AS ID, spbwlt_Card.Name AS Name, spbwlt_Card.Description AS Description, hex(spbwlt_Card.ParentCategoryID) AS ParentCategoryID, hex(spbwlt_Card.TemplateID) AS TemplateID, hex(spbwlt_Card.CardViewID) AS CardViewID, hex(spbwlt_Card.IconID) AS IconID, spbwlt_Card.HitCount AS HitCount, spbwlt_CardView.CardColor AS CardColor FROM spbwlt_Card LEFT JOIN spbwlt_CardView ON ${_idJoin('spbwlt_CardView.ID', 'spbwlt_Card.CardViewID')} ORDER BY spbwlt_Card.rowid',
+      'SELECT hex(spbwlt_Card.ID) AS ID, spbwlt_Card.Name AS Name, spbwlt_Card.Description AS Description, hex(spbwlt_Card.ParentCategoryID) AS ParentCategoryID, hex(spbwlt_Card.TemplateID) AS TemplateID, hex(spbwlt_Card.CardViewID) AS CardViewID, hex(spbwlt_Card.IconID) AS IconID, spbwlt_Card.HitCount AS HitCount, spbwlt_CardView.CardColor AS CardColor FROM spbwlt_Card LEFT JOIN spbwlt_CardView ON spbwlt_CardView.ID = spbwlt_Card.CardViewID ORDER BY hex(spbwlt_Card.ID)',
     )) {
       try {
         final id = _string(row['ID']);
@@ -260,7 +141,10 @@ class SpbWalletDatabase {
             id: id,
             title: crypto.decryptText(row['Name']),
             description: crypto.decryptText(row['Description']),
-            categoryPath: categoryPaths[_string(row['ParentCategoryID'])] ?? '',
+            categoryPath: _categoryPath(
+              categories,
+              _string(row['ParentCategoryID']),
+            ),
             templateId: templateId,
             fieldValues: values,
             attachments: attachmentsByCard[id] ?? const [],
@@ -341,8 +225,8 @@ class SpbWalletDatabase {
   List<SpbWalletAttachmentRecord> loadAttachments(String cardId) {
     return _db.select(
       'SELECT hex(ID) AS ID, hex(CardID) AS CardID, Name '
-      'FROM spbwlt_CardAttachment WHERE ${_idEquals('CardID')} ORDER BY rowid',
-      [_idArgument(cardId)],
+      'FROM spbwlt_CardAttachment WHERE hex(CardID) = ? ORDER BY hex(ID)',
+      [cardId],
     ).map((row) {
       return SpbWalletAttachmentRecord(
         id: _string(row['ID']),
@@ -363,10 +247,10 @@ class SpbWalletDatabase {
   String? loadCardBackgroundBase64(String cardId) {
     final rows = _db.select(
       'SELECT i.Data AS BackgroundData FROM spbwlt_Card c '
-      'LEFT JOIN spbwlt_CardView v ON ${_idJoin('v.ID', 'c.CardViewID')} '
-      'LEFT JOIN spbwlt_Image i ON ${_idJoin('i.ID', 'v.ImageID')} '
-      'WHERE ${_idEquals('c.ID')} LIMIT 1',
-      [_idArgument(cardId)],
+      'LEFT JOIN spbwlt_CardView v ON v.ID=c.CardViewID '
+      'LEFT JOIN spbwlt_Image i ON i.ID=v.ImageID '
+      'WHERE hex(c.ID)=? LIMIT 1',
+      [cardId],
     );
     if (rows.isEmpty) return null;
     return _imageDataToBase64(rows.first['BackgroundData']);
@@ -374,8 +258,8 @@ class SpbWalletDatabase {
 
   Uint8List readAttachmentBytes(String attachmentId) {
     final rows = _db.select(
-      'SELECT Data FROM spbwlt_CardAttachment WHERE ${_idEquals('ID')}',
-      [_idArgument(attachmentId)],
+      'SELECT Data FROM spbwlt_CardAttachment WHERE hex(ID) = ?',
+      [attachmentId],
     );
     if (rows.isEmpty) {
       throw const SpbWalletOpenException('Вложение SPB Wallet не найдено.');
@@ -386,114 +270,51 @@ class SpbWalletDatabase {
   void _saveCardBackground(String cardId, String? backgroundImageBase64) {
     if (backgroundImageBase64 == null || backgroundImageBase64.isEmpty) return;
     final cardRows = _db.select(
-      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card '
-      'WHERE ${_idEquals('ID')}',
-      [_idArgument(cardId)],
+      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card WHERE hex(ID) = ?',
+      [cardId],
     );
     if (cardRows.isEmpty) return;
     final cardViewId = _string(cardRows.first['CardViewID']);
     final imageBytes = base64Decode(backgroundImageBase64);
     final viewRows = _db.select(
-      'SELECT hex(ImageID) AS ImageID FROM spbwlt_CardView '
-      'WHERE ${_idEquals('ID')}',
-      [_idArgument(cardViewId)],
+      'SELECT hex(ImageID) AS ImageID FROM spbwlt_CardView WHERE hex(ID) = ?',
+      [cardViewId],
     );
     final currentImageId =
         viewRows.isEmpty ? '' : _string(viewRows.first['ImageID']);
-    final currentRows = currentImageId.isEmpty
-        ? const <Row>[]
-        : _db.select(
-            'SELECT Data FROM spbwlt_Image WHERE ${_idEquals('ID')}',
-            [_idArgument(currentImageId)],
-          );
-    if (currentRows.isNotEmpty && _imageReferenceCount(currentImageId) == 1) {
-      final encoding = imageCodec.detect(currentRows.first['Data']);
+    if (currentImageId.isNotEmpty &&
+        _db.select('SELECT 1 FROM spbwlt_Image WHERE hex(ID) = ?', [
+          currentImageId,
+        ]).isNotEmpty) {
       _db.execute(
-        'UPDATE spbwlt_Image SET Name = ?, Data = ? '
-        'WHERE ${_idEquals('ID')}',
-        [
-          crypto.encryptText('card-background.png'),
-          imageCodec.encode(imageBytes, encoding),
-          _idArgument(currentImageId),
-        ],
+        'UPDATE spbwlt_Image SET Name = ?, Data = ? WHERE hex(ID) = ?',
+        [crypto.encryptText('card-background.png'), imageBytes, currentImageId],
       );
       return;
     }
     final imageId = _makeSpbId();
-    final encoding = _preferredImageEncoding();
     _db.execute('INSERT INTO spbwlt_Image (ID, Name, Data) VALUES (?, ?, ?)', [
       _idFromHex(imageId),
       crypto.encryptText('card-background.png'),
-      imageCodec.encode(imageBytes, encoding),
+      imageBytes,
     ]);
-    _db.execute(
-        'UPDATE spbwlt_CardView SET ImageID = ? '
-        'WHERE ${_idEquals('ID')}',
-        [
-          _idFromHex(imageId),
-          _idArgument(cardViewId),
-        ]);
-  }
-
-  int _imageReferenceCount(String imageId) {
-    final rows = _db.select(
-      'SELECT COUNT(*) AS ReferenceCount FROM spbwlt_CardView '
-      'WHERE ${_idEquals('ImageID')}',
-      [_idArgument(imageId)],
-    );
-    return rows.isEmpty ? 0 : (rows.first['ReferenceCount'] as int? ?? 0);
-  }
-
-  WalletImageEncoding _preferredImageEncoding() {
-    if (_hasLegacyStateTable()) {
-      final rows = _db.select(
-        'SELECT StateValue FROM actitpass_State WHERE StateKey = ? LIMIT 1',
-        ['image_encoding'],
-      );
-      if (rows.isNotEmpty) {
-        return _string(rows.first['StateValue']) == 'raw'
-            ? WalletImageEncoding.raw
-            : WalletImageEncoding.encrypted;
-      }
-    }
-    for (final row in _db.select(
-      'SELECT Data FROM spbwlt_Image WHERE Data IS NOT NULL LIMIT 16',
-    )) {
-      try {
-        return imageCodec.detect(row['Data']);
-      } catch (_) {
-        // Damaged images do not define the encoding policy for new records.
-      }
-    }
-    return WalletImageEncoding.encrypted;
-  }
-
-  void setImageEncodingPolicy(WalletImageEncoding encoding) {
-    _ensureLegacyStateTable();
-    _db.execute(
-      'INSERT OR REPLACE INTO actitpass_State (StateKey, StateValue) '
-      'VALUES (?, ?)',
-      [
-        'image_encoding',
-        encoding == WalletImageEncoding.raw ? 'raw' : 'encrypted',
-      ],
-    );
+    _db.execute('UPDATE spbwlt_CardView SET ImageID = ? WHERE hex(ID) = ?', [
+      _idFromHex(imageId),
+      cardViewId,
+    ]);
   }
 
   void saveTemplate(SpbWalletTemplateDraft draft) {
     _transaction(() {
       final templateExists = _db.select(
-        'SELECT 1 FROM spbwlt_Template WHERE ${_idEquals('ID')}',
-        [_idArgument(draft.id)],
+        'SELECT 1 FROM spbwlt_Template WHERE hex(ID) = ?',
+        [draft.id],
       ).isNotEmpty;
       if (templateExists) {
-        _db.execute(
-            'UPDATE spbwlt_Template SET Name = ? '
-            'WHERE ${_idEquals('ID')}',
-            [
-              crypto.encryptText(draft.name),
-              _idArgument(draft.id),
-            ]);
+        _db.execute('UPDATE spbwlt_Template SET Name = ? WHERE hex(ID) = ?', [
+          crypto.encryptText(draft.name),
+          draft.id,
+        ]);
         _saveEmbeddedIcon(draft);
         _saveTemplateIcon(draft.id, draft.iconId);
         _saveTemplateColor(draft.id, draft.cardColor);
@@ -515,9 +336,8 @@ class SpbWalletDatabase {
       _saveTemplateCategory(draft.id, draft.categoryPath);
       final existingIds = _db
           .select(
-            'SELECT hex(ID) AS ID FROM spbwlt_TemplateField '
-            'WHERE ${_idEquals('TemplateID')}',
-            [_idArgument(draft.id)],
+            'SELECT hex(ID) AS ID FROM spbwlt_TemplateField WHERE hex(TemplateID) = ?',
+            [draft.id],
           )
           .map((row) => _string(row['ID']))
           .toSet();
@@ -527,14 +347,8 @@ class SpbWalletDatabase {
         final encryptedName = crypto.encryptText(field.name);
         if (existingIds.contains(field.id)) {
           _db.execute(
-            'UPDATE spbwlt_TemplateField SET Name = ?, FieldTypeID = ?, '
-            'Priority = ? WHERE ${_idEquals('ID')}',
-            [
-              encryptedName,
-              field.fieldTypeId,
-              priority,
-              _idArgument(field.id),
-            ],
+            'UPDATE spbwlt_TemplateField SET Name = ?, FieldTypeID = ?, Priority = ? WHERE hex(ID) = ?',
+            [encryptedName, field.fieldTypeId, priority, field.id],
           );
         } else {
           _db.execute(
@@ -553,19 +367,16 @@ class SpbWalletDatabase {
       }
       for (final fieldId in existingIds.difference(desiredIds)) {
         _db.execute(
-          'DELETE FROM spbwlt_CardFieldValue '
-          'WHERE ${_idEquals('TemplateFieldID')}',
-          [_idArgument(fieldId)],
+          'DELETE FROM spbwlt_CardFieldValue WHERE hex(TemplateFieldID) = ?',
+          [fieldId],
         );
         _db.execute(
-          'DELETE FROM spbwlt_CardViewField '
-          'WHERE ${_idEquals('TemplateFieldID')}',
-          [_idArgument(fieldId)],
+          'DELETE FROM spbwlt_CardViewField WHERE hex(TemplateFieldID) = ?',
+          [fieldId],
         );
-        _db.execute(
-          'DELETE FROM spbwlt_TemplateField WHERE ${_idEquals('ID')}',
-          [_idArgument(fieldId)],
-        );
+        _db.execute('DELETE FROM spbwlt_TemplateField WHERE hex(ID) = ?', [
+          fieldId,
+        ]);
       }
     });
   }
@@ -582,42 +393,37 @@ class SpbWalletDatabase {
       final description = draft.description.trim().isEmpty
           ? null
           : crypto.encryptText(draft.description);
-      final exists = _db.select(
-        'SELECT 1 FROM spbwlt_Card WHERE ${_idEquals('ID')}',
-        [_idArgument(draft.id)],
-      ).isNotEmpty;
+      final exists = _db.select('SELECT 1 FROM spbwlt_Card WHERE hex(ID) = ?', [
+        draft.id,
+      ]).isNotEmpty;
       if (exists) {
         if (draft.preserveExistingDescriptionWhenEmpty &&
             draft.description.trim().isEmpty) {
           _db.execute(
-            'UPDATE spbwlt_Card SET Name = ?, ParentCategoryID = ?, '
-            'TemplateID = ? WHERE ${_idEquals('ID')}',
+            'UPDATE spbwlt_Card SET Name = ?, ParentCategoryID = ?, TemplateID = ? WHERE hex(ID) = ?',
             [
               crypto.encryptText(draft.title),
               _idFromHex(categoryId),
               _idFromHex(draft.templateId),
-              _idArgument(draft.id),
+              draft.id,
             ],
           );
         } else {
           _db.execute(
-            'UPDATE spbwlt_Card SET Name = ?, Description = ?, '
-            'ParentCategoryID = ?, TemplateID = ? '
-            'WHERE ${_idEquals('ID')}',
+            'UPDATE spbwlt_Card SET Name = ?, Description = ?, ParentCategoryID = ?, TemplateID = ? WHERE hex(ID) = ?',
             [
               crypto.encryptText(draft.title),
               description,
               _idFromHex(categoryId),
               _idFromHex(draft.templateId),
-              _idArgument(draft.id),
+              draft.id,
             ],
           );
         }
       } else {
         final templateRows = _db.select(
-          'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template '
-          'WHERE ${_idEquals('ID')}',
-          [_idArgument(draft.templateId)],
+          'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?',
+          [draft.templateId],
         );
         final templateCardViewId = templateRows.isEmpty
             ? ''
@@ -647,9 +453,8 @@ class SpbWalletDatabase {
       final existingValues = <String, String>{};
       final valueIdsByField = <String, List<String>>{};
       for (final row in _db.select(
-        'SELECT hex(ID) AS ID, hex(TemplateFieldID) AS TemplateFieldID '
-        'FROM spbwlt_CardFieldValue WHERE ${_idEquals('CardID')}',
-        [_idArgument(draft.id)],
+        'SELECT hex(ID) AS ID, hex(TemplateFieldID) AS TemplateFieldID FROM spbwlt_CardFieldValue WHERE hex(CardID) = ?',
+        [draft.id],
       )) {
         final fieldId = _string(row['TemplateFieldID']);
         final valueId = _string(row['ID']);
@@ -664,10 +469,9 @@ class SpbWalletDatabase {
         // opening and saving a card must never delete them implicitly.
         if (!desiredFieldIds.contains(entry.key)) continue;
         for (final duplicateId in ids.skip(1)) {
-          _db.execute(
-            'DELETE FROM spbwlt_CardFieldValue WHERE ${_idEquals('ID')}',
-            [_idArgument(duplicateId)],
-          );
+          _db.execute('DELETE FROM spbwlt_CardFieldValue WHERE hex(ID) = ?', [
+            duplicateId,
+          ]);
         }
       }
       for (final entry in draft.fieldValues.entries) {
@@ -684,9 +488,8 @@ class SpbWalletDatabase {
           );
         } else {
           _db.execute(
-            'UPDATE spbwlt_CardFieldValue SET ValueString = ? '
-            'WHERE ${_idEquals('ID')}',
-            [crypto.encryptText(entry.value), _idArgument(valueId)],
+            'UPDATE spbwlt_CardFieldValue SET ValueString = ? WHERE hex(ID) = ?',
+            [crypto.encryptText(entry.value), valueId],
           );
         }
       }
@@ -694,27 +497,6 @@ class SpbWalletDatabase {
       _saveCardColor(draft.id, draft.cardColor);
       _saveCardIcon(draft.id, iconId);
       _saveCardState(draft);
-    });
-  }
-
-  void saveCardWithAttachments(
-    SpbWalletCardDraft draft, {
-    Iterable<SpbWalletAttachmentDraft> attachments = const [],
-    Iterable<String> deletedAttachmentIds = const [],
-  }) {
-    runTransaction<void>(() {
-      saveCard(draft);
-      for (final attachmentId in deletedAttachmentIds) {
-        if (attachmentId.isNotEmpty) deleteAttachment(attachmentId);
-      }
-      for (final attachment in attachments) {
-        saveAttachment(
-          cardId: draft.id,
-          fileName: attachment.fileName,
-          bytes: attachment.bytes,
-          attachmentId: attachment.id,
-        );
-      }
     });
   }
 
@@ -727,38 +509,30 @@ class SpbWalletDatabase {
   void deleteTemplate(String templateId) {
     _transaction(() {
       final cardRows = _db.select(
-        'SELECT hex(ID) AS ID FROM spbwlt_Card '
-        'WHERE ${_idEquals('TemplateID')}',
-        [_idArgument(templateId)],
+        'SELECT hex(ID) AS ID FROM spbwlt_Card WHERE hex(TemplateID) = ?',
+        [templateId],
       );
       for (final row in cardRows) {
         _deleteCardById(_string(row['ID']));
       }
       final templateRows = _db.select(
-        'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template '
-        'WHERE ${_idEquals('ID')}',
-        [_idArgument(templateId)],
+        'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?',
+        [templateId],
       );
       final cardViewId =
           templateRows.isEmpty ? '' : _string(templateRows.first['CardViewID']);
       _db.execute(
-        _directIdLookups
-            ? 'DELETE FROM spbwlt_CardViewField WHERE TemplateFieldID IN '
-                '(SELECT ID FROM spbwlt_TemplateField WHERE TemplateID = ?)'
-            : 'DELETE FROM spbwlt_CardViewField '
-                'WHERE hex(TemplateFieldID) IN (SELECT hex(ID) '
-                'FROM spbwlt_TemplateField WHERE hex(TemplateID) = ?)',
-        [_idArgument(templateId)],
+        'DELETE FROM spbwlt_CardViewField WHERE hex(TemplateFieldID) IN '
+        '(SELECT hex(ID) FROM spbwlt_TemplateField WHERE hex(TemplateID) = ?)',
+        [templateId],
       );
       _db.execute(
-        'DELETE FROM spbwlt_TemplateField '
-        'WHERE ${_idEquals('TemplateID')}',
-        [_idArgument(templateId)],
+        'DELETE FROM spbwlt_TemplateField WHERE hex(TemplateID) = ?',
+        [templateId],
       );
-      _db.execute(
-        'DELETE FROM spbwlt_Template WHERE ${_idEquals('ID')}',
-        [_idArgument(templateId)],
-      );
+      _db.execute('DELETE FROM spbwlt_Template WHERE hex(ID) = ?', [
+        templateId,
+      ]);
       final stateTable = _db.select(
         '''SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1''',
         ['actitpass_State'],
@@ -770,14 +544,12 @@ class SpbWalletDatabase {
       }
       if (cardViewId.isNotEmpty) {
         _db.execute(
-          'DELETE FROM spbwlt_CardViewField '
-          'WHERE ${_idEquals('CardViewID')}',
-          [_idArgument(cardViewId)],
+          'DELETE FROM spbwlt_CardViewField WHERE hex(CardViewID) = ?',
+          [cardViewId],
         );
-        _db.execute(
-          'DELETE FROM spbwlt_CardView WHERE ${_idEquals('ID')}',
-          [_idArgument(cardViewId)],
-        );
+        _db.execute('DELETE FROM spbwlt_CardView WHERE hex(ID) = ?', [
+          cardViewId,
+        ]);
       }
     });
   }
@@ -789,23 +561,17 @@ class SpbWalletDatabase {
 
   void _deleteCardById(String cardId) {
     final rows = _db.select(
-      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card '
-      'WHERE ${_idEquals('ID')}',
-      [_idArgument(cardId)],
+      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card WHERE hex(ID) = ?',
+      [cardId],
     );
     final cardViewId = rows.isEmpty ? '' : _string(rows.first['CardViewID']);
-    _db.execute(
-      'DELETE FROM spbwlt_CardFieldValue WHERE ${_idEquals('CardID')}',
-      [_idArgument(cardId)],
-    );
-    _db.execute(
-      'DELETE FROM spbwlt_CardAttachment WHERE ${_idEquals('CardID')}',
-      [_idArgument(cardId)],
-    );
-    _db.execute(
-      'DELETE FROM spbwlt_Card WHERE ${_idEquals('ID')}',
-      [_idArgument(cardId)],
-    );
+    _db.execute('DELETE FROM spbwlt_CardFieldValue WHERE hex(CardID) = ?', [
+      cardId,
+    ]);
+    _db.execute('DELETE FROM spbwlt_CardAttachment WHERE hex(CardID) = ?', [
+      cardId,
+    ]);
+    _db.execute('DELETE FROM spbwlt_Card WHERE hex(ID) = ?', [cardId]);
     if (_hasLegacyStateTable()) {
       _db.execute('DELETE FROM actitpass_State WHERE StateKey IN (?, ?)', [
         'card_layout_$cardId',
@@ -814,21 +580,17 @@ class SpbWalletDatabase {
     }
     if (cardViewId.isNotEmpty) {
       final stillUsed = _db.select(
-        'SELECT 1 FROM spbwlt_Card WHERE ${_idEquals('CardViewID')} '
-        'UNION SELECT 1 FROM spbwlt_Template '
-        'WHERE ${_idEquals('CardViewID')} LIMIT 1',
-        [_idArgument(cardViewId), _idArgument(cardViewId)],
+        'SELECT 1 FROM spbwlt_Card WHERE hex(CardViewID) = ? UNION SELECT 1 FROM spbwlt_Template WHERE hex(CardViewID) = ? LIMIT 1',
+        [cardViewId, cardViewId],
       ).isNotEmpty;
       if (!stillUsed) {
         _db.execute(
-          'DELETE FROM spbwlt_CardViewField '
-          'WHERE ${_idEquals('CardViewID')}',
-          [_idArgument(cardViewId)],
+          'DELETE FROM spbwlt_CardViewField WHERE hex(CardViewID) = ?',
+          [cardViewId],
         );
-        _db.execute(
-          'DELETE FROM spbwlt_CardView WHERE ${_idEquals('ID')}',
-          [_idArgument(cardViewId)],
-        );
+        _db.execute('DELETE FROM spbwlt_CardView WHERE hex(ID) = ?', [
+          cardViewId,
+        ]);
       }
     }
   }
@@ -843,15 +605,12 @@ class SpbWalletDatabase {
       final data = attachmentCodec.encode(bytes);
       final name = crypto.encryptText(fileName);
       if (attachmentId != null &&
-          _db.select(
-            'SELECT 1 FROM spbwlt_CardAttachment '
-            'WHERE ${_idEquals('ID')}',
-            [_idArgument(attachmentId)],
-          ).isNotEmpty) {
+          _db.select('SELECT 1 FROM spbwlt_CardAttachment WHERE hex(ID) = ?', [
+            attachmentId,
+          ]).isNotEmpty) {
         _db.execute(
-          'UPDATE spbwlt_CardAttachment SET Name = ?, Data = ? '
-          'WHERE ${_idEquals('ID')}',
-          [name, data, _idArgument(attachmentId)],
+          'UPDATE spbwlt_CardAttachment SET Name = ?, Data = ? WHERE hex(ID) = ?',
+          [name, data, attachmentId],
         );
       } else {
         _db.execute(
@@ -868,36 +627,15 @@ class SpbWalletDatabase {
   }
 
   void deleteAttachment(String attachmentId) {
-    _transaction(() {
-      _db.execute(
-        'DELETE FROM spbwlt_CardAttachment WHERE ${_idEquals('ID')}',
-        [_idArgument(attachmentId)],
-      );
-    });
-  }
-
-  int deleteOrphanImages() {
-    return runTransaction<int>(() {
-      final before = _db
-          .select('SELECT COUNT(*) AS C FROM spbwlt_Image')
-          .first['C'] as int;
-      _db.execute(
-        'DELETE FROM spbwlt_Image WHERE NOT EXISTS ('
-        'SELECT 1 FROM spbwlt_CardView WHERE '
-        '${_idJoin('spbwlt_CardView.ImageID', 'spbwlt_Image.ID')})',
-      );
-      final after = _db
-          .select('SELECT COUNT(*) AS C FROM spbwlt_Image')
-          .first['C'] as int;
-      return before - after;
-    });
+    _db.execute('DELETE FROM spbwlt_CardAttachment WHERE hex(ID) = ?', [
+      attachmentId,
+    ]);
   }
 
   void recordCardHit(String cardId) {
     _db.execute(
-      'UPDATE spbwlt_Card SET HitCount = HitCount + 1 '
-      'WHERE ${_idEquals('ID')}',
-      [_idArgument(cardId)],
+      'UPDATE spbwlt_Card SET HitCount = HitCount + 1 WHERE hex(ID) = ?',
+      [cardId],
     );
   }
 
@@ -905,13 +643,10 @@ class SpbWalletDatabase {
     _transaction(() {
       final categoryId = _ensureCategoryPath(categoryPath);
       if (categoryId.isEmpty) return;
-      _db.execute(
-          'UPDATE spbwlt_Category SET IconID = ? '
-          'WHERE ${_idEquals('ID')}',
-          [
-            _idFromHex(iconId.isEmpty ? defaultFolderIconId : iconId),
-            _idArgument(categoryId),
-          ]);
+      _db.execute('UPDATE spbwlt_Category SET IconID = ? WHERE hex(ID) = ?', [
+        _idFromHex(iconId.isEmpty ? defaultFolderIconId : iconId),
+        categoryId,
+      ]);
     });
   }
 
@@ -931,13 +666,10 @@ class SpbWalletDatabase {
       final categoryId = _ensureCategoryPath(categoryPath);
       if (categoryId.isEmpty) return;
       _saveCategoryColor(categoryId, colorId);
-      _db.execute(
-          'UPDATE spbwlt_Category SET IconID = ? '
-          'WHERE ${_idEquals('ID')}',
-          [
-            _idFromHex(iconId.isEmpty ? defaultFolderIconId : iconId),
-            _idArgument(categoryId),
-          ]);
+      _db.execute('UPDATE spbwlt_Category SET IconID = ? WHERE hex(ID) = ?', [
+        _idFromHex(iconId.isEmpty ? defaultFolderIconId : iconId),
+        categoryId,
+      ]);
     });
   }
 
@@ -966,9 +698,8 @@ class SpbWalletDatabase {
       }
       final parentId = _categoryParentId(categoryId);
       final siblingRows = _db.select(
-        'SELECT hex(ID) AS ID, Name FROM spbwlt_Category '
-        'WHERE ${_idEquals('ParentCategoryID')}',
-        [_idArgument(parentId)],
+        'SELECT hex(ID) AS ID, Name FROM spbwlt_Category WHERE hex(ParentCategoryID) = ?',
+        [parentId],
       );
       for (final row in siblingRows) {
         final id = _string(row['ID']);
@@ -979,12 +710,11 @@ class SpbWalletDatabase {
         }
       }
       _db.execute(
-        'UPDATE spbwlt_Category SET Name = ?, IconID = ? '
-        'WHERE ${_idEquals('ID')}',
+        'UPDATE spbwlt_Category SET Name = ?, IconID = ? WHERE hex(ID) = ?',
         [
           crypto.encryptText(cleanName),
           _idFromHex(iconId.isEmpty ? defaultFolderIconId : iconId),
-          _idArgument(categoryId),
+          categoryId,
         ],
       );
     });
@@ -1009,14 +739,13 @@ class SpbWalletDatabase {
         );
       }
       final nameRow = _db.select(
-        'SELECT Name FROM spbwlt_Category WHERE ${_idEquals('ID')}',
-        [_idArgument(categoryId)],
+        'SELECT Name FROM spbwlt_Category WHERE hex(ID) = ?',
+        [categoryId],
       );
       final name = crypto.decryptText(nameRow.single['Name']);
       final siblings = _db.select(
-        'SELECT hex(ID) AS ID, Name FROM spbwlt_Category '
-        'WHERE ${_idEquals('ParentCategoryID')}',
-        [_idArgument(targetId)],
+        'SELECT hex(ID) AS ID, Name FROM spbwlt_Category WHERE hex(ParentCategoryID) = ?',
+        [targetId],
       );
       for (final row in siblings) {
         if (_string(row['ID']) != categoryId &&
@@ -1027,19 +756,17 @@ class SpbWalletDatabase {
         }
       }
       _db.execute(
-        'UPDATE spbwlt_Category SET ParentCategoryID = ? '
-        'WHERE ${_idEquals('ID')}',
-        [_idFromHex(targetId), _idArgument(categoryId)],
+        'UPDATE spbwlt_Category SET ParentCategoryID = ? WHERE hex(ID) = ?',
+        [_idFromHex(targetId), categoryId],
       );
     });
   }
 
   void moveCard(String cardId, String targetCategoryPath) {
     _transaction(() {
-      final exists = _db.select(
-        'SELECT 1 FROM spbwlt_Card WHERE ${_idEquals('ID')}',
-        [_idArgument(cardId)],
-      ).isNotEmpty;
+      final exists = _db.select('SELECT 1 FROM spbwlt_Card WHERE hex(ID) = ?', [
+        cardId,
+      ]).isNotEmpty;
       if (!exists) {
         throw const SpbWalletOpenException('Карточка SPB Wallet не найдена.');
       }
@@ -1050,9 +777,8 @@ class SpbWalletDatabase {
         throw const SpbWalletOpenException('Целевая папка не найдена.');
       }
       _db.execute(
-        'UPDATE spbwlt_Card SET ParentCategoryID = ? '
-        'WHERE ${_idEquals('ID')}',
-        [_idFromHex(categoryId), _idArgument(cardId)],
+        'UPDATE spbwlt_Card SET ParentCategoryID = ? WHERE hex(ID) = ?',
+        [_idFromHex(categoryId), cardId],
       );
     });
   }
@@ -1071,19 +797,15 @@ class SpbWalletDatabase {
       ).isNotEmpty;
       for (final id in ids) {
         final cardRows = _db.select(
-          'SELECT hex(ID) AS ID FROM spbwlt_Card '
-          'WHERE ${_idEquals('ParentCategoryID')}',
-          [_idArgument(id)],
+          'SELECT hex(ID) AS ID FROM spbwlt_Card WHERE hex(ParentCategoryID) = ?',
+          [id],
         );
         for (final row in cardRows) {
           _deleteCardById(_string(row['ID']));
         }
       }
       for (final id in descendants.reversed) {
-        _db.execute(
-          'DELETE FROM spbwlt_Category WHERE ${_idEquals('ID')}',
-          [_idArgument(id)],
-        );
+        _db.execute('DELETE FROM spbwlt_Category WHERE hex(ID) = ?', [id]);
       }
       if (hasStateTable) {
         for (final id in ids) {
@@ -1092,10 +814,9 @@ class SpbWalletDatabase {
           ]);
         }
       }
-      _db.execute(
-        'DELETE FROM spbwlt_Category WHERE ${_idEquals('ID')}',
-        [_idArgument(categoryId)],
-      );
+      _db.execute('DELETE FROM spbwlt_Category WHERE hex(ID) = ?', [
+        categoryId,
+      ]);
     });
   }
 
@@ -1104,29 +825,12 @@ class SpbWalletDatabase {
   }
 
   Future<SpbWalletUndoSnapshot> createUndoSnapshot() async {
-    final directory = Directory(
-      '${File(path).parent.path}${Platform.pathSeparator}.wallet_aps_undo',
-    );
-    await directory.create(recursive: true);
-    final file = File(
-      '${directory.path}${Platform.pathSeparator}'
-      'undo_${DateTime.now().microsecondsSinceEpoch}.swl',
-    );
-    Database? snapshot;
+    final snapshot = sqlite3.openInMemory();
     try {
-      snapshot = sqlite3.open(file.path);
       await _db.backup(snapshot, nPage: -1).drain<void>();
-      final quickCheck =
-          snapshot.select('PRAGMA quick_check').single.values.first;
-      if (quickCheck.toString().toLowerCase() != 'ok') {
-        throw StateError('Undo snapshot failed SQLite quick_check.');
-      }
-      snapshot.dispose();
-      snapshot = null;
-      return SpbWalletUndoSnapshot._(file.path, await file.length());
+      return SpbWalletUndoSnapshot._(snapshot);
     } catch (_) {
-      snapshot?.dispose();
-      if (await file.exists()) await file.delete();
+      snapshot.dispose();
       rethrow;
     }
   }
@@ -1135,21 +839,7 @@ class SpbWalletDatabase {
     if (snapshot._disposed) {
       throw StateError('Снимок истории изменений уже освобождён.');
     }
-    final file = File(snapshot.filePath);
-    if (!await file.exists() || await file.length() != snapshot.byteLength) {
-      throw StateError('Undo snapshot is missing or has changed.');
-    }
-    final source = sqlite3.open(snapshot.filePath, mode: OpenMode.readOnly);
-    try {
-      final quickCheck =
-          source.select('PRAGMA quick_check').single.values.first;
-      if (quickCheck.toString().toLowerCase() != 'ok') {
-        throw StateError('Undo snapshot failed SQLite quick_check.');
-      }
-      await source.backup(_db, nPage: -1).drain<void>();
-    } finally {
-      source.dispose();
-    }
+    await snapshot._database.backup(_db, nPage: -1).drain<void>();
   }
 
   List<String> loadRecentlyOpenedCardIds() {
@@ -1182,7 +872,7 @@ class SpbWalletDatabase {
   }
 
   String loadPasswordHint() {
-    if (!_hasLegacyStateTable()) return '';
+    _ensureLegacyStateTable();
     final rows = _db.select(
       'SELECT StateValue FROM actitpass_State WHERE StateKey = ? LIMIT 1',
       ['password_hint'],
@@ -1218,7 +908,7 @@ CREATE TABLE IF NOT EXISTS actitpass_State (
   ) {
     final result = <String, Map<String, String>>{};
     for (final row in _db.select(
-      'SELECT hex(CardID) AS CardID, hex(TemplateFieldID) AS TemplateFieldID, ValueString FROM spbwlt_CardFieldValue ORDER BY CardID, rowid',
+      'SELECT hex(CardID) AS CardID, hex(TemplateFieldID) AS TemplateFieldID, ValueString FROM spbwlt_CardFieldValue ORDER BY hex(CardID), hex(ID)',
     )) {
       try {
         result
@@ -1247,7 +937,7 @@ CREATE TABLE IF NOT EXISTS actitpass_State (
   ) {
     final result = <String, List<SpbWalletAttachmentRecord>>{};
     for (final row in _db.select(
-      'SELECT hex(ID) AS ID, hex(CardID) AS CardID, Name FROM spbwlt_CardAttachment ORDER BY CardID, rowid',
+      'SELECT hex(ID) AS ID, hex(CardID) AS CardID, Name FROM spbwlt_CardAttachment ORDER BY hex(CardID), hex(ID)',
     )) {
       final cardId = _string(row['CardID']);
       try {
@@ -1290,44 +980,9 @@ CREATE TABLE IF NOT EXISTS actitpass_State (
   }
 
   String? _imageDataToBase64(Object? data) {
-    if (data == null) return null;
-    if (data is List<int> && data.isEmpty) return null;
-    return base64Encode(imageCodec.decode(data).bytes);
-  }
-
-  Future<VaultSnapshot> createVerifiedSnapshot({
-    required int revision,
-    String? stagingDirectory,
-  }) async {
-    flushToDisk();
-    final directory = Directory(stagingDirectory ?? Directory.systemTemp.path);
-    await directory.create(recursive: true);
-    final file = File(
-      '${directory.path}${Platform.pathSeparator}'
-      'wallet_aps_snapshot_${DateTime.now().microsecondsSinceEpoch}_$revision.swl',
-    );
-    Database? snapshotDatabase;
-    try {
-      snapshotDatabase = sqlite3.open(file.path);
-      await _db.backup(snapshotDatabase, nPage: -1).drain<void>();
-      final quickCheck = snapshotDatabase
-          .select('PRAGMA quick_check')
-          .map((row) => row.values.first.toString())
-          .join('\n');
-      snapshotDatabase.dispose();
-      snapshotDatabase = null;
-      return VaultSnapshot(
-        path: file.path,
-        revision: revision,
-        length: await file.length(),
-        sha256: await sha256File(file),
-        quickCheck: quickCheck,
-      );
-    } catch (_) {
-      snapshotDatabase?.dispose();
-      if (await file.exists()) await file.delete();
-      rethrow;
-    }
+    if (data is Uint8List) return base64Encode(data);
+    if (data is List<int>) return base64Encode(data);
+    return null;
   }
 
   bool _hasLegacyStateTable() => _db.select(
@@ -1548,6 +1203,19 @@ END;
 ''');
   }
 
+  void _ensurePerformanceIndexes() {
+    _db.execute('''
+CREATE INDEX IF NOT EXISTS idx_Card_ParentCategory ON spbwlt_Card (ParentCategoryID);
+CREATE INDEX IF NOT EXISTS idx_Card_Template ON spbwlt_Card (TemplateID);
+CREATE INDEX IF NOT EXISTS idx_Category_Parent ON spbwlt_Category (ParentCategoryID);
+CREATE INDEX IF NOT EXISTS idx_Attachment_Card ON spbwlt_CardAttachment (CardID);
+CREATE INDEX IF NOT EXISTS idx_CardFieldValue_Card ON spbwlt_CardFieldValue (CardID);
+CREATE INDEX IF NOT EXISTS idx_CardFieldValue_TemplateField ON spbwlt_CardFieldValue (TemplateFieldID);
+CREATE INDEX IF NOT EXISTS idx_TemplateField_Template ON spbwlt_TemplateField (TemplateID);
+CREATE INDEX IF NOT EXISTS idx_CardViewField_View ON spbwlt_CardViewField (CardViewID);
+''');
+  }
+
   void _seedMeta() {
     _db.execute(
       'INSERT INTO spb_DatabaseVersion (ProductID, ProductName, VersionString, CompatibilityVersion, ProductMajorVersion, ProductMinorVersion) VALUES (?, ?, ?, ?, ?, ?)',
@@ -1709,7 +1377,7 @@ END;
   }
 
   List<SpbWalletTemplateRecord> _loadTemplates(
-    Map<String, String> categoryPaths,
+    Map<String, SpbWalletCategoryRecord> categories,
     List<WalletLoadIssue> issues,
   ) {
     final fields = _loadTemplateFields(issues);
@@ -1720,7 +1388,7 @@ END;
     }
     final templates = <SpbWalletTemplateRecord>[];
     for (final row in _db.select(
-      'SELECT hex(spbwlt_Template.ID) AS ID, Name, hex(spbwlt_CardView.IconID) AS IconID, spbwlt_CardView.CardColor AS CardColor FROM spbwlt_Template LEFT JOIN spbwlt_CardView ON ${_idJoin('spbwlt_CardView.ID', 'spbwlt_Template.CardViewID')} ORDER BY spbwlt_Template.rowid',
+      'SELECT hex(spbwlt_Template.ID) AS ID, Name, hex(spbwlt_CardView.IconID) AS IconID, spbwlt_CardView.CardColor AS CardColor FROM spbwlt_Template LEFT JOIN spbwlt_CardView ON spbwlt_CardView.ID = spbwlt_Template.CardViewID ORDER BY hex(spbwlt_Template.ID)',
     )) {
       try {
         final id = _string(row['ID']);
@@ -1730,7 +1398,7 @@ END;
             name: crypto.decryptText(row['Name']),
             iconId: _string(row['IconID']),
             cardColor: _cardColorToInt(row['CardColor']),
-            categoryPath: categoryPaths[categoryIds[id] ?? ''] ?? '',
+            categoryPath: _categoryPath(categories, categoryIds[id] ?? ''),
             fields: byTemplate[id] ?? const [],
           ),
         );
@@ -1789,9 +1457,8 @@ END;
     var parentId = '';
     for (final part in cleanParts) {
       final rows = _db.select(
-        'SELECT hex(ID) AS ID, Name FROM spbwlt_Category '
-        'WHERE ${_idEquals('ParentCategoryID')}',
-        [_idArgument(parentId)],
+        'SELECT hex(ID) AS ID, Name FROM spbwlt_Category WHERE hex(ParentCategoryID) = ?',
+        [parentId],
       );
       String? found;
       for (final row in rows) {
@@ -1832,9 +1499,8 @@ END;
     for (final part in cleanParts) {
       currentId = null;
       final rows = _db.select(
-        'SELECT hex(ID) AS ID, Name FROM spbwlt_Category '
-        'WHERE ${_idEquals('ParentCategoryID')}',
-        [_idArgument(parentId)],
+        'SELECT hex(ID) AS ID, Name FROM spbwlt_Category WHERE hex(ParentCategoryID) = ?',
+        [parentId],
       );
       for (final row in rows) {
         if (crypto.decryptText(row['Name']) == part) {
@@ -1850,9 +1516,8 @@ END;
 
   String _categoryParentId(String categoryId) {
     final rows = _db.select(
-      'SELECT hex(ParentCategoryID) AS ParentCategoryID '
-      'FROM spbwlt_Category WHERE ${_idEquals('ID')}',
-      [_idArgument(categoryId)],
+      'SELECT hex(ParentCategoryID) AS ParentCategoryID FROM spbwlt_Category WHERE hex(ID) = ?',
+      [categoryId],
     );
     return rows.isEmpty ? '' : _string(rows.first['ParentCategoryID']);
   }
@@ -1861,9 +1526,8 @@ END;
     final result = <String>[];
     void collect(String parentId) {
       final rows = _db.select(
-        'SELECT hex(ID) AS ID FROM spbwlt_Category '
-        'WHERE ${_idEquals('ParentCategoryID')}',
-        [_idArgument(parentId)],
+        'SELECT hex(ID) AS ID FROM spbwlt_Category WHERE hex(ParentCategoryID) = ?',
+        [parentId],
       );
       for (final row in rows) {
         final id = _string(row['ID']);
@@ -1876,34 +1540,19 @@ END;
     return result;
   }
 
-  Map<String, String> _buildCategoryPaths(
+  String _categoryPath(
     Map<String, SpbWalletCategoryRecord> categories,
+    String categoryId,
   ) {
-    final result = <String, String>{};
-    final resolving = <String>{};
-
-    String resolve(String categoryId) {
-      if (categoryId.isEmpty) return '';
-      final cached = result[categoryId];
-      if (cached != null) return cached;
-      final category = categories[categoryId];
-      if (category == null || !resolving.add(categoryId)) return '';
-      final parentPath = resolve(category.parentId);
-      resolving.remove(categoryId);
-      final name = category.name.trim();
-      final path = parentPath.isEmpty
-          ? name
-          : name.isEmpty
-              ? parentPath
-              : '$parentPath$_categoryPathSeparator$name';
-      result[categoryId] = path;
-      return path;
+    if (categoryId.isEmpty || !categories.containsKey(categoryId)) return '';
+    final names = <String>[];
+    var current = categories[categoryId];
+    var guard = 0;
+    while (current != null && guard++ < 64) {
+      if (current.name.isNotEmpty) names.add(current.name);
+      current = categories[current.parentId];
     }
-
-    for (final categoryId in categories.keys) {
-      resolve(categoryId);
-    }
-    return result;
+    return names.reversed.join(' / ');
   }
 
   Set<String> _columns(String table) {
@@ -1913,23 +1562,19 @@ END;
         .toSet();
   }
 
-  T runTransaction<T>(T Function() action) {
-    if (_transactionDepth > 0) return action();
+  void _transaction(void Function() action) {
+    // Keep read-only compatibility checks byte-for-byte immutable. Legacy
+    // wallets are migrated with performance indexes on their first write.
+    _ensurePerformanceIndexes();
     _db.execute('BEGIN IMMEDIATE');
-    _transactionDepth++;
     try {
-      final result = action();
+      action();
       _db.execute('COMMIT');
-      return result;
     } catch (_) {
       _db.execute('ROLLBACK');
       rethrow;
-    } finally {
-      _transactionDepth--;
     }
   }
-
-  void _transaction(void Function() action) => runTransaction<void>(action);
 
   String _createCardView() {
     final id = _makeSpbId();
@@ -1953,57 +1598,48 @@ END;
   void _saveCardColor(String cardId, int? cardColor) {
     if (cardColor == null) return;
     final rows = _db.select(
-      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card '
-      'WHERE ${_idEquals('ID')}',
-      [_idArgument(cardId)],
+      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card WHERE hex(ID) = ?',
+      [cardId],
     );
     if (rows.isEmpty) return;
     final cardViewId = _string(rows.first['CardViewID']);
     if (cardViewId.isEmpty) return;
     final viewRows = _db.select(
-      'SELECT hex(ImageID) AS ImageID FROM spbwlt_CardView '
-      'WHERE ${_idEquals('ID')}',
-      [_idArgument(cardViewId)],
+      'SELECT hex(ImageID) AS ImageID FROM spbwlt_CardView WHERE hex(ID) = ?',
+      [cardViewId],
     );
     final hasBackgroundImage =
         viewRows.isNotEmpty && _string(viewRows.first['ImageID']).isNotEmpty;
     _db.execute(
-      'UPDATE spbwlt_CardView SET CardColor = ?, FillCardWithColor = ? '
-      'WHERE ${_idEquals('ID')}',
+      'UPDATE spbwlt_CardView SET CardColor = ?, FillCardWithColor = ? WHERE hex(ID) = ?',
       [
         LegacySwlCodec.cardColor(cardColor),
         hasBackgroundImage ? 0 : 1,
-        _idArgument(cardViewId),
+        cardViewId,
       ],
     );
-    _db.execute(
-      'UPDATE spbwlt_Card SET HasOwnCardView = ? '
-      'WHERE ${_idEquals('ID')}',
-      [1, _idArgument(cardId)],
-    );
+    _db.execute('UPDATE spbwlt_Card SET HasOwnCardView = ? WHERE hex(ID) = ?', [
+      1,
+      cardId,
+    ]);
   }
 
   void _saveCardIcon(String cardId, String iconId) {
     final rows = _db.select(
-      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card '
-      'WHERE ${_idEquals('ID')}',
-      [_idArgument(cardId)],
+      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Card WHERE hex(ID) = ?',
+      [cardId],
     );
     if (rows.isEmpty) return;
     final cardViewId = _string(rows.first['CardViewID']);
     _db.execute(
-      'UPDATE spbwlt_Card SET IconID = ?, HasOwnCardView = ? '
-      'WHERE ${_idEquals('ID')}',
-      [_idFromHex(iconId), 1, _idArgument(cardId)],
+      'UPDATE spbwlt_Card SET IconID = ?, HasOwnCardView = ? WHERE hex(ID) = ?',
+      [_idFromHex(iconId), 1, cardId],
     );
     if (cardViewId.isNotEmpty) {
-      _db.execute(
-          'UPDATE spbwlt_CardView SET IconID = ? '
-          'WHERE ${_idEquals('ID')}',
-          [
-            _idFromHex(iconId),
-            _idArgument(cardViewId),
-          ]);
+      _db.execute('UPDATE spbwlt_CardView SET IconID = ? WHERE hex(ID) = ?', [
+        _idFromHex(iconId),
+        cardViewId,
+      ]);
     }
   }
 
@@ -2013,9 +1649,9 @@ END;
       'SELECT hex(spbwlt_CardView.IconID) AS IconID '
       'FROM spbwlt_Template '
       'LEFT JOIN spbwlt_CardView '
-      'ON ${_idJoin('spbwlt_CardView.ID', 'spbwlt_Template.CardViewID')} '
-      'WHERE ${_idEquals('spbwlt_Template.ID')}',
-      [_idArgument(templateId)],
+      'ON spbwlt_CardView.ID = spbwlt_Template.CardViewID '
+      'WHERE hex(spbwlt_Template.ID) = ?',
+      [templateId],
     );
     if (rows.isNotEmpty) {
       final templateIconId = _string(rows.first['IconID']);
@@ -2027,36 +1663,30 @@ END;
   void _saveTemplateIcon(String templateId, String? iconId) {
     if (iconId == null || iconId.isEmpty) return;
     final rows = _db.select(
-      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template '
-      'WHERE ${_idEquals('ID')}',
-      [_idArgument(templateId)],
+      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?',
+      [templateId],
     );
     if (rows.isEmpty) return;
     final cardViewId = _string(rows.first['CardViewID']);
     if (cardViewId.isEmpty) return;
-    _db.execute(
-        'UPDATE spbwlt_CardView SET IconID = ? '
-        'WHERE ${_idEquals('ID')}',
-        [
-          _idFromHex(iconId),
-          _idArgument(cardViewId),
-        ]);
+    _db.execute('UPDATE spbwlt_CardView SET IconID = ? WHERE hex(ID) = ?', [
+      _idFromHex(iconId),
+      cardViewId,
+    ]);
   }
 
   void _saveTemplateColor(String templateId, int? cardColor) {
     if (cardColor == null) return;
     final rows = _db.select(
-      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template '
-      'WHERE ${_idEquals('ID')}',
-      [_idArgument(templateId)],
+      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?',
+      [templateId],
     );
     if (rows.isEmpty) return;
     final cardViewId = _string(rows.first['CardViewID']);
     if (cardViewId.isEmpty) return;
     _db.execute(
-      'UPDATE spbwlt_CardView SET CardColor = ?, FillCardWithColor = 1 '
-      'WHERE ${_idEquals('ID')}',
-      [LegacySwlCodec.cardColor(cardColor), _idArgument(cardViewId)],
+      'UPDATE spbwlt_CardView SET CardColor = ?, FillCardWithColor = 1 WHERE hex(ID) = ?',
+      [LegacySwlCodec.cardColor(cardColor), cardViewId],
     );
   }
 
@@ -2083,15 +1713,13 @@ END;
         '${dot < 0 ? fileName : fileName.substring(0, dot)}.ico';
     final name = crypto.encryptText(legacyFileName);
     final data = attachmentCodec.encode(icoBytes);
-    final exists = _db.select(
-      'SELECT 1 FROM spbwlt_Icon WHERE ${_idEquals('ID')}',
-      [_idArgument(iconId)],
-    ).isNotEmpty;
+    final exists = _db.select('SELECT 1 FROM spbwlt_Icon WHERE hex(ID) = ?', [
+      iconId,
+    ]).isNotEmpty;
     if (exists) {
       _db.execute(
-        'UPDATE spbwlt_Icon SET Name = ?, Data = ? '
-        'WHERE ${_idEquals('ID')}',
-        [name, data, _idArgument(iconId)],
+        'UPDATE spbwlt_Icon SET Name = ?, Data = ? WHERE hex(ID) = ?',
+        [name, data, iconId],
       );
     } else {
       _db.execute('INSERT INTO spbwlt_Icon (ID, Name, Data) VALUES (?, ?, ?)', [
@@ -2105,11 +1733,8 @@ END;
   String _copyCardView(String sourceCardViewId) {
     if (sourceCardViewId.isEmpty) return _createCardView();
     final rows = _db.select(
-      'SELECT CardColor, CornerType, ShowHiddenFields, hex(IconID) AS IconID, '
-      'hex(ImageID) AS ImageID, ImgPosition, ShowCardBorder, '
-      'FillCardWithColor FROM spbwlt_CardView '
-      'WHERE ${_idEquals('ID')}',
-      [_idArgument(sourceCardViewId)],
+      'SELECT CardColor, CornerType, ShowHiddenFields, hex(IconID) AS IconID, hex(ImageID) AS ImageID, ImgPosition, ShowCardBorder, FillCardWithColor FROM spbwlt_CardView WHERE hex(ID) = ?',
+      [sourceCardViewId],
     );
     final id = _makeSpbId();
     if (rows.isEmpty) return _createCardView();
@@ -2129,10 +1754,8 @@ END;
       ],
     );
     for (final field in _db.select(
-      'SELECT hex(TemplateFieldID) AS TemplateFieldID, PositionX, PositionY, '
-      'FontFamily, FontSize, FontColor, TextStyle, TextAlign, ShowFieldName '
-      'FROM spbwlt_CardViewField WHERE ${_idEquals('CardViewID')}',
-      [_idArgument(sourceCardViewId)],
+      'SELECT hex(TemplateFieldID) AS TemplateFieldID, PositionX, PositionY, FontFamily, FontSize, FontColor, TextStyle, TextAlign, ShowFieldName FROM spbwlt_CardViewField WHERE hex(CardViewID) = ?',
+      [sourceCardViewId],
     )) {
       _db.execute(
         'INSERT INTO spbwlt_CardViewField (ID, CardViewID, TemplateFieldID, PositionX, PositionY, FontFamily, FontSize, FontColor, TextStyle, TextAlign, ShowFieldName) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -2160,9 +1783,8 @@ END;
     int priority,
   ) {
     final rows = _db.select(
-      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template '
-      'WHERE ${_idEquals('ID')}',
-      [_idArgument(templateId)],
+      'SELECT hex(CardViewID) AS CardViewID FROM spbwlt_Template WHERE hex(ID) = ?',
+      [templateId],
     );
     if (rows.isEmpty) return;
     final cardViewId = _string(rows.first['CardViewID']);
@@ -2220,14 +1842,6 @@ END;
       return bytes;
     }
   }
-
-  String _idEquals(String column) =>
-      _directIdLookups ? '$column = ?' : 'hex($column) = ?';
-
-  Object _idArgument(String hex) => _directIdLookups ? _idFromHex(hex) : hex;
-
-  String _idJoin(String left, String right) =>
-      _directIdLookups ? '$left = $right' : 'hex($left) = hex($right)';
 
   static String _makeSpbId() {
     return LegacySwlCodec.makeHexId();
@@ -2404,18 +2018,6 @@ class SpbWalletCardDraft {
   final List<String> fieldOrder;
   final Set<String> hiddenFieldIds;
   final DateTime? modifiedAt;
-}
-
-class SpbWalletAttachmentDraft {
-  const SpbWalletAttachmentDraft({
-    required this.fileName,
-    required this.bytes,
-    this.id,
-  });
-
-  final String? id;
-  final String fileName;
-  final List<int> bytes;
 }
 
 class SpbWalletAttachmentRecord {

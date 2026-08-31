@@ -14,8 +14,6 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
-import java.security.MessageDigest
-import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     private val channelName = "wallet_aps/spb_wallet"
@@ -76,30 +74,11 @@ class MainActivity : FlutterActivity() {
                 "writeSpbWallet" -> {
                     val uri = call.argument<String>("uri")
                     val localPath = call.argument<String>("localPath")
-                    val expectedLength = call.argument<Number>("expectedLength")?.toLong()
-                    val expectedSha256 = call.argument<String>("expectedSha256")
-                    val expectedExistingLength =
-                        call.argument<Number>("expectedExistingLength")?.toLong()
-                    val expectedExistingSha256 = call.argument<String>("expectedExistingSha256")
                     if (uri == null || localPath == null) {
                         result.error("bad_args", "Missing uri or localPath", null)
                     } else {
-                        writeSpbWallet(
-                            uri,
-                            localPath,
-                            expectedLength,
-                            expectedSha256,
-                            expectedExistingLength,
-                            expectedExistingSha256,
-                            result
-                        )
+                        writeSpbWallet(uri, localPath, result)
                     }
-                }
-                "getPendingSpbWalletRecovery" -> result.success(pendingRecovery())
-                "restoreSpbWalletRecovery" -> restorePendingRecovery(result)
-                "discardSpbWalletRecovery" -> {
-                    clearRecovery()
-                    result.success(true)
                 }
                 "openFile" -> {
                     val path = call.argument<String>("path")
@@ -277,172 +256,21 @@ class MainActivity : FlutterActivity() {
             "displayName" to displayName,
             "displayPath" to displayPath(uri, displayName),
             "writable" to writable,
-            "persisted" to persisted,
-            "sourceLength" to local.length(),
-            "sourceSha256" to sha256(local)
+            "persisted" to persisted
         )
     }
 
-    internal fun writeSpbWallet(
-        uriText: String,
-        localPath: String,
-        requestedLength: Long?,
-        requestedSha256: String?,
-        requestedExistingLength: Long?,
-        requestedExistingSha256: String?,
-        result: MethodChannel.Result
-    ) {
-        val recoveryFile = recoveryDataFile()
-        val recoveryManifest = recoveryManifestFile()
+    private fun writeSpbWallet(uriText: String, localPath: String, result: MethodChannel.Result) {
         try {
             val uri = Uri.parse(uriText)
-            val source = File(localPath)
-            if (!source.isFile) error("Wallet snapshot does not exist")
-            if (recoveryManifest.exists()) {
-                error("A previous wallet recovery is still pending")
+            contentResolver.openOutputStream(uri, "wt").use { output ->
+                if (output == null) error("Cannot open selected SPB Wallet file for writing")
+                File(localPath).inputStream().use { input -> input.copyTo(output) }
+                output.flush()
             }
-            val expectedLength = source.length()
-            val expectedSha256 = sha256(source)
-            if (requestedLength != null && requestedLength != expectedLength) {
-                error("Wallet snapshot size does not match the requested size")
-            }
-            if (requestedSha256 != null && requestedSha256 != expectedSha256) {
-                error("Wallet snapshot SHA-256 does not match the requested hash")
-            }
-            if (requestedExistingLength != null || requestedExistingSha256 != null) {
-                val existing = hashUri(uri)
-                if ((requestedExistingLength != null && existing.first != requestedExistingLength) ||
-                    (requestedExistingSha256 != null && existing.second != requestedExistingSha256)) {
-                    error("The selected wallet was changed outside Wallet APS")
-                }
-            }
-
-            recoveryFile.parentFile?.mkdirs()
-            contentResolver.openInputStream(uri).use { input ->
-                FileOutputStream(recoveryFile).use { output ->
-                    if (input == null) error("Cannot back up selected SPB Wallet file")
-                    input.copyTo(output)
-                    output.fd.sync()
-                }
-            }
-            val manifest = JSONObject().apply {
-                put("uri", uriText)
-                put("previousLength", recoveryFile.length())
-                put("previousSha256", sha256(recoveryFile))
-                put("expectedLength", expectedLength)
-                put("expectedSha256", expectedSha256)
-            }
-            recoveryManifest.writeText(manifest.toString(), Charsets.UTF_8)
-
-            contentResolver.openFileDescriptor(uri, "rwt").use { descriptor ->
-                if (descriptor == null) error("Cannot open selected SPB Wallet file for writing")
-                FileOutputStream(descriptor.fileDescriptor).use { output ->
-                    source.inputStream().use { input -> input.copyTo(output) }
-                    output.flush()
-                    output.fd.sync()
-                }
-            }
-            val published = hashUri(uri)
-            if (published.first != expectedLength || published.second != expectedSha256) {
-                error("Published wallet did not pass size/SHA-256 verification")
-            }
-            clearRecovery()
-            result.success(mapOf("length" to published.first, "sha256" to published.second))
+            result.success(true)
         } catch (error: Throwable) {
-            result.error(
-                "write_failed",
-                error.message,
-                mapOf("recoveryPath" to recoveryFile.takeIf { it.exists() }?.absolutePath)
-            )
-        }
-    }
-
-    private fun recoveryDirectory() = File(noBackupFilesDir, "vault_recovery")
-    private fun recoveryDataFile() = File(recoveryDirectory(), "pending.swl")
-    private fun recoveryManifestFile() = File(recoveryDirectory(), "pending.json")
-
-    internal fun pendingRecovery(): Map<String, Any?>? {
-        val manifestFile = recoveryManifestFile()
-        val dataFile = recoveryDataFile()
-        if (!manifestFile.isFile || !dataFile.isFile) return null
-        return try {
-            val json = JSONObject(manifestFile.readText(Charsets.UTF_8))
-            mapOf(
-                "uri" to json.getString("uri"),
-                "previousLength" to json.getLong("previousLength"),
-                "previousSha256" to json.getString("previousSha256"),
-                "expectedLength" to json.getLong("expectedLength"),
-                "expectedSha256" to json.getString("expectedSha256")
-            )
-        } catch (_: Throwable) {
-            mapOf("damagedManifest" to true)
-        }
-    }
-
-    internal fun restorePendingRecovery(result: MethodChannel.Result) {
-        try {
-            val manifestFile = recoveryManifestFile()
-            val backup = recoveryDataFile()
-            if (!manifestFile.isFile || !backup.isFile) error("No wallet recovery is pending")
-            val manifest = JSONObject(manifestFile.readText(Charsets.UTF_8))
-            val uri = Uri.parse(manifest.getString("uri"))
-            val expectedLength = manifest.getLong("previousLength")
-            val expectedSha256 = manifest.getString("previousSha256")
-            contentResolver.openFileDescriptor(uri, "rwt").use { descriptor ->
-                if (descriptor == null) error("Cannot open wallet recovery destination")
-                FileOutputStream(descriptor.fileDescriptor).use { output ->
-                    backup.inputStream().use { input -> input.copyTo(output) }
-                    output.flush()
-                    output.fd.sync()
-                }
-            }
-            val restored = hashUri(uri)
-            if (restored.first != expectedLength || restored.second != expectedSha256) {
-                error("Restored wallet did not pass size/SHA-256 verification")
-            }
-            clearRecovery()
-            result.success(mapOf("length" to restored.first, "sha256" to restored.second))
-        } catch (error: Throwable) {
-            result.error("restore_failed", error.message, null)
-        }
-    }
-
-    internal fun clearRecovery() {
-        recoveryManifestFile().delete()
-        recoveryDataFile().delete()
-        recoveryDirectory().takeIf { it.isDirectory && it.list()?.isEmpty() == true }?.delete()
-    }
-
-    private fun hashUri(uri: Uri): Pair<Long, String> {
-        val digest = MessageDigest.getInstance("SHA-256")
-        var length = 0L
-        contentResolver.openInputStream(uri).use { input ->
-            if (input == null) error("Cannot verify selected SPB Wallet file")
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
-                length += count
-            }
-        }
-        return length to digest.digest().joinToString("") {
-            "%02x".format(it.toInt() and 0xff)
-        }
-    }
-
-    private fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
-            }
-        }
-        return digest.digest().joinToString("") {
-            "%02x".format(it.toInt() and 0xff)
+            result.error("write_failed", error.message, null)
         }
     }
 

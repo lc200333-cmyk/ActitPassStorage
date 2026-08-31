@@ -9,16 +9,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Android third-party icon picker uses four columns', () {
-    final delegate = thirdPartyIconGridDelegate(isAndroid: true);
-
-    expect(delegate, isA<SliverGridDelegateWithFixedCrossAxisCount>());
-    expect(
-      (delegate as SliverGridDelegateWithFixedCrossAxisCount).crossAxisCount,
-      4,
-    );
-  });
-
   testWidgets('replacement third-party icon bundle is available',
       (tester) async {
     final icons = await loadThirdPartyIconAssets();
@@ -1058,11 +1048,6 @@ void main() {
         ),
       ];
     });
-    state.itemsById = <String, SecretItem>{
-      for (final SecretItem item in state.items as List<SecretItem>)
-        item.id: item,
-    };
-    state.refreshSpbSearchIndex();
     await tester.pump();
 
     expect(state.mobilePane, 0);
@@ -1137,49 +1122,6 @@ void main() {
     expect(tester.takeException(), isNull);
     debugDefaultTargetPlatformOverride = null;
     await tester.binding.setSurfaceSize(null);
-  });
-
-  testWidgets('folder tree flattens only expanded nodes and builds lazily',
-      (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1280, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(
-      const MaterialApp(home: VaultShell(initiallyUnlocked: true)),
-    );
-    await tester.pumpAndSettle();
-
-    final dynamic state = tester.state(find.byType(VaultShell));
-    final root = CategoryTreeNode('root');
-    for (var folderIndex = 0; folderIndex < 100; folderIndex++) {
-      final folder = CategoryTreeNode(
-        'Folder $folderIndex',
-        path: 'Folder $folderIndex',
-      );
-      for (var childIndex = 0; childIndex < 10; childIndex++) {
-        folder.children['Child $childIndex'] = CategoryTreeNode(
-          'Child $childIndex',
-          path: 'Folder $folderIndex / Child $childIndex',
-        );
-      }
-      root.children[folder.name] = folder;
-    }
-
-    final List<dynamic> collapsed = state.buildSpbVisibleTreeEntries(
-      root,
-      showWalletRoot: false,
-    ) as List<dynamic>;
-    expect(collapsed, hasLength(100));
-    state.expandedCategoryPaths.add('Folder 0');
-    final List<dynamic> expanded = state.buildSpbVisibleTreeEntries(
-      root,
-      showWalletRoot: false,
-    ) as List<dynamic>;
-    expect(expanded, hasLength(110));
-
-    final tree = tester.widget<ListView>(
-      find.byKey(const Key('spbCategoryTreeList')).first,
-    );
-    expect(tree.childrenDelegate, isA<SliverChildBuilderDelegate>());
   });
 
   testWidgets('editor returns to preview and preview returns to card folder',

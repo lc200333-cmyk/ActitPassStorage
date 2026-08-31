@@ -70,18 +70,10 @@ void main() {
     expect(activity, contains('File(directory, ".nomedia")'));
     expect(activity, contains('externalCacheDir'));
     expect(activity, contains('getExternalFilesDirs(null)'));
-    expect(activity, contains('File(noBackupFilesDir, "vault_recovery")'));
-    expect(activity, contains('recoveryDataFile()'));
     expect(activity, isNot(contains('MediaStore')));
     expect(activity, isNot(contains('FLAG_SECURE')));
     expect(appSource, contains('.apsblob'));
     expect(appSource, isNot(contains('getExternalStorageDirectory')));
     expect(appSource, isNot(contains('getExternalStorageDirectories')));
-  });
-
-  test('Synology-synchronized project and build tree are hidden from Gallery',
-      () {
-    expect(File('../.nomedia').existsSync(), isTrue);
-    expect(File('.nomedia').existsSync(), isTrue);
   });
 }
