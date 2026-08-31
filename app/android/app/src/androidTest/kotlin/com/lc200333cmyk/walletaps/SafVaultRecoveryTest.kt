@@ -1,5 +1,6 @@
 package com.lc200333cmyk.walletaps
 
+import android.content.Intent
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
@@ -15,6 +16,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.security.MessageDigest
 import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -93,13 +95,29 @@ class TestWalletDocumentsProvider : DocumentsProvider() {
 
 @RunWith(AndroidJUnit4::class)
 class SafVaultRecoveryTest {
-    private val context = InstrumentationRegistry.getInstrumentation().targetContext
-    private val target = File(context.cacheDir, "saf-test/${TestWalletDocumentsProvider.documentId}")
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private val context = instrumentation.targetContext
+    private val testContext = instrumentation.context
+    private val testUri = TestWalletDocumentsProvider.uri()
+    private val target = File(testContext.cacheDir, "saf-test/${TestWalletDocumentsProvider.documentId}")
     private val snapshot = File(context.cacheDir, "saf-test/snapshot.swl")
+
+    @Before
+    fun grantDocumentAccess() {
+        testContext.grantUriPermission(
+            context.packageName,
+            testUri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+    }
 
     @After
     fun cleanUp() {
         TestWalletDocumentsProvider.failWrites = false
+        testContext.revokeUriPermission(
+            testUri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
         target.parentFile?.deleteRecursively()
     }
 

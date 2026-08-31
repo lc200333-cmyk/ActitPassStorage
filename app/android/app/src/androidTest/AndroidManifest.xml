@@ -3,7 +3,8 @@
         <provider
             android:name="com.lc200333cmyk.walletaps.TestWalletDocumentsProvider"
             android:authorities="com.example.actit_pass_storage.test.documents"
-            android:exported="false"
-            android:grantUriPermissions="true" />
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS" />
     </application>
 </manifest>
